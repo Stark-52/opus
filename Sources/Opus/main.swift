@@ -244,9 +244,11 @@ private final class OpusSplitView: NSSplitView {
         dividerStyle = .thin
     }
 
-    override var dividerThickness: CGFloat { 3 }
+    override var dividerThickness: CGFloat { 2 }
     override var dividerColor: NSColor {
-        NSColor(red: 0.45, green: 0.70, blue: 0.85, alpha: 0.55)
+        // Pale icy-cyan — the Opus icon's core glow color. Low alpha keeps it
+        // subtle against the dark blur so the pane content stays the focus.
+        NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.30)
     }
     override func drawDivider(in rect: NSRect) {
         dividerColor.setFill()
