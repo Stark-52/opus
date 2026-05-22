@@ -230,6 +230,30 @@ private final class TabPane {
     }
 }
 
+// NSSplitView with our own divider — wider and tinted with the panel's accent
+// color (same soft blue as the active tab pill) so splits read clearly against
+// the dark blur background. The system's default thin gray divider blends in
+// too much to tell where one pane ends and the next begins.
+private final class OpusSplitView: NSSplitView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        dividerStyle = .thin
+    }
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        dividerStyle = .thin
+    }
+
+    override var dividerThickness: CGFloat { 3 }
+    override var dividerColor: NSColor {
+        NSColor(red: 0.45, green: 0.70, blue: 0.85, alpha: 0.55)
+    }
+    override func drawDivider(in rect: NSRect) {
+        dividerColor.setFill()
+        rect.fill()
+    }
+}
+
 final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     private let panel: OpusPanel
     private var blurView: NSVisualEffectView!
@@ -593,9 +617,8 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             let idx = parentSplit.arrangedSubviews.firstIndex(of: oldView) ?? 0
             parentSplit.removeArrangedSubview(oldView)
             oldView.removeFromSuperview()
-            let inner = NSSplitView(frame: oldView.frame)
+            let inner = OpusSplitView(frame: oldView.frame)
             inner.isVertical = vertical
-            inner.dividerStyle = .thin
             inner.addArrangedSubview(oldView)
             inner.addArrangedSubview(newPane.terminal)
             parentSplit.insertArrangedSubview(inner, at: idx)
@@ -603,9 +626,8 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             inner.adjustSubviews()
         } else {
             // Old view is the tab's top-level — promote it inside a new NSSplitView.
-            let root = NSSplitView(frame: oldView.frame)
+            let root = OpusSplitView(frame: oldView.frame)
             root.isVertical = vertical
-            root.dividerStyle = .thin
             root.autoresizingMask = oldView.autoresizingMask
             oldView.removeFromSuperview()
             root.addArrangedSubview(oldView)
