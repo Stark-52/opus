@@ -528,9 +528,15 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
 
         let view = pane.terminal
         let parent = view.superview
-        view.removeFromSuperview()
+        // Order matters: drop from arranged list first (NSSplitView keeps its
+        // internal constraints in sync), then detach from the view hierarchy,
+        // then redistribute remaining panes evenly.
         if let parentSplit = parent as? NSSplitView {
             parentSplit.removeArrangedSubview(view)
+            view.removeFromSuperview()
+            parentSplit.adjustSubviews()
+        } else {
+            view.removeFromSuperview()
         }
         tabPanes[tabIdx].remove(at: paneIdx)
 
@@ -577,17 +583,24 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             // Same axis — extend the existing split.
             let idx = (parentSplit.arrangedSubviews.firstIndex(of: oldView) ?? 0) + 1
             parentSplit.insertArrangedSubview(newPane.terminal, at: idx)
+            parentSplit.adjustSubviews()
         } else if let parentSplit = parent as? NSSplitView {
-            // Different axis — wrap old pane in a perpendicular split.
+            // Different axis — wrap old pane in a perpendicular split. NSSplitView
+            // doesn't auto-redistribute when we remove and re-insert: removing
+            // newPane1 lets sharedTerminal stretch to full width, then the inner
+            // gets 0 width on insertion (looks like "Cmd+Shift+D cancelled Cmd+D").
+            // adjustSubviews() forces an even split again.
             let idx = parentSplit.arrangedSubviews.firstIndex(of: oldView) ?? 0
             parentSplit.removeArrangedSubview(oldView)
             oldView.removeFromSuperview()
-            let inner = NSSplitView()
+            let inner = NSSplitView(frame: oldView.frame)
             inner.isVertical = vertical
             inner.dividerStyle = .thin
             inner.addArrangedSubview(oldView)
             inner.addArrangedSubview(newPane.terminal)
             parentSplit.insertArrangedSubview(inner, at: idx)
+            parentSplit.adjustSubviews()
+            inner.adjustSubviews()
         } else {
             // Old view is the tab's top-level — promote it inside a new NSSplitView.
             let root = NSSplitView(frame: oldView.frame)
@@ -599,6 +612,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             root.addArrangedSubview(newPane.terminal)
             terminalArea.addSubview(root)
             tabs[activeTabIndex] = root
+            root.adjustSubviews()
         }
 
         tabPanes[activeTabIndex].append(newPane)
