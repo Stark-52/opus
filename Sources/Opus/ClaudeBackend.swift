@@ -23,9 +23,18 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         process = p
         // -i sources .zshrc so PATH includes ~/.local/bin where claude lives.
         // `command claude` skips the .zshrc wrapper to avoid recursion.
+        // Bench mode: if /tmp/opus_bench_active exists, cat the bench file and
+        // capture timing instead of launching claude — used for the rendering
+        // benchmark vs Ghostty.
+        let cmd: String
+        if FileManager.default.fileExists(atPath: "/tmp/opus_bench_active") {
+            cmd = "{ time cat /tmp/opus_bench.txt ; } 2> /tmp/opus_render_time.txt; touch /tmp/opus_bench_done"
+        } else {
+            cmd = "cd ~/Documents/GitHub/ClaudeUltra && command claude"
+        }
         p.startProcess(
             executable: "/bin/zsh",
-            args: ["-i", "-c", "cd ~/Documents/GitHub/ClaudeUltra && command claude"],
+            args: ["-i", "-c", cmd],
             environment: nil,
             execName: nil
         )
