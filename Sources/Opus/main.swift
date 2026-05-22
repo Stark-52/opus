@@ -140,6 +140,12 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        // SwiftTerm sometimes fires this delegate with negative dimensions
+        // during NSSplitView's first layout pass on a freshly-inserted pane
+        // (the child is briefly zero-sized while the split solves). Skip those
+        // — the next layout pass produces valid positive values and we'll
+        // resize then.
+        guard newCols > 0, newRows > 0 else { return }
         // Resize the PTY directly (same Mirror trick as ClaudeBackend) — LocalProcess
         // doesn't expose its master FD publicly.
         let mirror = Mirror(reflecting: process!)
@@ -557,12 +563,15 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         guard let oldPane = activePane,
               tabPanes.indices.contains(activeTabIndex) else { return }
 
-        let newPane = TabPane.makePrivate(frame: .zero, panel: self)
-        styleTerminal(newPane.terminal)
-        newPane.start()
-
         let oldView = oldPane.terminal
         let parent = oldView.superview
+        // Inherit oldView's frame so the new pane never starts at zero size —
+        // NSSplitView would briefly hand a 0×0 child to SwiftTerm otherwise,
+        // and its size-change calc can produce negative cols/rows during that
+        // first layout pass (which is what makes the UInt16 conversion crash).
+        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: self)
+        styleTerminal(newPane.terminal)
+        newPane.start()
 
         if let parentSplit = parent as? NSSplitView, parentSplit.isVertical == vertical {
             // Same axis — extend the existing split.
@@ -690,8 +699,9 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        // Tell backend the new dimensions so claude renders for our size.
-        // Phase 3 will use this per-client instead of as a single primary.
+        // Same guard as FilteredClaudeTab: skip negative/zero transients from
+        // NSSplitView's first layout pass to avoid UInt16 conversion traps.
+        guard newCols > 0, newRows > 0 else { return }
         ClaudeBackend.shared.setPrimarySize(cols: UInt16(newCols), rows: UInt16(newRows))
     }
 
