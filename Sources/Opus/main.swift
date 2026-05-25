@@ -26,7 +26,7 @@ private final class OpusPanel: NSPanel {
 
 // Minimal tab bar — a row of pill segments showing each tab's title. Hidden
 // when only one tab exists.
-private final class OpusTabBar: NSView {
+final class OpusTabBar: NSView {
     var tabCount: Int = 1 { didSet { needsDisplay = true } }
     var activeIndex: Int = 0 { didSet { needsDisplay = true } }
     var titles: [String] = [] { didSet { needsDisplay = true } }
@@ -84,15 +84,17 @@ private final class OpusTabBar: NSView {
 // both LocalProcessDelegate (PTY → terminal) and TerminalViewDelegate
 // (terminal → PTY) and runs the cursor-visibility filter on incoming bytes,
 // keeping the caret visible inside the panel while claude's TUI is active.
-private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDelegate {
+final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDelegate {
     let terminal: TerminalView
     private var process: LocalProcess!
     weak var panel: QuickTerminalPanel?
+    weak var container: TerminalContainerView?
     var title: String = "Claude"
 
-    init(frame: NSRect, panel: QuickTerminalPanel) {
+    init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) {
         self.terminal = TerminalView(frame: frame)
         self.panel = panel
+        self.container = container
         super.init()
         self.process = LocalProcess(delegate: self)
         self.terminal.terminalDelegate = self
@@ -113,9 +115,10 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
     }
 
     /// Inject bytes into this pane's PTY process. Used by `QuickTerminalPanel.pasteFromPasteboard`
-    /// and `QuickTerminalPanel.copySelectionToPasteboard` when the active pane is private
-    /// (has its own `LocalProcess`). `fileprivate` keeps it invisible outside this file.
-    fileprivate func sendInput(bytes: ArraySlice<UInt8>) {
+    /// and `QuickTerminalPanel.copySelectionToPasteboard` (and the equivalent
+    /// methods on `TerminalContainerView`) when the active pane is private
+    /// (has its own `LocalProcess`). Default-internal so the new container can call it.
+    func sendInput(bytes: ArraySlice<UInt8>) {
         process.send(data: bytes)
     }
 
@@ -131,7 +134,8 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.panel?.handlePrivateTabTerminated(self)
+            if let c = self.container { c.handlePrivateTabTerminated(self) }
+            else { self.panel?.handlePrivateTabTerminated(self) }
         }
     }
 
@@ -168,7 +172,8 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
 
     func setTerminalTitle(source: TerminalView, title: String) {
         self.title = title
-        panel?.updatePrivateTabTitle(self)
+        if let c = self.container { c.updatePrivateTabTitle(self) }
+        else { panel?.updatePrivateTabTitle(self) }
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -193,15 +198,15 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
 //   (used for tab 0's root, mirrored with Terminal.app via opus-attach)
 // - private: owns its own claude through FilteredClaudeTab
 //   (new tabs spawn one of these; every split also spawns one of these)
-private final class TabPane {
+final class TabPane {
     let terminal: TerminalView
     let wrapper: FilteredClaudeTab?            // non-nil → private claude
     fileprivate var sharedSubscription: UUID?  // non-nil → shared backend
     var title: String = "Claude"
 
-    static func makeShared(frame: NSRect, panel: QuickTerminalPanel) -> TabPane {
+    static func makeShared(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) -> TabPane {
         let pane = TabPane(frame: frame, wrapper: nil)
-        pane.terminal.terminalDelegate = panel
+        pane.terminal.terminalDelegate = container ?? panel
         pane.sharedSubscription = ClaudeBackend.shared.subscribe { [weak pane] slice in
             let filtered = QuickTerminalPanel.stripCursorVisibilityToggles(slice)
             pane?.terminal.feed(byteArray: filtered[...])
@@ -209,8 +214,8 @@ private final class TabPane {
         return pane
     }
 
-    static func makePrivate(frame: NSRect, panel: QuickTerminalPanel) -> TabPane {
-        let wrapper = FilteredClaudeTab(frame: frame, panel: panel)
+    static func makePrivate(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) -> TabPane {
+        let wrapper = FilteredClaudeTab(frame: frame, panel: panel, container: container)
         return TabPane(frame: frame, wrapper: wrapper)
     }
 
@@ -241,7 +246,7 @@ private final class TabPane {
 // color (same soft blue as the active tab pill) so splits read clearly against
 // the dark blur background. The system's default thin gray divider blends in
 // too much to tell where one pane ends and the next begins.
-private final class OpusSplitView: NSSplitView {
+final class OpusSplitView: NSSplitView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         dividerStyle = .thin
@@ -448,7 +453,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // standalone mode the socket is never started, so the broadcaster has
         // only the panel as subscriber — same code path, just one subscriber.
         ClaudeBackend.shared.startIfNeeded()
-        let pane0 = TabPane.makeShared(frame: terminalArea.bounds, panel: self)
+        let pane0 = TabPane.makeShared(frame: terminalArea.bounds, panel: self, container: nil)
         styleTerminal(pane0.terminal)
         terminalArea.addSubview(pane0.terminal)
         tabs.append(pane0.terminal)
@@ -569,7 +574,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     // standalone form is matched — claude's TUI lib emits these as separate
     // sequences, not multi-param. If a future version chains them with `;`
     // params, extend this to parse the param list.
-    fileprivate static func stripCursorVisibilityToggles(_ slice: ArraySlice<UInt8>) -> [UInt8] {
+    static func stripCursorVisibilityToggles(_ slice: ArraySlice<UInt8>) -> [UInt8] {
         var output: [UInt8] = []
         output.reserveCapacity(slice.count)
         var i = slice.startIndex
@@ -700,7 +705,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     }
 
     private func spawnNewTab() {
-        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: self)
+        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: self, container: nil)
         styleTerminal(pane.terminal)
         pane.terminal.isHidden = true
         terminalArea.addSubview(pane.terminal)
@@ -779,7 +784,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // NSSplitView would briefly hand a 0×0 child to SwiftTerm otherwise,
         // and its size-change calc can produce negative cols/rows during that
         // first layout pass (which is what makes the UInt16 conversion crash).
-        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: self)
+        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: self, container: nil)
         styleTerminal(newPane.terminal)
         newPane.start()
 
