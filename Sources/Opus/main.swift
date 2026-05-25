@@ -269,8 +269,14 @@ private final class OpusSplitView: NSSplitView {
 /// resize on the laptop display doesn't dictate the panel size on a 34" UWQHD.
 private enum PanelGeometryDefaults {
     static func key(forScreen screen: NSScreen) -> String {
+        // Prefer the CGDirectDisplayID (unique per physical connector, stable across
+        // reboots) so two identical monitors don't share one saved geometry.
+        // Fallback to size-based key if the display number is somehow unavailable.
+        let displayID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? Int) ?? 0
+        if displayID != 0 {
+            return "opus.panelGeometry.display\(displayID)"
+        }
         let f = screen.frame
-        // Round to integer points — sub-pixel screen frames are noise.
         return "opus.panelGeometry.\(Int(f.width))x\(Int(f.height))"
     }
     static func read(forScreen screen: NSScreen) -> (width: CGFloat, height: CGFloat)? {
@@ -898,7 +904,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // since macOS 14+, so we do CA directly).
         suppressResizeSave = true
         panel.setFrame(target, display: true)
-        suppressResizeSave = false
+        suppressResizeSave = false  // cleared before any early-return guards below
         panel.contentView?.wantsLayer = true
 
         guard let layer = panel.contentView?.layer else { return }
