@@ -140,13 +140,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         closePane(pane)
     }
 
-    func closePane(_ pane: TabPane) {
+    func closePane(_ pane: TabPane, force: Bool = false) {
         guard let tabIdx = tabPanes.firstIndex(where: { panes in panes.contains(where: { $0 === pane }) }),
               let paneIdx = tabPanes[tabIdx].firstIndex(where: { $0 === pane }) else { return }
 
-        // Don't let the user kill the shared pane in tab 0 — that's the session
-        // mirrored with Terminal.app via opus-attach.
-        if tabIdx == 0 && pane.wrapper == nil { return }
+        // Don't let the user kill the shared pane in tab 0 via Cmd+W — that's
+        // the session mirrored with Terminal.app via opus-attach. `force:true`
+        // bypass is reserved for internal lifecycle (shared backend death with
+        // other tabs alive).
+        if tabIdx == 0 && pane.wrapper == nil && !force { return }
 
         pane.terminate()
 
@@ -324,12 +326,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     func handlePrivateTabTerminated(_ wrapper: FilteredClaudeTab) {
-        // Don't auto-close the pane — show the dead-session overlay instead.
-        // The user picks between "Start new session" (restart claude in-place)
-        // and "Close Opus" (quit the app entirely).
+        // If other live panes exist anywhere in this container, close this
+        // pane silently (so the user can keep working in the others). Only
+        // when this dying pane is the last live one do we surface the
+        // "Session ended" overlay with Start / Close-Opus buttons.
         for paneList in tabPanes {
             if let pane = paneList.first(where: { $0.wrapper === wrapper }) {
-                showDeadOverlay(forPane: pane, isShared: false)
+                if hasOtherLivePane(excluding: pane) {
+                    closePane(pane)
+                } else {
+                    showDeadOverlay(forPane: pane, isShared: false)
+                }
                 return
             }
         }
@@ -342,11 +349,33 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var deadOverlays: [ObjectIdentifier: NSView] = [:]
 
     @objc fileprivate func sharedBackendDidTerminate(_ note: Notification) {
-        // Show overlay on tab 0's shared pane (the one with no FilteredClaudeTab wrapper).
+        // Find tab 0's shared pane (no FilteredClaudeTab wrapper).
         guard useSharedTab0,
               tabPanes.indices.contains(0),
               let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }
-        showDeadOverlay(forPane: pane, isShared: true)
+        // Same multi-vs-last rule as private panes: if anything else is live,
+        // drop the shared tab silently (closePane normally protects tab 0, so
+        // call the force variant). Only show the overlay when this WAS the
+        // user's last live surface.
+        if hasOtherLivePane(excluding: pane) {
+            closePane(pane, force: true)
+        } else {
+            showDeadOverlay(forPane: pane, isShared: true)
+        }
+    }
+
+    /// True if any pane other than `excluded` exists in this container and
+    /// isn't already showing a dead-session overlay.
+    private func hasOtherLivePane(excluding excluded: TabPane) -> Bool {
+        for paneList in tabPanes {
+            for pane in paneList {
+                if pane === excluded { continue }
+                let id = ObjectIdentifier(pane.terminal)
+                if deadOverlays[id] != nil { continue }   // already dead
+                return true
+            }
+        }
+        return false
     }
 
     private func showDeadOverlay(forPane pane: TabPane, isShared: Bool) {
