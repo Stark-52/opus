@@ -565,6 +565,7 @@ final class QuickTerminalPanel: NSObject {
                 case "d": container.splitActivePane(vertical: true); return nil   // side-by-side (iTerm2 convention)
                 case "c": container.copySelectionToPasteboard(); return nil
                 case "v": container.pasteFromPasteboard(); return nil
+                case ",": SettingsWindowController.shared.show(); return nil
                 default: break
                 }
             }
