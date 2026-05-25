@@ -112,9 +112,10 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
         if process?.shellPid ?? 0 > 0 { kill(process.shellPid, SIGHUP) }
     }
 
-    /// Public entry point for injecting bytes into this pane's process
-    /// (used by paste, future automations, etc.).
-    func sendInput(bytes: ArraySlice<UInt8>) {
+    /// Inject bytes into this pane's PTY process. Used by `QuickTerminalPanel.pasteFromPasteboard`
+    /// and `QuickTerminalPanel.copySelectionToPasteboard` when the active pane is private
+    /// (has its own `LocalProcess`). `fileprivate` keeps it invisible outside this file.
+    fileprivate func sendInput(bytes: ArraySlice<UInt8>) {
         process.send(data: bytes)
     }
 
@@ -539,7 +540,14 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         let selection = terminal.getSelection()
         guard let text = selection, !text.isEmpty else {
             // Re-fire Cmd+C as a literal SIGINT byte (0x03) so shells still behave.
-            ClaudeBackend.shared.send(data: ArraySlice([0x03]))
+            // Route to the active pane's process (private) or the shared backend,
+            // matching pasteFromPasteboard's dispatch pattern.
+            let interrupt = ArraySlice<UInt8>([0x03])
+            if let wrapper = activePane?.wrapper {
+                wrapper.sendInput(bytes: interrupt)
+            } else {
+                ClaudeBackend.shared.send(data: interrupt)
+            }
             return
         }
         NSPasteboard.general.clearContents()
