@@ -1051,6 +1051,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSWorkspace.didActivateApplicationNotification, object: nil
         )
 
+        installAppMenu()
         nativePanel = QuickTerminalPanel()
         registerHotkey()
         launchTerminalSession()
@@ -1144,7 +1145,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         nativePanel?.toggle()
     }
 
+    @objc func openSettings() {
+        SettingsWindowController.shared.show()
+    }
+
     // MARK: Setup
+
+    private func installAppMenu() {
+        let mainMenu = NSMenu()
+        let appMenuItem = NSMenuItem()
+        mainMenu.addItem(appMenuItem)
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+
+        let settingsItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settingsItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(settingsItem)
+
+        appMenu.addItem(NSMenuItem.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit Opus",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q"
+        )
+        appMenu.addItem(quitItem)
+
+        NSApp.mainMenu = mainMenu
+    }
 
     private func registerHotkey() {
         var spec = EventTypeSpec(
