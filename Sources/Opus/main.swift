@@ -1068,6 +1068,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             launchTerminalSession()
         }
 
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            OnboardingWindowController.shared.showIfNeeded()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.nativePanel?.toggle()
         }
