@@ -263,6 +263,31 @@ private final class OpusSplitView: NSSplitView {
     }
 }
 
+// MARK: - Persisted panel geometry
+
+/// UserDefaults keys for panel size persistence. Keyed by screen size so a
+/// resize on the laptop display doesn't dictate the panel size on a 34" UWQHD.
+private enum PanelGeometryDefaults {
+    static func key(forScreen screen: NSScreen) -> String {
+        let f = screen.frame
+        // Round to integer points — sub-pixel screen frames are noise.
+        return "opus.panelGeometry.\(Int(f.width))x\(Int(f.height))"
+    }
+    static func read(forScreen screen: NSScreen) -> (width: CGFloat, height: CGFloat)? {
+        let d = UserDefaults.standard.dictionary(forKey: key(forScreen: screen))
+        guard let w = d?["width"] as? Double,
+              let h = d?["height"] as? Double,
+              w > 200, h > 100 else { return nil }
+        return (CGFloat(w), CGFloat(h))
+    }
+    static func write(forScreen screen: NSScreen, width: CGFloat, height: CGFloat) {
+        UserDefaults.standard.set(
+            ["width": Double(width), "height": Double(height)],
+            forKey: key(forScreen: screen)
+        )
+    }
+}
+
 final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     private let panel: OpusPanel
     private var blurView: NSVisualEffectView!
@@ -277,6 +302,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
     private var keyMonitor: Any?
     private var visible = false
+    private var suppressResizeSave = false
 
     // Currently-focused pane in the active tab.
     fileprivate var activePane: TabPane? {
@@ -412,6 +438,10 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             self, selector: #selector(spaceDidChange),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil
         )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(panelDidResize),
+            name: NSWindow.didResizeNotification, object: panel
+        )
     }
 
     private var ignoreResignKeyUntil: Date?
@@ -420,6 +450,20 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // Give ourselves a 600ms grace period — Space-transition resigns key
         // briefly, but the panel should remain visible on the new Space.
         ignoreResignKeyUntil = Date().addingTimeInterval(0.6)
+    }
+
+    @objc private func panelDidResize() {
+        // Suppress save during programmatic setFrame() in show() — see show() body
+        // for where the flag is toggled. Without this, the very first restore would
+        // overwrite the saved size with itself (harmless) AND fire before the user
+        // has done anything (also harmless, but pointless writes are noise).
+        guard !suppressResizeSave else { return }
+        let screen = panel.screen ?? activeScreen()
+        PanelGeometryDefaults.write(
+            forScreen: screen,
+            width: panel.frame.width,
+            height: panel.frame.height
+        )
     }
 
     @objc private func panelDidBecomeKey() {
@@ -832,26 +876,29 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
 
     // The "mouse" screen — matches Ghostty's quick-terminal-screen=mouse so the
     // panel always slides down on whichever monitor the user is currently using.
-    private func activeScreenFrame() -> NSRect {
+    private func activeScreen() -> NSScreen {
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
+        return NSScreen.screens.first { $0.frame.contains(mouse) }
             ?? NSScreen.main ?? NSScreen.screens.first!
-        return screen.visibleFrame
     }
 
     private func show() {
-        let frame = activeScreenFrame()
-        let h = frame.height * 0.4
-        let w = frame.width
+        let screen = activeScreen()
+        let screenFrame = screen.visibleFrame
+        let saved = PanelGeometryDefaults.read(forScreen: screen)
+        let w = saved?.width ?? screenFrame.width
+        let h = saved?.height ?? screenFrame.height * 0.4
+        let frame = screenFrame   // kept for the existing maxY math below
 
-        let start  = NSRect(x: frame.origin.x, y: frame.maxY,     width: w, height: h)
         let target = NSRect(x: frame.origin.x, y: frame.maxY - h, width: w, height: h)
 
         // Layer-backed content for Core Animation. The panel itself stays at
         // target frame; we animate the content layer's translation to fake the
         // slide (Cocoa's frame animation is unreliable on borderless panels
         // since macOS 14+, so we do CA directly).
+        suppressResizeSave = true
         panel.setFrame(target, display: true)
+        suppressResizeSave = false
         panel.contentView?.wantsLayer = true
 
         guard let layer = panel.contentView?.layer else { return }
