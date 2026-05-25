@@ -297,6 +297,8 @@ private enum PanelGeometryDefaults {
 final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
     private let panel: OpusPanel
     private var blurView: NSVisualEffectView!
+    private var tintView: NSView!
+    private var imageBgView: NSImageView!
     private var terminalArea: NSView!         // container for all tab views — shrinks when tab bar visible
     private var tabs: [NSView] = []                       // top-level view per tab — a TerminalView when the tab has 1 pane, an NSSplitView once it gets a Cmd+D / Cmd+Shift+D split
     private var tabPanes: [[TabPane]] = []                // all panes per tab (flat list); tab 0's first entry is the shared pane, everything else is private
@@ -367,12 +369,19 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         blur.layer?.cornerRadius = 14
         blur.layer?.masksToBounds = true
         blur.autoresizingMask = [.width, .height]
-        // A subtle dark tint over the blur — keeps the terminal background readable.
+        // Background image layer (below tint, hidden unless mode == image)
+        let bg = NSImageView(frame: blur.bounds)
+        bg.imageScaling = .scaleAxesIndependently
+        bg.autoresizingMask = [.width, .height]
+        bg.isHidden = true
+        blur.addSubview(bg)
+        imageBgView = bg
+
         let tint = NSView(frame: blur.bounds)
         tint.wantsLayer = true
-        tint.layer?.backgroundColor = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 0.55).cgColor
         tint.autoresizingMask = [.width, .height]
         blur.addSubview(tint)
+        tintView = tint
         panel.contentView = blur
         blurView = blur
 
@@ -470,6 +479,11 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             self, selector: #selector(panelDidResize),
             name: NSWindow.didResizeNotification, object: panel
         )
+        applyAppearance()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onPreferencesChanged),
+            name: .opusPreferencesDidChange, object: nil
+        )
     }
 
     private var ignoreResignKeyUntil: Date?
@@ -505,6 +519,46 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         guard let pane = activePane, pane.wrapper == nil else { return }
         let t = pane.terminal.getTerminal()
         ClaudeBackend.shared.setPrimarySize(cols: UInt16(t.cols), rows: UInt16(t.rows))
+    }
+
+    @objc private func onPreferencesChanged() {
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        let mode = OpusPreferences.shared.appearanceMode
+        switch mode {
+        case "transparent":
+            blurView.state = .inactive
+            tintView.layer?.backgroundColor = NSColor.clear.cgColor
+            imageBgView.isHidden = true
+        case "tint":
+            blurView.state = .active
+            let rgba = OpusPreferences.shared.appearanceTintRGBA
+            tintView.layer?.backgroundColor = NSColor(
+                red: CGFloat(rgba[0]), green: CGFloat(rgba[1]),
+                blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3])
+            ).cgColor
+            imageBgView.isHidden = true
+        case "image":
+            blurView.state = .inactive
+            // Image needs a floor on the tint so terminal text stays readable.
+            tintView.layer?.backgroundColor = NSColor(white: 0, alpha: 0.25).cgColor
+            if let path = OpusPreferences.shared.appearanceImagePath,
+               let img = NSImage(contentsOfFile: path) {
+                imageBgView.image = img
+                imageBgView.isHidden = false
+            } else {
+                imageBgView.isHidden = true
+            }
+        default:
+            // "default" — blur + dark tint at the original RGBA.
+            blurView.state = .active
+            tintView.layer?.backgroundColor = NSColor(
+                red: 0.04, green: 0.05, blue: 0.07, alpha: 0.55
+            ).cgColor
+            imageBgView.isHidden = true
+        }
     }
 
     // Removes DECTCEM cursor hide (`\e[?25l`) and show (`\e[?25h`) sequences
