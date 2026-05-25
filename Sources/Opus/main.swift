@@ -811,12 +811,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSLog("Opus: killed any stale dtach master on /tmp/opus.sock")
     }
 
-    // Subsequent Dock/Finder clicks on Opus toggle the panel only — no extra
-    // Terminal windows. If you want another main window, open Terminal manually
-    // and type `claude` (.zshrc wrapper joins the shared session).
+    // Click the Dock icon: bring something visible to the user. If the panel
+    // exists, toggle it; if only the main window exists, show it; if neither,
+    // fall back to showing the panel even if it's nil-or-hidden.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        nativePanel?.toggle()
+        let mode = OpusPreferences.shared.windowMode
+        if mode == "panel" || mode == "both" {
+            nativePanel?.toggle()
+        }
+        if mode == "main" || mode == "both" {
+            MainTerminalWindow.shared.show()
+        }
         return true
+    }
+
+    // Right-click on the Dock icon: visibility + quit shortcuts. Useful when
+    // the user has hidden the panel, closed Terminal.app, and isn't sure how
+    // to get back. Cmd+Ctrl+T / Cmd+Ctrl+M still work globally too.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let mode = OpusPreferences.shared.windowMode
+
+        if mode == "panel" || mode == "both" {
+            menu.addItem(NSMenuItem(
+                title: "Show Quick Terminal",
+                action: #selector(showQuickTerminalAction),
+                keyEquivalent: ""
+            ))
+        }
+        if mode == "main" || mode == "both" {
+            menu.addItem(NSMenuItem(
+                title: "Show Main Window",
+                action: #selector(showMainWindowAction),
+                keyEquivalent: ""
+            ))
+        }
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(
+            title: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ""
+        ))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(
+            title: "Quit Opus",
+            action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: ""
+        ))
+        return menu
+    }
+
+    @objc private func showQuickTerminalAction() {
+        nativePanel?.toggle()
+    }
+
+    @objc private func showMainWindowAction() {
+        MainTerminalWindow.shared.show()
     }
 
     // Terminal.app's size is reported event-driven by opus-attach itself (it
