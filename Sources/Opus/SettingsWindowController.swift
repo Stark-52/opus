@@ -3,6 +3,7 @@
 // Sections are added in their respective phases.
 
 import AppKit
+import UniformTypeIdentifiers
 
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
@@ -10,6 +11,11 @@ final class SettingsWindowController: NSWindowController {
     private let tabView = NSTabView()
     private var customCommandField: NSTextField?
     private var cwdField: NSTextField?
+    private var tintWell: NSColorWell?
+    private var tintLabel: NSTextField?
+    private var imagePathField: NSTextField?
+    private var imageLabel: NSTextField?
+    private var imagePickButton: NSButton?
 
     private convenience init() {
         let window = NSWindow(
@@ -37,7 +43,8 @@ final class SettingsWindowController: NSWindowController {
         ])
 
         tabView.addTabViewItem(generalTab())
-        // Appearance + Window tabs are added in Phase 4 and Phase 5 respectively.
+        tabView.addTabViewItem(appearanceTab())
+        // Window tab is added in Phase 5.
     }
 
     private func generalTab() -> NSTabViewItem {
@@ -136,6 +143,94 @@ final class SettingsWindowController: NSWindowController {
         return item
     }
 
+    private func appearanceTab() -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: "appearance")
+        item.label = "Appearance"
+
+        let view = NSView()
+
+        let modeLabel = NSTextField(labelWithString: "Background")
+        modeLabel.alignment = .right
+        let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        modePopup.addItems(withTitles: ["Default (blur + dark tint)", "Transparent", "Custom tint", "Background image"])
+        modePopup.translatesAutoresizingMaskIntoConstraints = false
+        let currentMode = OpusPreferences.shared.appearanceMode
+        let modeIndex: Int = {
+            switch currentMode {
+            case "transparent": return 1
+            case "tint":        return 2
+            case "image":       return 3
+            default:            return 0
+            }
+        }()
+        modePopup.selectItem(at: modeIndex)
+        modePopup.target = self
+        modePopup.action = #selector(onAppearanceModeChanged(_:))
+
+        // Tint color picker (visible for "tint" mode)
+        let tintLabel = NSTextField(labelWithString: "Tint color")
+        tintLabel.alignment = .right
+        let tintWell = NSColorWell()
+        let rgba = OpusPreferences.shared.appearanceTintRGBA
+        tintWell.color = NSColor(
+            red: CGFloat(rgba[0]), green: CGFloat(rgba[1]),
+            blue: CGFloat(rgba[2]), alpha: CGFloat(rgba[3])
+        )
+        tintWell.target = self
+        tintWell.action = #selector(onTintColorChanged(_:))
+        tintWell.translatesAutoresizingMaskIntoConstraints = false
+        self.tintWell = tintWell
+        self.tintLabel = tintLabel
+
+        // Image picker (visible for "image" mode)
+        let imgLabel = NSTextField(labelWithString: "Background image")
+        imgLabel.alignment = .right
+        let imgPath = NSTextField(string: OpusPreferences.shared.appearanceImagePath ?? "")
+        imgPath.placeholderString = "/path/to/image.png"
+        imgPath.isEditable = false
+        let imgPickBtn = NSButton(title: "Choose…", target: self, action: #selector(pickAppearanceImage))
+        imgPickBtn.bezelStyle = .rounded
+        imgPath.translatesAutoresizingMaskIntoConstraints = false
+        imgPickBtn.translatesAutoresizingMaskIntoConstraints = false
+        self.imagePathField = imgPath
+        self.imageLabel = imgLabel
+        self.imagePickButton = imgPickBtn
+
+        for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            modeLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            modeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            modeLabel.widthAnchor.constraint(equalToConstant: 160),
+            modePopup.centerYAnchor.constraint(equalTo: modeLabel.centerYAnchor),
+            modePopup.leadingAnchor.constraint(equalTo: modeLabel.trailingAnchor, constant: 10),
+            modePopup.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            tintLabel.topAnchor.constraint(equalTo: modePopup.bottomAnchor, constant: 20),
+            tintLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            tintLabel.widthAnchor.constraint(equalToConstant: 160),
+            tintWell.centerYAnchor.constraint(equalTo: tintLabel.centerYAnchor),
+            tintWell.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            tintWell.widthAnchor.constraint(equalToConstant: 80),
+            tintWell.heightAnchor.constraint(equalToConstant: 24),
+
+            imgLabel.topAnchor.constraint(equalTo: tintLabel.bottomAnchor, constant: 24),
+            imgLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            imgLabel.widthAnchor.constraint(equalToConstant: 160),
+            imgPath.centerYAnchor.constraint(equalTo: imgLabel.centerYAnchor),
+            imgPath.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            imgPath.trailingAnchor.constraint(equalTo: imgPickBtn.leadingAnchor, constant: -8),
+            imgPickBtn.centerYAnchor.constraint(equalTo: imgLabel.centerYAnchor),
+            imgPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+        ])
+
+        refreshAppearanceVisibility(mode: currentMode)
+        item.view = view
+        return item
+    }
+
     private func makeFieldLabel(_ s: String) -> NSTextField {
         let l = NSTextField(labelWithString: s)
         l.alignment = .right
@@ -172,6 +267,47 @@ final class SettingsWindowController: NSWindowController {
     @objc private func onPairingChanged(_ sender: NSPopUpButton) {
         let mode = OpusPairingMode.allCases[sender.indexOfSelectedItem]
         OpusPreferences.shared.pairingMode = mode
+    }
+
+    @objc private func onAppearanceModeChanged(_ sender: NSPopUpButton) {
+        let mode: String
+        switch sender.indexOfSelectedItem {
+        case 1: mode = "transparent"
+        case 2: mode = "tint"
+        case 3: mode = "image"
+        default: mode = "default"
+        }
+        OpusPreferences.shared.appearanceMode = mode
+        refreshAppearanceVisibility(mode: mode)
+    }
+
+    @objc private func onTintColorChanged(_ sender: NSColorWell) {
+        let c = sender.color.usingColorSpace(.sRGB) ?? sender.color
+        OpusPreferences.shared.appearanceTintRGBA = [
+            Double(c.redComponent), Double(c.greenComponent),
+            Double(c.blueComponent), Double(c.alphaComponent)
+        ]
+    }
+
+    @objc private func pickAppearanceImage() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.image]
+        if panel.runModal() == .OK, let url = panel.url {
+            OpusPreferences.shared.appearanceImagePath = url.path
+            imagePathField?.stringValue = url.path
+        }
+    }
+
+    private func refreshAppearanceVisibility(mode: String) {
+        let showTint = (mode == "tint")
+        let showImage = (mode == "image")
+        tintLabel?.isHidden = !showTint
+        tintWell?.isHidden = !showTint
+        imageLabel?.isHidden = !showImage
+        imagePathField?.isHidden = !showImage
+        imagePickButton?.isHidden = !showImage
     }
 
     func show() {
