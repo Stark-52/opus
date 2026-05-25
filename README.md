@@ -6,14 +6,24 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 
 ## Features
 
+- **Four display modes** — pick how Opus shows up:
+  - **Terminal.app + Quick Terminal** (default) — native Terminal window + slide-down panel, mirrored live.
+  - **Quick Terminal + Main Window** — slide-down panel + a permanent NSWindow, mirrored live, no Terminal.app.
+  - **Quick Terminal only** — just the slide-down panel.
+  - **Main Window only** — just the standalone NSWindow.
+
+  In every mode, all visible surfaces share the same Claude session (tab 0 of each subscribes to one `ClaudeBackend` broadcaster). Type in any surface — output appears everywhere.
 - **Slide-down panel** (`Cmd+Ctrl+T`) — non-activating NSPanel, native blur, follows the active macOS Space, persists its size per display.
-- **Optional main window** (`Cmd+Ctrl+M`) — full NSWindow with the same tabs/splits, for users who prefer a permanent tiling workspace. Mix both modes if you want.
-- **Shared session** — typing in the panel mirrors live in Terminal.app (and vice versa), per-client size negotiation via a 9-byte control protocol over a Unix domain socket. Main window runs its own private session.
-- **Multi-tab** — `Cmd+T` new tab, `Cmd+W` close current pane/tab, `Cmd+1..9` switch tab. New tabs spawn their own private session.
+- **Main window** (`Cmd+Ctrl+M`) — standard NSWindow, fullscreen-capable, frame auto-saved across launches.
+- **Multi-tab** — `Cmd+T` new private tab (own session), `Cmd+W` close current pane/tab, `Cmd+1..9` switch tab.
 - **Splits** — `Cmd+D` side-by-side, `Cmd+Shift+D` top/bottom. Nested via `NSSplitView` (iTerm2 conventions).
-- **Settings** (`Cmd+,`) — pick initial command (Claude / shell / custom), working directory, Terminal.app pairing (mirror or standalone), background (default blur / transparent / custom tint / background image), and window mode.
+- **Settings** (`Cmd+,`) — three tabs:
+  - **General** — initial command (Claude / shell / custom), working directory.
+  - **Appearance** — default blur / transparent / custom tint color / background image.
+  - **Display** — choose between the four display modes above.
 - **First-launch onboarding** — bundles macOS permission prompts upfront so they don't surprise you mid-session.
-- **Event-driven resize** — `opus-attach` reports SIGWINCH via a self-pipe; the panel ioctls the master PTY and SIGWINCHes the child on focus change. No polling.
+- **Session-ended overlay** — when Claude exits and there are no other live panes, you get a centered "Start new session" / "Close Opus" prompt instead of a frozen dead terminal.
+- **Event-driven resize** — `opus-attach` reports SIGWINCH via a self-pipe; the broadcaster ioctls the master PTY and SIGWINCHes the child on focus change. No polling.
 - **Cursor stays visible in Claude's TUI** — DECTCEM hide/show sequences (`\e[?25l` / `\e[?25h`) are filtered out before reaching SwiftTerm so the caret doesn't disappear inside the panel.
 
 ## Build
@@ -56,12 +66,12 @@ Opus.app
 ├── QuickTerminalPanel (NSPanel) → embeds TerminalContainerView
 ├── MainTerminalWindow (NSWindow) → embeds TerminalContainerView
 ├── TerminalContainerView (shared NSView — tabs + panes + splits + tab bar)
-│     ├── shared pane → subscribes to ClaudeBackend (panel only)
-│     ├── private panes → FilteredClaudeTab wrappers, own PTY
+│     ├── tab 0 → ClaudeBackend subscriber (shared with every other live surface)
+│     ├── private panes (Cmd+T tabs, splits) → FilteredClaudeTab, own PTY
 │     └── splits via NSSplitView (nested, axis-mixed)
-├── SettingsWindowController (General / Appearance / Window tabs)
+├── SettingsWindowController (General / Appearance / Display tabs)
 ├── OnboardingWindowController (first-launch TCC prompts)
-└── SocketServer (/tmp/opus.sock, mirror mode only)
+└── SocketServer (/tmp/opus.sock, only when displayMode includes Terminal.app)
       └── opus-attach clients — Terminal.app windows
 ```
 
