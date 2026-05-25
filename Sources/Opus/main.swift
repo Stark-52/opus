@@ -715,9 +715,17 @@ extension QuickTerminalPanel: TerminalContainerHost {
 
 // MARK: - Carbon hotkey callback
 
-private let hotkeyCallback: EventHandlerUPP = { (_, _, _) -> OSStatus in
+private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
+    var hkID = EventHotKeyID()
+    GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                       EventParamType(typeEventHotKeyID),
+                       nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID)
     DispatchQueue.main.async {
-        AppDelegate.shared?.toggleNativePanel()
+        switch hkID.id {
+        case 1: AppDelegate.shared?.toggleNativePanel()
+        case 2: MainTerminalWindow.shared.toggle()
+        default: break
+        }
     }
     return noErr
 }
@@ -728,6 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static weak var shared: AppDelegate?
 
     private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyRefMain: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     private var nativePanel: QuickTerminalPanel?
@@ -740,6 +749,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         killStaleSessionIfOrphaned()
 
         let pairing = OpusPreferences.shared.pairingMode
+        let mode = OpusPreferences.shared.windowMode
+
         if pairing == .mirror {
             // Start the Unix socket server so external clients (opus-attach in
             // Terminal.app) can subscribe to the same claude session as the panel.
@@ -755,18 +766,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installAppMenu()
-        nativePanel = QuickTerminalPanel()
+
+        if mode == "panel" || mode == "both" {
+            nativePanel = QuickTerminalPanel()
+        }
+        if mode == "main" || mode == "both" {
+            _ = MainTerminalWindow.shared   // instantiates lazily
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                MainTerminalWindow.shared.show()
+            }
+        }
+
         registerHotkey()
 
-        if pairing == .mirror {
+        // Only launch the mirrored Terminal.app if we have a panel + pairing is mirror.
+        if pairing == .mirror, mode != "main" {
             launchTerminalSession()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             OnboardingWindowController.shared.showIfNeeded()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.nativePanel?.toggle()
+        if mode == "panel" || mode == "both" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.nativePanel?.toggle()
+            }
         }
     }
 
@@ -845,8 +869,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ note: Notification) {
         socketServer.stop()
-        if let ref = hotKeyRef  { UnregisterEventHotKey(ref) }
-        if let ref = handlerRef { RemoveEventHandler(ref) }
+        if let ref = hotKeyRef     { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefMain { UnregisterEventHotKey(ref) }
+        if let ref = handlerRef    { RemoveEventHandler(ref) }
     }
 
     // MARK: Actions
@@ -907,6 +932,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             id, GetApplicationEventTarget(), 0, &hotKeyRef
         )
         NSLog("Opus hotkey Cmd+Ctrl+T registered (status=\(status))")
+
+        let windowMode = OpusPreferences.shared.windowMode
+        if windowMode == "main" || windowMode == "both" {
+            let idM = EventHotKeyID(signature: OSType(0x4F505553), id: 2)
+            let statusM = RegisterEventHotKey(
+                46,                                    // kVK_ANSI_M
+                UInt32(cmdKey | controlKey),
+                idM, GetApplicationEventTarget(), 0, &hotKeyRefMain
+            )
+            NSLog("Opus hotkey Cmd+Ctrl+M registered (status=\(statusM))")
+        }
     }
 }
 
