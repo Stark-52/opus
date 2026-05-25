@@ -112,6 +112,12 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
         if process?.shellPid ?? 0 > 0 { kill(process.shellPid, SIGHUP) }
     }
 
+    /// Public entry point for injecting bytes into this pane's process
+    /// (used by paste, future automations, etc.).
+    func sendInput(bytes: ArraySlice<UInt8>) {
+        process.send(data: bytes)
+    }
+
     // MARK: LocalProcessDelegate
 
     func dataReceived(slice: ArraySlice<UInt8>) {
@@ -504,6 +510,8 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
                 case "t": spawnNewTab(); return nil
                 case "w": closeActivePane(); return nil
                 case "d": splitActivePane(vertical: true); return nil   // side-by-side (iTerm2 convention)
+                case "c": copySelectionToPasteboard(); return nil
+                case "v": pasteFromPasteboard(); return nil
                 default: break
                 }
             }
@@ -519,6 +527,38 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             return nil
         }
         return ev
+    }
+
+    /// Cmd+C — copy the active pane's current selection into the system pasteboard.
+    /// SwiftTerm exposes `getSelection()` on TerminalView directly (AppleTerminalView.swift:2251,
+    /// returns String?). If there's no selection (nil or empty), we fall back to
+    /// sending 0x03 (ETX/SIGINT) so the user's shell SIGINT muscle memory still works.
+    private func copySelectionToPasteboard() {
+        guard let terminal = activeTerminal else { return }
+        // API verified: TerminalView.getSelection() -> String? (SwiftTerm AppleTerminalView.swift:2251)
+        let selection = terminal.getSelection()
+        guard let text = selection, !text.isEmpty else {
+            // Re-fire Cmd+C as a literal SIGINT byte (0x03) so shells still behave.
+            ClaudeBackend.shared.send(data: ArraySlice([0x03]))
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Cmd+V — write the pasteboard string into the active pane's input channel.
+    /// Shared pane → ClaudeBackend (broadcasts to Terminal.app too). Private pane
+    /// → the wrapper's own LocalProcess.
+    private func pasteFromPasteboard() {
+        guard let pane = activePane,
+              let str = NSPasteboard.general.string(forType: .string),
+              !str.isEmpty else { return }
+        let bytes = ArraySlice(Array(str.utf8))
+        if let wrapper = pane.wrapper {
+            wrapper.sendInput(bytes: bytes)
+        } else {
+            ClaudeBackend.shared.send(data: bytes)
+        }
     }
 
     private func spawnNewTab() {
