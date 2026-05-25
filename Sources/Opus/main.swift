@@ -114,6 +114,14 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         if process?.shellPid ?? 0 > 0 { kill(process.shellPid, SIGHUP) }
     }
 
+    /// Recreate the LocalProcess and respawn the configured command. Used by the
+    /// dead-pane overlay's "Start new session" button after the previous process
+    /// exited and we left the pane visible instead of closing it.
+    func restart() {
+        self.process = LocalProcess(delegate: self)
+        start()
+    }
+
     /// Inject bytes into this pane's PTY process. Used by `QuickTerminalPanel.pasteFromPasteboard`
     /// and `QuickTerminalPanel.copySelectionToPasteboard` (and the equivalent
     /// methods on `TerminalContainerView`) when the active pane is private
