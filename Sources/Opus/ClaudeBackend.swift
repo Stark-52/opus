@@ -9,6 +9,12 @@ import Foundation
 import Darwin
 import SwiftTerm
 
+/// Posted (on main) when the underlying claude process exits — the dead-pane
+/// overlay listens for this to surface a Start-new-session / Close-Opus UI.
+extension Notification.Name {
+    static let claudeBackendDidTerminate = Notification.Name("com.andygarcia.opus.claudeBackendDidTerminate")
+}
+
 final class ClaudeBackend: NSObject, LocalProcessDelegate {
     static let shared = ClaudeBackend()
 
@@ -90,6 +96,13 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         NSLog("ClaudeBackend: claude terminated (exit=\(exitCode ?? -1))")
         process = nil
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: .claudeBackendDidTerminate,
+                object: nil,
+                userInfo: ["exitCode": exitCode ?? -1]
+            )
+        }
     }
 
     func getWindowSize() -> winsize {

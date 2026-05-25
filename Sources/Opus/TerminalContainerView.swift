@@ -41,6 +41,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         wantsLayer = true
         buildSubviews()
         bootstrapFirstTab()
+        if useSharedTab0 {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(sharedBackendDidTerminate(_:)),
+                name: .claudeBackendDidTerminate, object: nil
+            )
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -318,12 +324,125 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     func handlePrivateTabTerminated(_ wrapper: FilteredClaudeTab) {
+        // Don't auto-close the pane — show the dead-session overlay instead.
+        // The user picks between "Start new session" (restart claude in-place)
+        // and "Close Opus" (quit the app entirely).
         for paneList in tabPanes {
             if let pane = paneList.first(where: { $0.wrapper === wrapper }) {
-                closePane(pane)
+                showDeadOverlay(forPane: pane, isShared: false)
                 return
             }
         }
+    }
+
+    // MARK: Dead-pane overlay
+
+    /// Keyed by the pane's terminal view (object identity). Holds the overlay
+    /// NSView so we can remove it again on restart.
+    private var deadOverlays: [ObjectIdentifier: NSView] = [:]
+
+    @objc fileprivate func sharedBackendDidTerminate(_ note: Notification) {
+        // Show overlay on tab 0's shared pane (the one with no FilteredClaudeTab wrapper).
+        guard useSharedTab0,
+              tabPanes.indices.contains(0),
+              let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }
+        showDeadOverlay(forPane: pane, isShared: true)
+    }
+
+    private func showDeadOverlay(forPane pane: TabPane, isShared: Bool) {
+        let id = ObjectIdentifier(pane.terminal)
+        if deadOverlays[id] != nil { return }   // already up
+
+        let overlay = NSView(frame: pane.terminal.bounds)
+        overlay.wantsLayer = true
+        overlay.autoresizingMask = [.width, .height]
+        overlay.layer?.backgroundColor = NSColor(white: 0, alpha: 0.78).cgColor
+
+        let title = NSTextField(labelWithString: "Session ended")
+        title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        title.textColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let subtitle = NSTextField(labelWithString:
+            isShared
+                ? "The shared Claude session exited."
+                : "Claude exited in this tab."
+        )
+        subtitle.font = NSFont.systemFont(ofSize: 12)
+        subtitle.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.65)
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+
+        let restartBtn = NSButton(
+            title: "Start new session",
+            target: self,
+            action: isShared ? #selector(restartSharedFromOverlay(_:))
+                             : #selector(restartPrivateFromOverlay(_:))
+        )
+        restartBtn.bezelStyle = .rounded
+        restartBtn.keyEquivalent = "\r"   // Return key activates
+        restartBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        let closeBtn = NSButton(
+            title: "Close Opus",
+            target: self,
+            action: #selector(quitOpusFromOverlay)
+        )
+        closeBtn.bezelStyle = .rounded
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+
+        for v in [title, subtitle, restartBtn, closeBtn] {
+            overlay.addSubview(v)
+        }
+
+        NSLayoutConstraint.activate([
+            title.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            title.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: -48),
+            subtitle.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
+            restartBtn.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            restartBtn.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 20),
+            restartBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            closeBtn.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            closeBtn.topAnchor.constraint(equalTo: restartBtn.bottomAnchor, constant: 8),
+            closeBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 180)
+        ])
+
+        pane.terminal.addSubview(overlay)
+        deadOverlays[id] = overlay
+    }
+
+    private func hideDeadOverlay(forPane pane: TabPane) {
+        let id = ObjectIdentifier(pane.terminal)
+        deadOverlays[id]?.removeFromSuperview()
+        deadOverlays.removeValue(forKey: id)
+        // Clear the terminal's screen so old (dead) output doesn't bleed into
+        // the fresh session's render. ESC c is the full reset escape.
+        pane.terminal.feed(text: "\u{001B}c")
+    }
+
+    @objc private func restartSharedFromOverlay(_ sender: NSButton) {
+        ClaudeBackend.shared.startIfNeeded()
+        guard tabPanes.indices.contains(0),
+              let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }
+        hideDeadOverlay(forPane: pane)
+    }
+
+    @objc private func restartPrivateFromOverlay(_ sender: NSButton) {
+        // Walk up: button → overlay → terminal → find the matching pane.
+        guard let overlay = sender.superview,
+              let terminal = overlay.superview as? TerminalView else { return }
+        for paneList in tabPanes {
+            if let pane = paneList.first(where: { $0.terminal === terminal }),
+               let wrapper = pane.wrapper {
+                hideDeadOverlay(forPane: pane)
+                wrapper.restart()
+                return
+            }
+        }
+    }
+
+    @objc private func quitOpusFromOverlay() {
+        NSApp.terminate(nil)
     }
 
     func updatePrivateTabTitle(_ wrapper: FilteredClaudeTab) {
