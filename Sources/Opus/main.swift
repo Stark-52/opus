@@ -409,6 +409,22 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         tabBar = bar
         tabBarHeightConstraint = heightC
 
+        // "Open in Terminal" button — top-right of the blur. Spawns a fresh
+        // Terminal.app window joining the shared claude session via opus-attach.
+        let openBtn = NSButton(title: "↗", target: self, action: #selector(openInTerminalTapped))
+        openBtn.isBordered = false
+        openBtn.font = NSFont.systemFont(ofSize: 16, weight: .medium)
+        openBtn.contentTintColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.75)
+        openBtn.toolTip = "Open a Terminal.app window mirroring the shared session"
+        openBtn.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(openBtn)
+        NSLayoutConstraint.activate([
+            openBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 6),
+            openBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -10),
+            openBtn.widthAnchor.constraint(equalToConstant: 24),
+            openBtn.heightAnchor.constraint(equalToConstant: 22)
+        ])
+
         // Force layout so terminalArea has its initial bounds before we add tab 0.
         blur.layoutSubtreeIfNeeded()
 
@@ -470,6 +486,10 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             width: panel.frame.width,
             height: panel.frame.height
         )
+    }
+
+    @objc private func openInTerminalTapped() {
+        AppDelegate.shared?.launchTerminalSession()
     }
 
     @objc private func panelDidBecomeKey() {
@@ -1095,7 +1115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ClaudeBackend.shared.setPrimarySize(cols: cols, rows: rows)
     }
 
-    private func launchTerminalSession() {
+    fileprivate func launchTerminalSession() {
         // Open Terminal.app and run opus-attach, which connects to our socket
         // server and bridges Terminal.app's TTY to the shared claude session.
         // No tmux, no dtach — direct subscriber to the same backend the panel uses.
