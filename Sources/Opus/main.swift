@@ -424,6 +424,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             openBtn.widthAnchor.constraint(equalToConstant: 24),
             openBtn.heightAnchor.constraint(equalToConstant: 22)
         ])
+        openBtn.isHidden = (OpusPreferences.shared.pairingMode == .standalone)
 
         // Force layout so terminalArea has its initial bounds before we add tab 0.
         blur.layoutSubtreeIfNeeded()
@@ -432,6 +433,11 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // with Terminal.app via opus-attach). The pane's subscriber strips
         // cursor-visibility toggles so the caret stays visible while claude's
         // TUI is active. Tabs 1+ and any split spawn a private claude instead.
+        //
+        // Tab 0 always uses ClaudeBackend (the broadcaster). In mirror mode the
+        // socket server forwards its output to Terminal.app via opus-attach; in
+        // standalone mode the socket is never started, so the broadcaster has
+        // only the panel as subscriber — same code path, just one subscriber.
         ClaudeBackend.shared.startIfNeeded()
         let pane0 = TabPane.makeShared(frame: terminalArea.bounds, panel: self)
         styleTerminal(pane0.terminal)
@@ -1039,22 +1045,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Kill any stale dtach/socket leftovers so each launch is fresh.
         killStaleSessionIfOrphaned()
 
-        // Start the Unix socket server so external clients (opus-attach in
-        // Terminal.app) can subscribe to the same claude session as the panel.
-        socketServer.start()
+        let pairing = OpusPreferences.shared.pairingMode
+        if pairing == .mirror {
+            // Start the Unix socket server so external clients (opus-attach in
+            // Terminal.app) can subscribe to the same claude session as the panel.
+            socketServer.start()
 
-        // Phase 3b — focus-following resize for Terminal.app. When Terminal.app
-        // becomes the active app, query its front window's cols/rows and resize
-        // claude's PTY so the rendering matches.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self, selector: #selector(activeAppDidChange(_:)),
-            name: NSWorkspace.didActivateApplicationNotification, object: nil
-        )
+            // Phase 3b — focus-following resize for Terminal.app. When Terminal.app
+            // becomes the active app, query its front window's cols/rows and resize
+            // claude's PTY so the rendering matches.
+            NSWorkspace.shared.notificationCenter.addObserver(
+                self, selector: #selector(activeAppDidChange(_:)),
+                name: NSWorkspace.didActivateApplicationNotification, object: nil
+            )
+        }
 
         installAppMenu()
         nativePanel = QuickTerminalPanel()
         registerHotkey()
-        launchTerminalSession()
+
+        if pairing == .mirror {
+            launchTerminalSession()
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             self.nativePanel?.toggle()
         }
