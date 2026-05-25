@@ -134,8 +134,8 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if let c = self.container { c.handlePrivateTabTerminated(self) }
-            else { self.panel?.handlePrivateTabTerminated(self) }
+            // panel host now also routes through container — see Task 13.
+            self.container?.handlePrivateTabTerminated(self)
         }
     }
 
@@ -172,8 +172,8 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
 
     func setTerminalTitle(source: TerminalView, title: String) {
         self.title = title
-        if let c = self.container { c.updatePrivateTabTitle(self) }
-        else { panel?.updatePrivateTabTitle(self) }
+        // panel host now also routes through container — see Task 13.
+        container?.updatePrivateTabTitle(self)
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -206,7 +206,7 @@ final class TabPane {
 
     static func makeShared(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) -> TabPane {
         let pane = TabPane(frame: frame, wrapper: nil)
-        pane.terminal.terminalDelegate = container ?? panel
+        pane.terminal.terminalDelegate = container
         pane.sharedSubscription = ClaudeBackend.shared.subscribe { [weak pane] slice in
             let filtered = QuickTerminalPanel.stripCursorVisibilityToggles(slice)
             pane?.terminal.feed(byteArray: filtered[...])
@@ -299,40 +299,15 @@ private enum PanelGeometryDefaults {
     }
 }
 
-final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
+final class QuickTerminalPanel: NSObject {
     private let panel: OpusPanel
     private var blurView: NSVisualEffectView!
     private var tintView: NSView!
     private var imageBgView: NSImageView!
-    private var terminalArea: NSView!         // container for all tab views — shrinks when tab bar visible
-    private var tabs: [NSView] = []                       // top-level view per tab — a TerminalView when the tab has 1 pane, an NSSplitView once it gets a Cmd+D / Cmd+Shift+D split
-    private var tabPanes: [[TabPane]] = []                // all panes per tab (flat list); tab 0's first entry is the shared pane, everything else is private
-    private var tabActivePaneIndex: [Int] = []            // saved active pane index per tab (so switching tabs restores focus to wherever the user was)
-    private var tabTitles: [String] = []                  // mirrors `tabs` — title from terminal escape sequences of the *active* pane
-    private var activeTabIndex: Int = 0
-    private var tabBar: OpusTabBar!
-    private var tabBarHeightConstraint: NSLayoutConstraint!
-    private var terminalAreaBottomConstraint: NSLayoutConstraint!
+    private var container: TerminalContainerView!
     private var keyMonitor: Any?
     private var visible = false
     private var suppressResizeSave = false
-
-    // Currently-focused pane in the active tab.
-    fileprivate var activePane: TabPane? {
-        guard tabPanes.indices.contains(activeTabIndex) else { return nil }
-        let panes = tabPanes[activeTabIndex]
-        // Prefer firstResponder if it's one of our panes (handles click-to-focus
-        // between splits without us tracking every NSResponder change).
-        if let fr = panel.firstResponder as? TerminalView,
-           let p = panes.first(where: { $0.terminal === fr }) {
-            return p
-        }
-        let saved = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
-        guard panes.indices.contains(saved) else { return panes.first }
-        return panes[saved]
-    }
-
-    private var activeTerminal: TerminalView? { activePane?.terminal }
 
     override init() {
         let screen = NSScreen.main ?? NSScreen.screens.first!
@@ -390,39 +365,6 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         panel.contentView = blur
         blurView = blur
 
-        // Container for the terminals. Its height shrinks to make room for the
-        // tab bar when 2+ tabs are open, so the tab bar never overlaps the
-        // terminal output.
-        let area = NSView()
-        area.translatesAutoresizingMaskIntoConstraints = false
-        blur.addSubview(area)
-        let areaBottom = area.bottomAnchor.constraint(equalTo: blur.bottomAnchor, constant: -14)
-        NSLayoutConstraint.activate([
-            area.topAnchor.constraint(equalTo: blur.topAnchor, constant: 14),
-            area.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 14),
-            area.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -14),
-            areaBottom
-        ])
-        terminalArea = area
-        terminalAreaBottomConstraint = areaBottom
-
-        // Tab bar at the bottom of the blur — visible only when 2+ tabs.
-        let bar = OpusTabBar(frame: .zero)
-        bar.isHidden = true       // start hidden — we have 1 tab to begin with
-        bar.alphaValue = 0
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        bar.onSwitch = { [weak self] idx in self?.switchTab(to: idx) }
-        blur.addSubview(bar)
-        let heightC = bar.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: blur.leadingAnchor, constant: 10),
-            bar.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -10),
-            bar.bottomAnchor.constraint(equalTo: blur.bottomAnchor, constant: -6),
-            heightC
-        ])
-        tabBar = bar
-        tabBarHeightConstraint = heightC
-
         // "Open in Terminal" button — top-right of the blur. Spawns a fresh
         // Terminal.app window joining the shared claude session via opus-attach.
         let openBtn = NSButton(title: "↗", target: self, action: #selector(openInTerminalTapped))
@@ -440,26 +382,21 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         ])
         openBtn.isHidden = (OpusPreferences.shared.pairingMode == .standalone)
 
-        // Force layout so terminalArea has its initial bounds before we add tab 0.
+        // Force layout so the blur has its initial bounds before we add the container.
         blur.layoutSubtreeIfNeeded()
 
-        // Tab 0 starts with a single shared pane wired to ClaudeBackend (mirrored
-        // with Terminal.app via opus-attach). The pane's subscriber strips
-        // cursor-visibility toggles so the caret stays visible while claude's
-        // TUI is active. Tabs 1+ and any split spawn a private claude instead.
-        //
-        // Tab 0 always uses ClaudeBackend (the broadcaster). In mirror mode the
-        // socket server forwards its output to Terminal.app via opus-attach; in
-        // standalone mode the socket is never started, so the broadcaster has
-        // only the panel as subscriber — same code path, just one subscriber.
-        ClaudeBackend.shared.startIfNeeded()
-        let pane0 = TabPane.makeShared(frame: terminalArea.bounds, panel: self, container: nil)
-        styleTerminal(pane0.terminal)
-        terminalArea.addSubview(pane0.terminal)
-        tabs.append(pane0.terminal)
-        tabPanes.append([pane0])
-        tabActivePaneIndex.append(0)
-        tabTitles.append("Claude")
+        // Container hosts all tabs, panes, splits, tab bar, TerminalViewDelegate.
+        let contentBounds = blur.bounds
+        let containerFrame = NSRect(
+            x: 14, y: 14,
+            width: contentBounds.width - 28,
+            height: contentBounds.height - 28
+        )
+        let cont = TerminalContainerView(frame: containerFrame, useSharedTab0: true)
+        cont.host = self
+        cont.autoresizingMask = [.width, .height]
+        blur.addSubview(cont)
+        self.container = cont
 
         // Cmd+T / Cmd+W / Cmd+1..9 intercept for tab management.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
@@ -521,7 +458,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // Push the active pane's dimensions to claude — meaningful only if the
         // active pane is the shared one (no wrapper), since private panes own
         // their own PTYs and handle resize through their TerminalViewDelegate.
-        guard let pane = activePane, pane.wrapper == nil else { return }
+        guard let pane = container.activePane, pane.wrapper == nil else { return }
         let t = pane.terminal.getTerminal()
         ClaudeBackend.shared.setPrimarySize(cols: UInt16(t.cols), rows: UInt16(t.rows))
     }
@@ -597,27 +534,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         return output
     }
 
-    // MARK: Tab management
-
-    private func terminalFrame() -> NSRect {
-        return terminalArea.bounds
-    }
-
-    private func styleTerminal(_ t: TerminalView) {
-        t.autoresizingMask = [.width, .height]
-        t.nativeBackgroundColor = .clear
-        t.nativeForegroundColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 1.0)
-        // Explicit caret color — the default can inherit the (clear) background
-        // and become invisible. Use a warm cream that stays readable on blur.
-        t.caretColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
-        t.caretTextColor = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
-        t.allowMouseReporting = false
-        if let font = NSFont(name: "MesloLGS NF", size: 14)
-            ?? NSFont(name: "SF Mono", size: 14)
-            ?? NSFont(name: "Menlo", size: 14) {
-            t.font = font
-        }
-    }
+    // MARK: Key handling
 
     // Letter shortcuts match by character (works across layouts because
     // letter keys don't need Shift in any common Latin layout). Digit
@@ -643,317 +560,26 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         if mods == .command {
             if let chars = ev.charactersIgnoringModifiers?.lowercased() {
                 switch chars {
-                case "t": spawnNewTab(); return nil
-                case "w": closeActivePane(); return nil
-                case "d": splitActivePane(vertical: true); return nil   // side-by-side (iTerm2 convention)
-                case "c": copySelectionToPasteboard(); return nil
-                case "v": pasteFromPasteboard(); return nil
+                case "t": container.spawnNewTab(); return nil
+                case "w": container.closeActivePane(); return nil
+                case "d": container.splitActivePane(vertical: true); return nil   // side-by-side (iTerm2 convention)
+                case "c": container.copySelectionToPasteboard(); return nil
+                case "v": container.pasteFromPasteboard(); return nil
                 default: break
                 }
             }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
-                switchTab(to: tabIdx)
+                container.switchTab(to: tabIdx)
                 return nil
             }
         }
         // Cmd+Shift+D — split top/bottom.
         if mods == [.command, .shift],
            ev.charactersIgnoringModifiers?.lowercased() == "d" {
-            splitActivePane(vertical: false)
+            container.splitActivePane(vertical: false)
             return nil
         }
         return ev
-    }
-
-    /// Cmd+C — copy the active pane's current selection into the system pasteboard.
-    /// SwiftTerm exposes `getSelection()` on TerminalView directly (AppleTerminalView.swift:2251,
-    /// returns String?). If there's no selection (nil or empty), we fall back to
-    /// sending 0x03 (ETX/SIGINT) so the user's shell SIGINT muscle memory still works.
-    private func copySelectionToPasteboard() {
-        guard let terminal = activeTerminal else { return }
-        // API verified: TerminalView.getSelection() -> String? (SwiftTerm AppleTerminalView.swift:2251)
-        let selection = terminal.getSelection()
-        guard let text = selection, !text.isEmpty else {
-            // Re-fire Cmd+C as a literal SIGINT byte (0x03) so shells still behave.
-            // Route to the active pane's process (private) or the shared backend,
-            // matching pasteFromPasteboard's dispatch pattern.
-            let interrupt = ArraySlice<UInt8>([0x03])
-            if let wrapper = activePane?.wrapper {
-                wrapper.sendInput(bytes: interrupt)
-            } else {
-                ClaudeBackend.shared.send(data: interrupt)
-            }
-            return
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    /// Cmd+V — write the pasteboard string into the active pane's input channel.
-    /// Shared pane → ClaudeBackend (broadcasts to Terminal.app too). Private pane
-    /// → the wrapper's own LocalProcess.
-    private func pasteFromPasteboard() {
-        guard let pane = activePane,
-              let str = NSPasteboard.general.string(forType: .string),
-              !str.isEmpty else { return }
-        let bytes = ArraySlice(Array(str.utf8))
-        if let wrapper = pane.wrapper {
-            wrapper.sendInput(bytes: bytes)
-        } else {
-            ClaudeBackend.shared.send(data: bytes)
-        }
-    }
-
-    private func spawnNewTab() {
-        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: self, container: nil)
-        styleTerminal(pane.terminal)
-        pane.terminal.isHidden = true
-        terminalArea.addSubview(pane.terminal)
-        pane.start()
-        tabs.append(pane.terminal)
-        tabPanes.append([pane])
-        tabActivePaneIndex.append(0)
-        tabTitles.append("Claude")
-        switchTab(to: tabs.count - 1)
-    }
-
-    /// Close the currently-focused pane. If it's the last pane in its tab,
-    /// close the tab too. The shared pane of tab 0 (the only one without a
-    /// FilteredClaudeTab) is protected — it can't be closed.
-    private func closeActivePane() {
-        guard let pane = activePane else { return }
-        closePane(pane)
-    }
-
-    fileprivate func closePane(_ pane: TabPane) {
-        guard let tabIdx = tabPanes.firstIndex(where: { panes in panes.contains(where: { $0 === pane }) }),
-              let paneIdx = tabPanes[tabIdx].firstIndex(where: { $0 === pane }) else { return }
-
-        // Don't let the user kill the shared pane in tab 0 — that's the session
-        // mirrored with Terminal.app via opus-attach.
-        if tabIdx == 0 && pane.wrapper == nil { return }
-
-        pane.terminate()
-
-        let view = pane.terminal
-        let parent = view.superview
-        // Order matters: drop from arranged list first (NSSplitView keeps its
-        // internal constraints in sync), then detach from the view hierarchy,
-        // then redistribute remaining panes evenly.
-        if let parentSplit = parent as? NSSplitView {
-            parentSplit.removeArrangedSubview(view)
-            view.removeFromSuperview()
-            parentSplit.adjustSubviews()
-        } else {
-            view.removeFromSuperview()
-        }
-        tabPanes[tabIdx].remove(at: paneIdx)
-
-        if tabPanes[tabIdx].isEmpty {
-            // The tab itself has nothing left to show — drop it.
-            tabs[tabIdx].removeFromSuperview()
-            tabs.remove(at: tabIdx)
-            tabPanes.remove(at: tabIdx)
-            tabActivePaneIndex.remove(at: tabIdx)
-            tabTitles.remove(at: tabIdx)
-            if activeTabIndex >= tabs.count { activeTabIndex = max(0, tabs.count - 1) }
-            switchTab(to: activeTabIndex)
-        } else {
-            // Refocus a neighbor pane in the same tab.
-            let newIdx = min(paneIdx, tabPanes[tabIdx].count - 1)
-            tabActivePaneIndex[tabIdx] = newIdx
-            if activeTabIndex == tabIdx {
-                panel.makeFirstResponder(tabPanes[tabIdx][newIdx].terminal)
-            }
-            refreshActiveTabTitle()
-        }
-    }
-
-    /// Cmd+D (vertical=true, panes side by side) / Cmd+Shift+D (vertical=false,
-    /// panes top/bottom). Splits the active pane and spawns a private claude in
-    /// the new half. Splits nest: if the active pane's parent NSSplitView
-    /// already runs along the requested axis we just append; otherwise we wrap
-    /// the active pane in a new perpendicular NSSplitView (iTerm2 behavior).
-    private func splitActivePane(vertical: Bool) {
-        guard let oldPane = activePane,
-              tabPanes.indices.contains(activeTabIndex) else { return }
-
-        let oldView = oldPane.terminal
-        let parent = oldView.superview
-        // Inherit oldView's frame so the new pane never starts at zero size —
-        // NSSplitView would briefly hand a 0×0 child to SwiftTerm otherwise,
-        // and its size-change calc can produce negative cols/rows during that
-        // first layout pass (which is what makes the UInt16 conversion crash).
-        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: self, container: nil)
-        styleTerminal(newPane.terminal)
-        newPane.start()
-
-        if let parentSplit = parent as? NSSplitView, parentSplit.isVertical == vertical {
-            // Same axis — extend the existing split.
-            let idx = (parentSplit.arrangedSubviews.firstIndex(of: oldView) ?? 0) + 1
-            parentSplit.insertArrangedSubview(newPane.terminal, at: idx)
-            parentSplit.adjustSubviews()
-        } else if let parentSplit = parent as? NSSplitView {
-            // Different axis — wrap old pane in a perpendicular split. NSSplitView
-            // doesn't auto-redistribute when we remove and re-insert: removing
-            // newPane1 lets sharedTerminal stretch to full width, then the inner
-            // gets 0 width on insertion (looks like "Cmd+Shift+D cancelled Cmd+D").
-            // adjustSubviews() forces an even split again.
-            let idx = parentSplit.arrangedSubviews.firstIndex(of: oldView) ?? 0
-            parentSplit.removeArrangedSubview(oldView)
-            oldView.removeFromSuperview()
-            let inner = OpusSplitView(frame: oldView.frame)
-            inner.isVertical = vertical
-            inner.addArrangedSubview(oldView)
-            inner.addArrangedSubview(newPane.terminal)
-            parentSplit.insertArrangedSubview(inner, at: idx)
-            parentSplit.adjustSubviews()
-            inner.adjustSubviews()
-        } else {
-            // Old view is the tab's top-level — promote it inside a new NSSplitView.
-            let root = OpusSplitView(frame: oldView.frame)
-            root.isVertical = vertical
-            root.autoresizingMask = oldView.autoresizingMask
-            oldView.removeFromSuperview()
-            root.addArrangedSubview(oldView)
-            root.addArrangedSubview(newPane.terminal)
-            terminalArea.addSubview(root)
-            tabs[activeTabIndex] = root
-            root.adjustSubviews()
-        }
-
-        tabPanes[activeTabIndex].append(newPane)
-        tabActivePaneIndex[activeTabIndex] = tabPanes[activeTabIndex].count - 1
-        panel.makeFirstResponder(newPane.terminal)
-        refreshActiveTabTitle()
-    }
-
-    private func switchTab(to index: Int) {
-        guard tabs.indices.contains(index) else { return }
-
-        // Before we leave the current tab, remember which pane has focus so we
-        // can restore it next time the user comes back.
-        let prev = activeTabIndex
-        if tabPanes.indices.contains(prev),
-           let fr = panel.firstResponder as? TerminalView,
-           let paneIdx = tabPanes[prev].firstIndex(where: { $0.terminal === fr }) {
-            tabActivePaneIndex[prev] = paneIdx
-        }
-
-        for (i, view) in tabs.enumerated() { view.isHidden = (i != index) }
-        activeTabIndex = index
-        refreshActiveTabTitle()
-        updateTabIndicator()
-
-        guard tabPanes.indices.contains(index) else { return }
-        let savedIdx = tabActivePaneIndex.indices.contains(index) ? tabActivePaneIndex[index] : 0
-        let panes = tabPanes[index]
-        guard panes.indices.contains(savedIdx) else { return }
-        let pane = panes[savedIdx]
-        panel.makeFirstResponder(pane.terminal)
-
-        // Shared pane → push its dimensions back to the broadcast PTY.
-        if pane.wrapper == nil {
-            ClaudeBackend.shared.setPrimarySize(
-                cols: UInt16(pane.terminal.getTerminal().cols),
-                rows: UInt16(pane.terminal.getTerminal().rows)
-            )
-        }
-    }
-
-    /// Recompute the active tab's title from its currently-active pane.
-    private func refreshActiveTabTitle() {
-        guard tabPanes.indices.contains(activeTabIndex),
-              tabActivePaneIndex.indices.contains(activeTabIndex) else { return }
-        let idx = tabActivePaneIndex[activeTabIndex]
-        let panes = tabPanes[activeTabIndex]
-        guard panes.indices.contains(idx) else { return }
-        tabTitles[activeTabIndex] = panes[idx].title
-        tabBar.titles = tabTitles
-    }
-
-    private func updateTabIndicator() {
-        tabBar.tabCount = tabs.count
-        tabBar.activeIndex = activeTabIndex
-        tabBar.titles = tabTitles
-        // Show the bar only when 2+ tabs; shrink terminalArea to make room.
-        let showBar = tabs.count > 1
-        tabBar.isHidden = !showBar
-        tabBar.alphaValue = showBar ? 1 : 0
-        tabBarHeightConstraint.constant = showBar ? 26 : 0
-        terminalAreaBottomConstraint.constant = showBar ? -(14 + 26 + 4) : -14
-        tabBar.needsDisplay = true
-        blurView.layoutSubtreeIfNeeded()
-    }
-
-    // MARK: Private pane callbacks (FilteredClaudeTab → panel)
-
-    fileprivate func handlePrivateTabTerminated(_ wrapper: FilteredClaudeTab) {
-        // The claude inside a private pane exited — close just that pane (and
-        // the tab if it was the only pane left).
-        for paneList in tabPanes {
-            if let pane = paneList.first(where: { $0.wrapper === wrapper }) {
-                closePane(pane)
-                return
-            }
-        }
-    }
-
-    fileprivate func updatePrivateTabTitle(_ wrapper: FilteredClaudeTab) {
-        for (tabIdx, paneList) in tabPanes.enumerated() {
-            guard let pane = paneList.first(where: { $0.wrapper === wrapper }) else { continue }
-            pane.title = wrapper.title
-            let activeIdx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
-            if paneList.indices.contains(activeIdx) && paneList[activeIdx] === pane {
-                tabTitles[tabIdx] = wrapper.title
-                tabBar.titles = tabTitles
-            }
-            return
-        }
-    }
-
-
-    // MARK: - TerminalViewDelegate
-
-    func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        ClaudeBackend.shared.send(data: data)
-    }
-
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        // Same guard as FilteredClaudeTab: skip negative/zero transients from
-        // NSSplitView's first layout pass to avoid UInt16 conversion traps.
-        guard newCols > 0, newRows > 0 else { return }
-        ClaudeBackend.shared.setPrimarySize(cols: UInt16(newCols), rows: UInt16(newRows))
-    }
-
-    func setTerminalTitle(source: TerminalView, title: String) {
-        // Called for shared panes (their terminalDelegate is the panel itself).
-        // Private panes route titles through their own FilteredClaudeTab which
-        // forwards to `updatePrivateTabTitle`.
-        for (tabIdx, paneList) in tabPanes.enumerated() {
-            guard let pane = paneList.first(where: { $0.terminal === source }) else { continue }
-            pane.title = title
-            let activeIdx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
-            if paneList.indices.contains(activeIdx) && paneList[activeIdx] === pane {
-                tabTitles[tabIdx] = title
-                tabBar.titles = tabTitles
-            }
-            return
-        }
-    }
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func scrolled(source: TerminalView, position: Double) {}
-    func clipboardCopy(source: TerminalView, content: Data) {
-        NSPasteboard.general.clearContents()
-        if let s = String(data: content, encoding: .utf8) {
-            NSPasteboard.general.setString(s, forType: .string)
-        }
-    }
-    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-    func bell(source: TerminalView) {}
-    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
-    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        if let url = URL(string: link) { NSWorkspace.shared.open(url) }
     }
 
     private func processTerminatedShim() {
@@ -1008,7 +634,7 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
         // takes keyboard focus without activating Opus as the foreground app.
         panel.orderFrontRegardless()
         panel.makeKey()
-        if let terminal = activeTerminal { panel.makeFirstResponder(terminal) }
+        if let terminal = container.activeTerminal { panel.makeFirstResponder(terminal) }
         visible = true
 
         // CABasicAnimation for slide
@@ -1075,6 +701,15 @@ final class QuickTerminalPanel: NSObject, TerminalViewDelegate {
             return  // resign caused by Space switch — don't autohide
         }
         if visible { hide() }
+    }
+}
+
+// MARK: - TerminalContainerHost conformance
+
+extension QuickTerminalPanel: TerminalContainerHost {
+    var hostWindow: NSWindow? { panel }
+    func openInTerminalRequested() {
+        AppDelegate.shared?.launchTerminalSession()
     }
 }
 
