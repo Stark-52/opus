@@ -44,7 +44,7 @@ final class SettingsWindowController: NSWindowController {
 
         tabView.addTabViewItem(generalTab())
         tabView.addTabViewItem(appearanceTab())
-        tabView.addTabViewItem(windowModeTab())
+        tabView.addTabViewItem(displayTab())
     }
 
     private func generalTab() -> NSTabViewItem {
@@ -86,23 +86,7 @@ final class SettingsWindowController: NSWindowController {
         cwdPickBtn.bezelStyle = .rounded
         self.cwdField = cwdField
 
-        // — Pairing mode —
-        let pairLabel = makeFieldLabel("Terminal.app pairing")
-        let pairPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        pairPopup.translatesAutoresizingMaskIntoConstraints = false
-        for mode in OpusPairingMode.allCases {
-            pairPopup.addItem(withTitle: mode.displayName)
-        }
-        pairPopup.selectItem(at: OpusPairingMode.allCases.firstIndex(of: OpusPreferences.shared.pairingMode) ?? 0)
-        pairPopup.target = self
-        pairPopup.action = #selector(onPairingChanged(_:))
-
-        let pairHint = NSTextField(labelWithString: "Restart Opus to apply pairing changes.")
-        pairHint.translatesAutoresizingMaskIntoConstraints = false
-        pairHint.font = NSFont.systemFont(ofSize: 10, weight: .regular)
-        pairHint.textColor = .secondaryLabelColor
-
-        for v in [cmdLabel, cmdPopup, customField, cwdLabel, cwdField, cwdPickBtn, pairLabel, pairPopup, pairHint] {
+        for v in [cmdLabel, cmdPopup, customField, cwdLabel, cwdField, cwdPickBtn] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -126,17 +110,7 @@ final class SettingsWindowController: NSWindowController {
             cwdField.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
             cwdField.trailingAnchor.constraint(equalTo: cwdPickBtn.leadingAnchor, constant: -8),
             cwdPickBtn.centerYAnchor.constraint(equalTo: cwdLabel.centerYAnchor),
-            cwdPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-
-            pairLabel.topAnchor.constraint(equalTo: cwdLabel.bottomAnchor, constant: 30),
-            pairLabel.leadingAnchor.constraint(equalTo: cmdLabel.leadingAnchor),
-            pairLabel.widthAnchor.constraint(equalToConstant: 180),
-            pairPopup.centerYAnchor.constraint(equalTo: pairLabel.centerYAnchor),
-            pairPopup.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
-            pairPopup.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            pairHint.topAnchor.constraint(equalTo: pairPopup.bottomAnchor, constant: 4),
-            pairHint.leadingAnchor.constraint(equalTo: pairPopup.leadingAnchor),
-            pairHint.trailingAnchor.constraint(equalTo: pairPopup.trailingAnchor)
+            cwdPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
         ])
 
         item.view = view
@@ -231,27 +205,25 @@ final class SettingsWindowController: NSWindowController {
         return item
     }
 
-    private func windowModeTab() -> NSTabViewItem {
-        let item = NSTabViewItem(identifier: "window")
-        item.label = "Window"
+    private func displayTab() -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: "display")
+        item.label = "Display"
         let view = NSView()
 
-        let label = NSTextField(labelWithString: "Window mode")
+        let label = NSTextField(labelWithString: "Display mode")
         label.alignment = .right
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.addItems(withTitles: [
-            "Slide-down panel only",
-            "Main window only",
-            "Both (Cmd+Ctrl+T panel, Cmd+Ctrl+M main)"
-        ])
-        let current = OpusPreferences.shared.windowMode
-        popup.selectItem(at: ["panel", "main", "both"].firstIndex(of: current) ?? 0)
+        for mode in OpusDisplayMode.allCases {
+            popup.addItem(withTitle: mode.displayName)
+        }
+        let current = OpusPreferences.shared.displayMode
+        popup.selectItem(at: OpusDisplayMode.allCases.firstIndex(of: current) ?? 0)
         popup.target = self
-        popup.action = #selector(onWindowModeChanged(_:))
+        popup.action = #selector(onDisplayModeChanged(_:))
 
         let hint = NSTextField(wrappingLabelWithString:
-            "Restart Opus to apply window mode changes. " +
-            "Main window has its own private session (does not mirror Terminal.app).")
+            "All surfaces in the chosen mode share the same Claude session — " +
+            "what you type in one shows everywhere. Restart Opus to apply changes.")
         hint.font = NSFont.systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
 
@@ -275,9 +247,8 @@ final class SettingsWindowController: NSWindowController {
         return item
     }
 
-    @objc private func onWindowModeChanged(_ sender: NSPopUpButton) {
-        let modes = ["panel", "main", "both"]
-        OpusPreferences.shared.windowMode = modes[sender.indexOfSelectedItem]
+    @objc private func onDisplayModeChanged(_ sender: NSPopUpButton) {
+        OpusPreferences.shared.displayMode = OpusDisplayMode.allCases[sender.indexOfSelectedItem]
     }
 
     private func makeFieldLabel(_ s: String) -> NSTextField {
@@ -311,11 +282,6 @@ final class SettingsWindowController: NSWindowController {
             OpusPreferences.shared.workingDirectory = url.path
             cwdField?.stringValue = url.path
         }
-    }
-
-    @objc private func onPairingChanged(_ sender: NSPopUpButton) {
-        let mode = OpusPairingMode.allCases[sender.indexOfSelectedItem]
-        OpusPreferences.shared.pairingMode = mode
     }
 
     @objc private func onAppearanceModeChanged(_ sender: NSPopUpButton) {

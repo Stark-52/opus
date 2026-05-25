@@ -26,19 +26,31 @@ enum OpusInitialCommandPreset: String, CaseIterable {
     }
 }
 
-/// Pairing mode for Terminal.app integration. Mirror = launch Terminal.app +
-/// opus-attach on startup so the panel and Terminal share one session.
-/// Standalone = panel runs solo, no Terminal.app, no socket server.
-enum OpusPairingMode: String, CaseIterable {
-    case mirror     = "mirror"
-    case standalone = "standalone"
+/// Which surfaces Opus exposes the shared Claude session through. All
+/// combinations keep tab 0 of every surface subscribed to the same
+/// ClaudeBackend broadcast, so what you type in one shows everywhere.
+enum OpusDisplayMode: String, CaseIterable {
+    /// Native Terminal.app window via opus-attach + slide-down panel.
+    case nativeAndPanel = "nativeAndPanel"
+    /// Slide-down panel + Main window (NSWindow). No Terminal.app.
+    case panelAndMain   = "panelAndMain"
+    /// Slide-down panel only.
+    case panelOnly      = "panelOnly"
+    /// Main window only.
+    case mainOnly       = "mainOnly"
 
     var displayName: String {
         switch self {
-        case .mirror:     return "Mirror with Terminal.app"
-        case .standalone: return "Standalone (panel only)"
+        case .nativeAndPanel: return "Terminal.app + Quick Terminal"
+        case .panelAndMain:   return "Quick Terminal + Main Window"
+        case .panelOnly:      return "Quick Terminal only"
+        case .mainOnly:       return "Main Window only"
         }
     }
+
+    var includesNativeTerminal: Bool { self == .nativeAndPanel }
+    var includesPanel: Bool { self != .mainOnly }
+    var includesMain:  Bool { self == .panelAndMain || self == .mainOnly }
 }
 
 final class OpusPreferences {
@@ -51,14 +63,12 @@ final class OpusPreferences {
         static let initialCommandPreset = "opus.initialCommandPreset"
         static let customCommand        = "opus.customCommand"
         static let workingDirectory     = "opus.workingDirectory"
-        static let pairingMode          = "opus.pairingMode"
+        static let displayMode          = "opus.displayMode"
         static let onboardingShown      = "opus.onboardingShown"
         // Appearance (used in Phase 4)
         static let appearanceMode       = "opus.appearanceMode"
         static let appearanceTintRGBA   = "opus.appearanceTintRGBA"
         static let appearanceImagePath  = "opus.appearanceImagePath"
-        // Window mode (used in Phase 5)
-        static let windowMode           = "opus.windowMode"
     }
 
     // MARK: Typed accessors
@@ -84,12 +94,12 @@ final class OpusPreferences {
         set { write(K.workingDirectory, newValue) }
     }
 
-    var pairingMode: OpusPairingMode {
+    var displayMode: OpusDisplayMode {
         get {
-            let raw = defaults.string(forKey: K.pairingMode) ?? OpusPairingMode.mirror.rawValue
-            return OpusPairingMode(rawValue: raw) ?? .mirror
+            let raw = defaults.string(forKey: K.displayMode) ?? OpusDisplayMode.nativeAndPanel.rawValue
+            return OpusDisplayMode(rawValue: raw) ?? .nativeAndPanel
         }
-        set { write(K.pairingMode, newValue.rawValue) }
+        set { write(K.displayMode, newValue.rawValue) }
     }
 
     var onboardingShown: Bool {
@@ -109,12 +119,6 @@ final class OpusPreferences {
     var appearanceImagePath: String? {
         get { defaults.string(forKey: K.appearanceImagePath) }
         set { write(K.appearanceImagePath, newValue) }
-    }
-
-    // Window mode — see Phase 5.
-    var windowMode: String {
-        get { defaults.string(forKey: K.windowMode) ?? "panel" }
-        set { write(K.windowMode, newValue) }
     }
 
     // MARK: Computed

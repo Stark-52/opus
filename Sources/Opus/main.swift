@@ -388,7 +388,9 @@ final class QuickTerminalPanel: NSObject {
             openBtn.widthAnchor.constraint(equalToConstant: 24),
             openBtn.heightAnchor.constraint(equalToConstant: 22)
         ])
-        openBtn.isHidden = (OpusPreferences.shared.pairingMode == .standalone)
+        // The ↗ button spawns a Terminal.app window — only meaningful when the
+        // current displayMode includes the native Terminal surface.
+        openBtn.isHidden = !OpusPreferences.shared.displayMode.includesNativeTerminal
 
         // Force layout so the blur has its initial bounds before we add the container.
         blur.layoutSubtreeIfNeeded()
@@ -757,10 +759,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Kill any stale dtach/socket leftovers so each launch is fresh.
         killStaleSessionIfOrphaned()
 
-        let pairing = OpusPreferences.shared.pairingMode
-        let mode = OpusPreferences.shared.windowMode
+        let display = OpusPreferences.shared.displayMode
 
-        if pairing == .mirror {
+        if display.includesNativeTerminal {
             // Start the Unix socket server so external clients (opus-attach in
             // Terminal.app) can subscribe to the same claude session as the panel.
             socketServer.start()
@@ -776,10 +777,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installAppMenu()
 
-        if mode == "panel" || mode == "both" {
+        if display.includesPanel {
             nativePanel = QuickTerminalPanel()
         }
-        if mode == "main" || mode == "both" {
+        if display.includesMain {
             _ = MainTerminalWindow.shared   // instantiates lazily
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 MainTerminalWindow.shared.show()
@@ -788,15 +789,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         registerHotkey()
 
-        // Only launch the mirrored Terminal.app if we have a panel + pairing is mirror.
-        if pairing == .mirror, mode != "main" {
+        if display.includesNativeTerminal {
             launchTerminalSession()
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             OnboardingWindowController.shared.showIfNeeded()
         }
-        if mode == "panel" || mode == "both" {
+        if display.includesPanel {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.nativePanel?.toggle()
             }
@@ -823,11 +823,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // exists, toggle it; if only the main window exists, show it; if neither,
     // fall back to showing the panel even if it's nil-or-hidden.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let mode = OpusPreferences.shared.windowMode
-        if mode == "panel" || mode == "both" {
+        let display = OpusPreferences.shared.displayMode
+        if display.includesPanel {
             nativePanel?.toggle()
         }
-        if mode == "main" || mode == "both" {
+        if display.includesMain {
             MainTerminalWindow.shared.show()
         }
         return true
@@ -838,16 +838,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // to get back. Cmd+Ctrl+T / Cmd+Ctrl+M still work globally too.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let mode = OpusPreferences.shared.windowMode
+        let display = OpusPreferences.shared.displayMode
 
-        if mode == "panel" || mode == "both" {
+        if display.includesPanel {
             menu.addItem(NSMenuItem(
                 title: "Show Quick Terminal",
                 action: #selector(showQuickTerminalAction),
                 keyEquivalent: ""
             ))
         }
-        if mode == "main" || mode == "both" {
+        if display.includesMain {
             menu.addItem(NSMenuItem(
                 title: "Show Main Window",
                 action: #selector(showMainWindowAction),
@@ -992,8 +992,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NSLog("Opus hotkey Cmd+Ctrl+T registered (status=\(status))")
 
-        let windowMode = OpusPreferences.shared.windowMode
-        if windowMode == "main" || windowMode == "both" {
+        if OpusPreferences.shared.displayMode.includesMain {
             let idM = EventHotKeyID(signature: OSType(0x4F505553), id: 2)
             let statusM = RegisterEventHotKey(
                 46,                                    // kVK_ANSI_M

@@ -390,7 +390,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let title = NSTextField(labelWithString: "Session ended")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
         title.textColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
-        title.translatesAutoresizingMaskIntoConstraints = false
+        title.alignment = .center
 
         let subtitle = NSTextField(labelWithString:
             isShared
@@ -399,7 +399,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         )
         subtitle.font = NSFont.systemFont(ofSize: 12)
         subtitle.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.65)
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        subtitle.alignment = .center
 
         let restartBtn = NSButton(
             title: "Start new session",
@@ -408,8 +408,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                              : #selector(restartPrivateFromOverlay(_:))
         )
         restartBtn.bezelStyle = .rounded
-        restartBtn.keyEquivalent = "\r"   // Return key activates
-        restartBtn.translatesAutoresizingMaskIntoConstraints = false
+        restartBtn.keyEquivalent = "\r"
 
         let closeBtn = NSButton(
             title: "Close Opus",
@@ -417,23 +416,29 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             action: #selector(quitOpusFromOverlay)
         )
         closeBtn.bezelStyle = .rounded
-        closeBtn.translatesAutoresizingMaskIntoConstraints = false
 
-        for v in [title, subtitle, restartBtn, closeBtn] {
-            overlay.addSubview(v)
-        }
+        // Stack vertically — robust on any pane size (no overflow, no clipping).
+        let stack = NSStackView(views: [title, subtitle, restartBtn, closeBtn])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 10
+        stack.setCustomSpacing(4, after: title)        // tighten title→subtitle
+        stack.setCustomSpacing(18, after: subtitle)    // breathe before buttons
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        overlay.addSubview(stack)
+
+        // Buttons match width for a clean stacked look.
+        let btnWidth = restartBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 180)
+        btnWidth.priority = .defaultHigh
+        let closeWidth = closeBtn.widthAnchor.constraint(equalTo: restartBtn.widthAnchor)
 
         NSLayoutConstraint.activate([
-            title.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            title.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: -48),
-            subtitle.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
-            restartBtn.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            restartBtn.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 20),
-            restartBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
-            closeBtn.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
-            closeBtn.topAnchor.constraint(equalTo: restartBtn.bottomAnchor, constant: 8),
-            closeBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 180)
+            stack.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -16),
+            btnWidth,
+            closeWidth
         ])
 
         pane.terminal.addSubview(overlay)
