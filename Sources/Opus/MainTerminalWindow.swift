@@ -54,6 +54,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             case "d": container.splitActivePane(vertical: true); return nil
             case "c": container.copySelectionToPasteboard(); return nil
             case "v": container.pasteFromPasteboard(); return nil
+            case ",": SettingsWindowController.shared.show(); return nil
             default: break
             }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
