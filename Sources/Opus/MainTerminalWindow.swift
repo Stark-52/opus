@@ -31,7 +31,10 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
 
     private func setupContent() {
         guard let win = window, let content = win.contentView else { return }
-        let cont = TerminalContainerView(frame: content.bounds, useSharedTab0: false)
+        // useSharedTab0: true → main window's tab 0 subscribes to the same
+        // ClaudeBackend broadcast as the panel and Terminal.app. Typing in any
+        // surface shows in every surface. Cmd+T spawns private tabs as before.
+        let cont = TerminalContainerView(frame: content.bounds, useSharedTab0: true)
         cont.host = self
         cont.autoresizingMask = [.width, .height]
         content.addSubview(cont)
