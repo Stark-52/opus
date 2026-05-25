@@ -12,9 +12,9 @@ Opus.app
 │     ├── SocketServer               — Unix domain socket at /tmp/opus.sock (mirror mode only)
 │     ├── QuickTerminalPanel?        — slide-down NSPanel host (panel/both modes)
 │     ├── MainTerminalWindow?        — standalone NSWindow host (main/both modes)
-│     ├── SettingsWindowController   — NSTabView with General / Appearance / Window
+│     ├── SettingsWindowController   — NSTabView with General / Appearance / Display
 │     ├── OnboardingWindowController — first-launch TCC prompts
-│     └── launchTerminalSession()    — AppleScript spawns Terminal.app + opus-attach (mirror mode)
+│     └── launchTerminalSession()    — AppleScript spawns Terminal.app + opus-attach (only when displayMode includes the native surface)
 │
 ├── ClaudeBackend (singleton)
 │     ├── owns a single LocalProcess (SwiftTerm) running the configured command
@@ -46,6 +46,21 @@ Two hosts can embed a `TerminalContainerView`:
 - **MainTerminalWindow** — standard NSWindow, frame auto-saved across launches via `setFrameAutosaveName`, fullscreen-capable. No appearance wrapping (uses default macOS chrome).
 
 Each host implements `TerminalContainerHost` (provides `hostWindow: NSWindow?` and `openInTerminalRequested()`).
+
+Both hosts create their container with `useSharedTab0: true`, so each surface's tab 0 subscribes to the same `ClaudeBackend` broadcast. With `displayMode == .panelAndMain`, the panel and the main window mirror each other live (and the panel mirrors Terminal.app via `opus-attach` in `nativeAndPanel`). `Cmd+T` always spawns a private tab — those keep their own `LocalProcess` and don't sync between surfaces.
+
+## Display modes
+
+`OpusPreferences.displayMode` picks which surfaces are alive at launch:
+
+| Mode | Panel | Main Window | Terminal.app + socket |
+|---|---|---|---|
+| `nativeAndPanel` (default) | ✓ | — | ✓ |
+| `panelAndMain` | ✓ | ✓ | — |
+| `panelOnly` | ✓ | — | — |
+| `mainOnly` | — | ✓ | — |
+
+`AppDelegate.applicationDidFinishLaunching` reads the mode once and gates: socket server startup, `launchTerminalSession()`, `nativePanel = QuickTerminalPanel()`, and `MainTerminalWindow.shared.show()`. Cmd+Ctrl+M is only registered as a global hotkey when the mode includes the main window. Changing the mode in Settings requires a restart to apply.
 
 ## PTY ownership
 
@@ -95,12 +110,11 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.initialCommandPreset` | `OpusInitialCommandPreset` (claude/shell/custom) | `claude` |
 | `opus.customCommand` | String | "" |
 | `opus.workingDirectory` | String | `~/Documents/GitHub/ClaudeUltra` |
-| `opus.pairingMode` | `OpusPairingMode` (mirror/standalone) | `mirror` |
+| `opus.displayMode` | `OpusDisplayMode` (nativeAndPanel/panelAndMain/panelOnly/mainOnly) | `nativeAndPanel` |
 | `opus.onboardingShown` | Bool | `false` |
 | `opus.appearanceMode` | String (default/transparent/tint/image) | `default` |
 | `opus.appearanceTintRGBA` | `[Double]` (4 components) | `[0.04, 0.05, 0.07, 0.55]` |
 | `opus.appearanceImagePath` | String? | `nil` |
-| `opus.windowMode` | String (panel/main/both) | `panel` |
 | `opus.panelGeometry.display<DisplayID>` | `["width": Double, "height": Double]` | — |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
@@ -128,8 +142,8 @@ Global hotkeys are registered via Carbon `RegisterEventHotKey`:
 
 | Hotkey | ID | Action |
 |---|---|---|
-| Cmd+Ctrl+T | 1 | Toggle quick-terminal panel (when window mode includes panel) |
-| Cmd+Ctrl+M | 2 | Toggle main window (when window mode includes main) |
+| Cmd+Ctrl+T | 1 | Toggle quick-terminal panel (when displayMode includes panel) |
+| Cmd+Ctrl+M | 2 | Toggle main window (only registered when displayMode includes main) |
 
 The dispatcher in `hotkeyCallback` reads the `EventHotKeyID.id` and routes accordingly.
 
