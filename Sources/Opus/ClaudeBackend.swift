@@ -30,7 +30,7 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         if FileManager.default.fileExists(atPath: "/tmp/opus_bench_active") {
             cmd = "{ time cat /tmp/opus_bench.txt ; } 2> /tmp/opus_render_time.txt; touch /tmp/opus_bench_done"
         } else {
-            cmd = "cd ~/Documents/GitHub/ClaudeUltra && command claude"
+            cmd = OpusPreferences.shared.resolvedSpawnCommand()
         }
         p.startProcess(
             executable: "/bin/zsh",

@@ -101,7 +101,7 @@ private final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalV
     func start() {
         process.startProcess(
             executable: "/bin/zsh",
-            args: ["-i", "-c", "cd ~/Documents/GitHub/ClaudeUltra && command claude"],
+            args: ["-i", "-c", OpusPreferences.shared.resolvedSpawnCommand()],
             environment: nil,
             execName: nil
         )
