@@ -44,7 +44,7 @@ final class SettingsWindowController: NSWindowController {
 
         tabView.addTabViewItem(generalTab())
         tabView.addTabViewItem(appearanceTab())
-        // Window tab is added in Phase 5.
+        tabView.addTabViewItem(windowModeTab())
     }
 
     private func generalTab() -> NSTabViewItem {
@@ -229,6 +229,55 @@ final class SettingsWindowController: NSWindowController {
         refreshAppearanceVisibility(mode: currentMode)
         item.view = view
         return item
+    }
+
+    private func windowModeTab() -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: "window")
+        item.label = "Window"
+        let view = NSView()
+
+        let label = NSTextField(labelWithString: "Window mode")
+        label.alignment = .right
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.addItems(withTitles: [
+            "Slide-down panel only",
+            "Main window only",
+            "Both (Cmd+Ctrl+T panel, Cmd+Ctrl+M main)"
+        ])
+        let current = OpusPreferences.shared.windowMode
+        popup.selectItem(at: ["panel", "main", "both"].firstIndex(of: current) ?? 0)
+        popup.target = self
+        popup.action = #selector(onWindowModeChanged(_:))
+
+        let hint = NSTextField(wrappingLabelWithString:
+            "Restart Opus to apply window mode changes. " +
+            "Main window has its own private session (does not mirror Terminal.app).")
+        hint.font = NSFont.systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+
+        for v in [label, popup, hint] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: view.topAnchor, constant: 24),
+            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            label.widthAnchor.constraint(equalToConstant: 160),
+            popup.centerYAnchor.constraint(equalTo: label.centerYAnchor),
+            popup.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 10),
+            popup.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            hint.topAnchor.constraint(equalTo: popup.bottomAnchor, constant: 8),
+            hint.leadingAnchor.constraint(equalTo: popup.leadingAnchor),
+            hint.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+        ])
+
+        item.view = view
+        return item
+    }
+
+    @objc private func onWindowModeChanged(_ sender: NSPopUpButton) {
+        let modes = ["panel", "main", "both"]
+        OpusPreferences.shared.windowMode = modes[sender.indexOfSelectedItem]
     }
 
     private func makeFieldLabel(_ s: String) -> NSTextField {
