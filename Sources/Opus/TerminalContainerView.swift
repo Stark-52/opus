@@ -41,6 +41,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         wantsLayer = true
         buildSubviews()
         bootstrapFirstTab()
+        // Accept files dragged from Finder → insert their full path (like Terminal.app).
+        registerForDraggedTypes([.fileURL])
         if useSharedTab0 {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(sharedBackendDidTerminate(_:)),
@@ -290,15 +292,63 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     func pasteFromPasteboard() {
-        guard let pane = activePane,
-              let str = NSPasteboard.general.string(forType: .string),
-              !str.isEmpty else { return }
-        let bytes = ArraySlice(Array(str.utf8))
-        if let wrapper = pane.wrapper {
+        guard activePane != nil else { return }
+        let pb = NSPasteboard.general
+        // Files copied/dragged from Finder carry their POSIX path under the
+        // file-URL type, while `.string` is only the display name (e.g. "QuranWay").
+        // Insert the full shell-quoted path(s), matching Terminal.app.
+        if let paths = filePathsString(from: pb) {
+            sendToActivePane(paths)
+            return
+        }
+        guard let str = pb.string(forType: .string), !str.isEmpty else { return }
+        sendToActivePane(str)
+    }
+
+    // MARK: Pasteboard / file-path helpers
+
+    /// Inject text into the active pane's PTY (private wrapper or shared backend).
+    private func sendToActivePane(_ text: String) {
+        guard !text.isEmpty else { return }
+        let bytes = ArraySlice(Array(text.utf8))
+        if let wrapper = activePane?.wrapper {
             wrapper.sendInput(bytes: bytes)
         } else {
             ClaudeBackend.shared.send(data: bytes)
         }
+    }
+
+    /// Single-quote a POSIX path so it survives the shell verbatim (spaces,
+    /// parentheses, etc.). Embedded single quotes become the `'\''` idiom.
+    private func shellQuote(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// If the pasteboard holds file URLs (Finder copy/drag), return their
+    /// shell-quoted POSIX paths joined by spaces. `nil` when no file URLs.
+    private func filePathsString(from pasteboard: NSPasteboard) -> String? {
+        guard let urls = pasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              !urls.isEmpty else { return nil }
+        return urls.map { shellQuote($0.path) }.joined(separator: " ")
+    }
+
+    // MARK: Drag & drop (Finder files → path in the terminal)
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        filePathsString(from: sender.draggingPasteboard) != nil ? .copy : []
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        filePathsString(from: sender.draggingPasteboard) != nil
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let paths = filePathsString(from: sender.draggingPasteboard) else { return false }
+        // Trailing space so the next typed argument doesn't glue onto the path.
+        sendToActivePane(paths + " ")
+        return true
     }
 
     func refreshActiveTabTitle() {
@@ -386,6 +436,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         overlay.wantsLayer = true
         overlay.autoresizingMask = [.width, .height]
         overlay.layer?.backgroundColor = NSColor(white: 0, alpha: 0.78).cgColor
+        // The overlay is always dark; force dark appearance so plain controls
+        // (the "Close Opus" button) render light text instead of inheriting the
+        // system's light-mode dark text, which is invisible on this background.
+        overlay.appearance = NSAppearance(named: .darkAqua)
 
         let title = NSTextField(labelWithString: "Session ended")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
