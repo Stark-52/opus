@@ -61,4 +61,13 @@ final class SpawnCommandTests: XCTestCase {
         // The empty-custom fallback stays flag-free: flags are a .claude-preset feature.
         XCTAssertEqual(cmd, prefix + "command claude")
     }
+
+    func testCwdWithDoubleQuoteIsEscaped() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "",
+            workingDirectory: "/Users/test/Pro\"ject",
+            skipPermissions: false, resumeMode: .none
+        )
+        XCTAssertEqual(cmd, "cd \"/Users/test/Pro\\\"ject\" && command claude")
+    }
 }
