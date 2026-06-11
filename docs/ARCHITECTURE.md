@@ -20,7 +20,11 @@ Opus.app
 │     ├── owns a single LocalProcess (SwiftTerm) running the configured command
 │     ├── broadcasts incoming bytes to all subscribers (panel pane, socket clients)
 │     ├── setPrimarySize(cols, rows) → ioctl(TIOCSWINSZ) on master FD via Mirror reflection on .childfd
-│     └── send(data:) — forwards stdin bytes from any client into the PTY
+│     ├── send(data:) — forwards stdin bytes from any client into the PTY
+│     └── restart(resume:) — SIGTERM child (SIGKILL after 1.5 s), respawn with optional --resume / --dangerously-skip-permissions
+│
+├── ClaudeSessionLocator — session-ID lookup for --resume
+│     └── encodes cwd → project-dir name, takes most-recently-modified UUID *.jsonl in ~/.claude/projects/<encoded>/
 │
 ├── TerminalContainerView (NSView)
 │     ├── tabs[] / tabPanes[][] / tabActivePaneIndex[] / tabTitles[]
@@ -36,6 +40,11 @@ Opus.app
       ├── UserDefaults-backed key/value store
       ├── posts opusPreferencesDidChange on every write
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload
+
+Tests/OpusTests/          — first test target (22 unit tests)
+      ├── spawn-command flag assembly
+      ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
+      └── MRU recent-projects list
 ```
 
 ## Hosting model
@@ -61,6 +70,24 @@ Both hosts create their container with `useSharedTab0: true`, so each surface's 
 | `mainOnly` | — | ✓ | — |
 
 `AppDelegate.applicationDidFinishLaunching` reads the mode once and gates: socket server startup, `launchTerminalSession()`, `nativePanel = QuickTerminalPanel()`, and `MainTerminalWindow.shared.show()`. Cmd+Ctrl+M is only registered as a global hotkey when the mode includes the main window. Changing the mode in Settings requires a restart to apply.
+
+## Session restart & dangerous mode (v1.2)
+
+`ClaudeBackend.restart(resume:)` SIGTERMs the child (SIGKILL escalation after
+1.5 s), then `processTerminated` — seeing the `isRestarting` flag — broadcasts
+a full terminal reset (`ESC c`) to all subscribers and respawns instead of
+posting the dead-session notification. Subscribers (panel, main window,
+opus-attach clients) never detach.
+
+`skipPermissionsActive` is per-app-run state on `ClaudeBackend`, seeded from
+the `opus.skipPermissions` default. The shield button in
+`TerminalContainerView` flips it via `toggleSkipPermissions()`, which restarts
+with `--resume <session-id>` so the same conversation reopens with the new
+permission mode. `ClaudeSessionLocator` resolves the ID: encode the cwd into
+Claude Code's project-dir name (`/` → `-`, dots kept; legacy all-non-alnum
+fallback), then take the most recently modified UUID-named `*.jsonl` in
+`~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
+worst case the existing "Session ended" overlay.
 
 ## PTY ownership
 
@@ -116,6 +143,12 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.appearanceTintRGBA` | `[Double]` (4 components) | `[0.04, 0.05, 0.07, 0.55]` |
 | `opus.appearanceImagePath` | String? | `nil` |
 | `opus.panelGeometry.display<DisplayID>` | `["width": Double, "height": Double]` | — |
+| `opus.skipPermissions` | Bool | `false` |
+| `opus.resumeLastConversation` | Bool | `false` |
+| `opus.launchAtLogin` | Bool | `false` |
+| `opus.terminalFontFamily` | String | "" (system default) |
+| `opus.terminalFontSize` | Double | `0` (system default) |
+| `opus.recentProjects` | `[String]` | `[]` |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
 
@@ -144,6 +177,7 @@ Global hotkeys are registered via Carbon `RegisterEventHotKey`:
 |---|---|---|
 | Cmd+Ctrl+T | 1 | Toggle quick-terminal panel (when displayMode includes panel) |
 | Cmd+Ctrl+M | 2 | Toggle main window (only registered when displayMode includes main) |
+| Cmd+Ctrl+R | 3 | Restart Claude session (kill + respawn, all surfaces stay attached) |
 
 The dispatcher in `hotkeyCallback` reads the `EventHotKeyID.id` and routes accordingly.
 
