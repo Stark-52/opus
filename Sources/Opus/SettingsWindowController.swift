@@ -3,6 +3,7 @@
 // Sections are added in their respective phases.
 
 import AppKit
+import ServiceManagement
 import UniformTypeIdentifiers
 
 final class SettingsWindowController: NSWindowController {
@@ -16,6 +17,10 @@ final class SettingsWindowController: NSWindowController {
     private var imagePathField: NSTextField?
     private var imageLabel: NSTextField?
     private var imagePickButton: NSButton?
+    private var skipPermsCheckbox: NSButton?
+    private var skipPermsHint: NSTextField?
+    private var resumeCheckbox: NSButton?
+    private var loginErrorLabel: NSTextField?
 
     private convenience init() {
         let window = NSWindow(
@@ -67,26 +72,63 @@ final class SettingsWindowController: NSWindowController {
 
         // — Custom command field (visible only when preset == .custom) —
         let customField = NSTextField(string: OpusPreferences.shared.customCommand)
-        customField.translatesAutoresizingMaskIntoConstraints = false
         customField.placeholderString = "e.g. tmux attach -t main"
         customField.target = self
         customField.action = #selector(onCustomCommandSubmitted(_:))
         customField.isHidden = (current != .custom)
         self.customCommandField = customField
 
+        // — Claude launch flags (visible only when preset == .claude) —
+        let isClaude = (current == .claude)
+        let skipCheckbox = NSButton(
+            checkboxWithTitle: "Skip permission prompts (--dangerously-skip-permissions)",
+            target: self, action: #selector(onSkipPermissionsToggled(_:))
+        )
+        skipCheckbox.state = OpusPreferences.shared.skipPermissions ? .on : .off
+        skipCheckbox.isHidden = !isClaude
+        self.skipPermsCheckbox = skipCheckbox
+
+        let skipHint = NSTextField(wrappingLabelWithString:
+            "Default for new Opus launches — Claude runs tools without asking for confirmation. " +
+            "You can also flip it live per-conversation with the shield button.")
+        skipHint.font = NSFont.systemFont(ofSize: 11)
+        skipHint.textColor = .secondaryLabelColor
+        skipHint.isHidden = !isClaude
+        self.skipPermsHint = skipHint
+
+        let resumeCheckbox = NSButton(
+            checkboxWithTitle: "Resume last conversation on launch (--continue)",
+            target: self, action: #selector(onResumeToggled(_:))
+        )
+        resumeCheckbox.state = OpusPreferences.shared.resumeLastConversation ? .on : .off
+        resumeCheckbox.isHidden = !isClaude
+        self.resumeCheckbox = resumeCheckbox
+
         // — Working directory —
         let cwdLabel = makeFieldLabel("Working directory")
         let cwdField = NSTextField(string: OpusPreferences.shared.workingDirectory)
-        cwdField.translatesAutoresizingMaskIntoConstraints = false
         cwdField.target = self
         cwdField.action = #selector(onCwdSubmitted(_:))
 
         let cwdPickBtn = NSButton(title: "Browse…", target: self, action: #selector(pickCwd))
-        cwdPickBtn.translatesAutoresizingMaskIntoConstraints = false
         cwdPickBtn.bezelStyle = .rounded
         self.cwdField = cwdField
 
-        for v in [cmdLabel, cmdPopup, customField, cwdLabel, cwdField, cwdPickBtn] {
+        // — Launch at login —
+        let loginCheckbox = NSButton(
+            checkboxWithTitle: "Launch Opus at login",
+            target: self, action: #selector(onLaunchAtLoginToggled(_:))
+        )
+        loginCheckbox.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+
+        let loginError = NSTextField(wrappingLabelWithString: "")
+        loginError.font = NSFont.systemFont(ofSize: 11)
+        loginError.textColor = .systemRed
+        loginError.isHidden = true
+        self.loginErrorLabel = loginError
+
+        for v in [cmdLabel, cmdPopup, customField, skipCheckbox, skipHint, resumeCheckbox,
+                  cwdLabel, cwdField, cwdPickBtn, loginCheckbox, loginError] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -103,14 +145,34 @@ final class SettingsWindowController: NSWindowController {
             customField.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
             customField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
 
-            cwdLabel.topAnchor.constraint(equalTo: customField.bottomAnchor, constant: 24),
+            skipCheckbox.topAnchor.constraint(equalTo: customField.bottomAnchor, constant: 14),
+            skipCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            skipCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            skipHint.topAnchor.constraint(equalTo: skipCheckbox.bottomAnchor, constant: 2),
+            skipHint.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor, constant: 18),
+            skipHint.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            resumeCheckbox.topAnchor.constraint(equalTo: skipHint.bottomAnchor, constant: 10),
+            resumeCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            resumeCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            cwdLabel.topAnchor.constraint(equalTo: resumeCheckbox.bottomAnchor, constant: 24),
             cwdLabel.leadingAnchor.constraint(equalTo: cmdLabel.leadingAnchor),
             cwdLabel.widthAnchor.constraint(equalToConstant: 180),
             cwdField.centerYAnchor.constraint(equalTo: cwdLabel.centerYAnchor),
             cwdField.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
             cwdField.trailingAnchor.constraint(equalTo: cwdPickBtn.leadingAnchor, constant: -8),
             cwdPickBtn.centerYAnchor.constraint(equalTo: cwdLabel.centerYAnchor),
-            cwdPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+            cwdPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            loginCheckbox.topAnchor.constraint(equalTo: cwdField.bottomAnchor, constant: 24),
+            loginCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            loginCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            loginError.topAnchor.constraint(equalTo: loginCheckbox.bottomAnchor, constant: 4),
+            loginError.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor, constant: 18),
+            loginError.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
         ])
 
         item.view = view
@@ -262,6 +324,10 @@ final class SettingsWindowController: NSWindowController {
         let preset = OpusInitialCommandPreset.allCases[sender.indexOfSelectedItem]
         OpusPreferences.shared.initialCommandPreset = preset
         customCommandField?.isHidden = (preset != .custom)
+        let isClaude = (preset == .claude)
+        skipPermsCheckbox?.isHidden = !isClaude
+        skipPermsHint?.isHidden = !isClaude
+        resumeCheckbox?.isHidden = !isClaude
     }
 
     @objc private func onCustomCommandSubmitted(_ sender: NSTextField) {
@@ -281,6 +347,31 @@ final class SettingsWindowController: NSWindowController {
         if panel.runModal() == .OK, let url = panel.url {
             OpusPreferences.shared.workingDirectory = url.path
             cwdField?.stringValue = url.path
+        }
+    }
+
+    @objc private func onSkipPermissionsToggled(_ sender: NSButton) {
+        OpusPreferences.shared.skipPermissions = (sender.state == .on)
+    }
+
+    @objc private func onResumeToggled(_ sender: NSButton) {
+        OpusPreferences.shared.resumeLastConversation = (sender.state == .on)
+    }
+
+    @objc private func onLaunchAtLoginToggled(_ sender: NSButton) {
+        do {
+            if sender.state == .on {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            loginErrorLabel?.isHidden = true
+        } catch {
+            loginErrorLabel?.stringValue =
+                "Couldn't update login item: \(error.localizedDescription)"
+            loginErrorLabel?.isHidden = false
+            // Resync the checkbox with the system's actual state.
+            sender.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         }
     }
 
