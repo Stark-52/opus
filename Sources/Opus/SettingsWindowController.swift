@@ -21,6 +21,7 @@ final class SettingsWindowController: NSWindowController {
     private var skipPermsHint: NSTextField?
     private var resumeCheckbox: NSButton?
     private var loginErrorLabel: NSTextField?
+    private var loginItemCheckbox: NSButton?
 
     private convenience init() {
         let window = NSWindow(
@@ -120,6 +121,7 @@ final class SettingsWindowController: NSWindowController {
             target: self, action: #selector(onLaunchAtLoginToggled(_:))
         )
         loginCheckbox.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        self.loginItemCheckbox = loginCheckbox
 
         let loginError = NSTextField(wrappingLabelWithString: "")
         loginError.font = NSFont.systemFont(ofSize: 11)
@@ -359,6 +361,10 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func onLaunchAtLoginToggled(_ sender: NSButton) {
+        // Note: SMAppService needs the app at its final install location
+        // (e.g. ~/Applications/). If launched translocated (e.g. straight
+        // from Downloads), register() succeeds but the login item points to
+        // the randomized path and won't fire after the app is moved.
         do {
             if sender.state == .on {
                 try SMAppService.mainApp.register()
@@ -417,6 +423,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     func show() {
+        loginItemCheckbox?.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
