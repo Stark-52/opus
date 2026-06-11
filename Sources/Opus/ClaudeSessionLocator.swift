@@ -8,12 +8,14 @@ import Foundation
 
 enum ClaudeSessionLocator {
     /// Encodings of a cwd into Claude Code's project dir name, most likely
-    /// first. Current versions map "/" → "-" and keep dots; older versions
-    /// replaced every non-alphanumeric character with "-".
+    /// first. Current versions replace every non-alphanumeric character with
+    /// "-" (so "/a/.claude/x" → "-a--claude-x"); older versions kept dots
+    /// ("/a/.claude/x" → "-a-.claude-x"). Both still exist on disk, so try
+    /// both. Identical for any path without dots.
     static func projectDirNameCandidates(for cwd: String) -> [String] {
-        let current = cwd.replacingOccurrences(of: "/", with: "-")
-        let legacy = String(cwd.map { $0.isLetter || $0.isNumber ? $0 : "-" })
-        return current == legacy ? [current] : [current, legacy]
+        let current = String(cwd.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        let older = cwd.replacingOccurrences(of: "/", with: "-")
+        return current == older ? [current] : [current, older]
     }
 
     /// UUID (filename sans .jsonl) of the most recently modified session in
