@@ -24,6 +24,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabBar: OpusTabBar!
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
+    private var shieldButton: NSButton?
 
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
@@ -47,6 +48,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(sharedBackendDidTerminate(_:)),
                 name: .claudeBackendDidTerminate, object: nil
+            )
+            installShieldButton()
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(skipPermissionsStateChanged),
+                name: .opusSkipPermissionsChanged, object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(sharedBackendDidSpawn(_:)),
+                name: .claudeBackendDidSpawn, object: nil
             )
         }
     }
@@ -86,6 +96,51 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBarHeightConstraint = heightC
 
         layoutSubtreeIfNeeded()
+    }
+
+    // MARK: Dangerous-mode shield button
+
+    /// Floating toggle at the container's top-right (the tab bar is hidden
+    /// with a single tab, so it can't host this). Orange = claude is running
+    /// with --dangerously-skip-permissions; click restarts the shared session
+    /// back into the same conversation with the flag flipped.
+    private func installShieldButton() {
+        let btn = NSButton(title: "", target: self, action: #selector(shieldTapped))
+        btn.isBordered = false
+        btn.imagePosition = .imageOnly
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(btn)
+        NSLayoutConstraint.activate([
+            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            btn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28),
+            btn.widthAnchor.constraint(equalToConstant: 24),
+            btn.heightAnchor.constraint(equalToConstant: 22)
+        ])
+        shieldButton = btn
+        refreshShieldButton()
+    }
+
+    private func refreshShieldButton() {
+        guard let btn = shieldButton else { return }
+        let active = ClaudeBackend.shared.skipPermissionsActive
+        btn.image = NSImage(
+            systemSymbolName: active ? "shield.slash.fill" : "shield.fill",
+            accessibilityDescription: "Skip permissions"
+        )
+        btn.contentTintColor = active
+            ? NSColor.systemOrange
+            : NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.45)
+        btn.toolTip = active
+            ? "Skip permissions: ON — Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
+            : "Skip permissions: OFF — click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
+    }
+
+    @objc private func shieldTapped() {
+        ClaudeBackend.shared.toggleSkipPermissions()
+    }
+
+    @objc private func skipPermissionsStateChanged() {
+        refreshShieldButton()
     }
 
     private func bootstrapFirstTab() {
@@ -414,6 +469,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
+    /// A deliberate respawn (restart hotkey/menu, shield toggle, overlay
+    /// button) makes any visible dead-session overlay stale — dismiss it.
+    @objc private func sharedBackendDidSpawn(_ note: Notification) {
+        guard useSharedTab0,
+              tabPanes.indices.contains(0),
+              let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }
+        hideDeadOverlay(forPane: pane)
+    }
+
     /// True if any pane other than `excluded` exists in this container and
     /// isn't already showing a dead-session overlay.
     private func hasOtherLivePane(excluding excluded: TabPane) -> Bool {
@@ -501,7 +565,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     private func hideDeadOverlay(forPane pane: TabPane) {
         let id = ObjectIdentifier(pane.terminal)
-        deadOverlays[id]?.removeFromSuperview()
+        guard let overlay = deadOverlays[id] else { return }
+        overlay.removeFromSuperview()
         deadOverlays.removeValue(forKey: id)
         // Clear the terminal's screen so old (dead) output doesn't bleed into
         // the fresh session's render. ESC c is the full reset escape.
