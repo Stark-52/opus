@@ -117,6 +117,8 @@ final class OpusPreferences {
                 ?? (NSHomeDirectory() + "/Documents/GitHub/ClaudeUltra")
         }
         set {
+            // Two notifications fire (workingDirectory + recentProjects);
+            // observers of opusPreferencesDidChange must stay idempotent.
             write(K.workingDirectory, newValue)
             recentProjects = Self.updatedRecentProjects(recentProjects, adding: newValue)
         }
@@ -129,13 +131,17 @@ final class OpusPreferences {
         set { write(K.recentProjects, newValue) }
     }
 
+    /// Maximum number of paths kept in the MRU list.
+    static let recentProjectsLimit = 8
+
     /// Pure MRU helper — static for testability.
     static func updatedRecentProjects(_ list: [String], adding path: String) -> [String] {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("/") && trimmed.count > 1 { trimmed = String(trimmed.dropLast()) }
         guard !trimmed.isEmpty else { return list }
         var out = list.filter { $0 != trimmed }
         out.insert(trimmed, at: 0)
-        return Array(out.prefix(8))
+        return Array(out.prefix(Self.recentProjectsLimit))
     }
 
     var displayMode: OpusDisplayMode {
