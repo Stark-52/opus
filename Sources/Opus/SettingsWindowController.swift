@@ -22,6 +22,9 @@ final class SettingsWindowController: NSWindowController {
     private var resumeCheckbox: NSButton?
     private var loginErrorLabel: NSTextField?
     private var loginItemCheckbox: NSButton?
+    private var fontSizeField: NSTextField?
+    private var fontSizeStepper: NSStepper?
+    private var fontFamilies: [String] = []
 
     private convenience init() {
         let window = NSWindow(
@@ -234,7 +237,44 @@ final class SettingsWindowController: NSWindowController {
         self.imageLabel = imgLabel
         self.imagePickButton = imgPickBtn
 
-        for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn] {
+        // — Terminal font —
+        let fontLabel = NSTextField(labelWithString: "Terminal font")
+        fontLabel.alignment = .right
+        let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        fontPopup.addItem(withTitle: "Automatic (MesloLGS NF)")
+        let families = NSFontManager.shared.availableFontFamilies
+            .filter { NSFont(name: $0, size: 13)?.isFixedPitch == true }
+            .sorted()
+        self.fontFamilies = families
+        fontPopup.addItems(withTitles: families)
+        let currentFontName = OpusPreferences.shared.fontName
+        if let idx = families.firstIndex(of: currentFontName), !currentFontName.isEmpty {
+            fontPopup.selectItem(at: idx + 1)
+        } else {
+            fontPopup.selectItem(at: 0)
+        }
+        fontPopup.target = self
+        fontPopup.action = #selector(onFontFamilyChanged(_:))
+
+        let sizeLabel = NSTextField(labelWithString: "Font size")
+        sizeLabel.alignment = .right
+        let sizeField = NSTextField(string: String(Int(OpusPreferences.shared.fontSize)))
+        sizeField.alignment = .center
+        sizeField.target = self
+        sizeField.action = #selector(onFontSizeSubmitted(_:))
+        self.fontSizeField = sizeField
+
+        let sizeStepper = NSStepper()
+        sizeStepper.minValue = 9
+        sizeStepper.maxValue = 24
+        sizeStepper.increment = 1
+        sizeStepper.integerValue = Int(OpusPreferences.shared.fontSize)
+        sizeStepper.target = self
+        sizeStepper.action = #selector(onFontSizeStepped(_:))
+        self.fontSizeStepper = sizeStepper
+
+        for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn,
+                  fontLabel, fontPopup, sizeLabel, sizeField, sizeStepper] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -261,7 +301,23 @@ final class SettingsWindowController: NSWindowController {
             imgPath.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
             imgPath.trailingAnchor.constraint(equalTo: imgPickBtn.leadingAnchor, constant: -8),
             imgPickBtn.centerYAnchor.constraint(equalTo: imgLabel.centerYAnchor),
-            imgPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+            imgPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            fontLabel.topAnchor.constraint(equalTo: imgLabel.bottomAnchor, constant: 28),
+            fontLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            fontLabel.widthAnchor.constraint(equalToConstant: 160),
+            fontPopup.centerYAnchor.constraint(equalTo: fontLabel.centerYAnchor),
+            fontPopup.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            fontPopup.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            sizeLabel.topAnchor.constraint(equalTo: fontLabel.bottomAnchor, constant: 20),
+            sizeLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            sizeLabel.widthAnchor.constraint(equalToConstant: 160),
+            sizeField.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
+            sizeField.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            sizeField.widthAnchor.constraint(equalToConstant: 48),
+            sizeStepper.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
+            sizeStepper.leadingAnchor.constraint(equalTo: sizeField.trailingAnchor, constant: 4)
         ])
 
         refreshAppearanceVisibility(mode: currentMode)
@@ -410,6 +466,23 @@ final class SettingsWindowController: NSWindowController {
             OpusPreferences.shared.appearanceImagePath = url.path
             imagePathField?.stringValue = url.path
         }
+    }
+
+    @objc private func onFontFamilyChanged(_ sender: NSPopUpButton) {
+        let idx = sender.indexOfSelectedItem
+        OpusPreferences.shared.fontName = (idx == 0) ? "" : fontFamilies[idx - 1]
+    }
+
+    @objc private func onFontSizeStepped(_ sender: NSStepper) {
+        OpusPreferences.shared.fontSize = Double(sender.integerValue)
+        fontSizeField?.stringValue = String(sender.integerValue)
+    }
+
+    @objc private func onFontSizeSubmitted(_ sender: NSTextField) {
+        OpusPreferences.shared.fontSize = Double(sender.intValue)
+        let clamped = Int(OpusPreferences.shared.fontSize)
+        sender.stringValue = String(clamped)
+        fontSizeStepper?.integerValue = clamped
     }
 
     private func refreshAppearanceVisibility(mode: String) {

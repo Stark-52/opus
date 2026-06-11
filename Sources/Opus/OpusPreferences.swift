@@ -79,6 +79,8 @@ final class OpusPreferences {
         static let appearanceMode         = "opus.appearanceMode"
         static let appearanceTintRGBA     = "opus.appearanceTintRGBA"
         static let appearanceImagePath    = "opus.appearanceImagePath"
+        static let fontName               = "opus.fontName"
+        static let fontSize               = "opus.fontSize"
     }
 
     // MARK: Typed accessors
@@ -169,6 +171,32 @@ final class OpusPreferences {
     var appearanceImagePath: String? {
         get { defaults.string(forKey: K.appearanceImagePath) }
         set { write(K.appearanceImagePath, newValue) }
+    }
+
+    /// Terminal font family name; "" = automatic Nerd-font chain.
+    var fontName: String {
+        get { defaults.string(forKey: K.fontName) ?? "" }
+        set { write(K.fontName, newValue) }
+    }
+
+    /// Terminal font size in points, clamped to 9…24 (default 14).
+    var fontSize: Double {
+        get {
+            let v = defaults.double(forKey: K.fontSize)
+            return (v >= 9 && v <= 24) ? v : 14
+        }
+        set { write(K.fontSize, min(24, max(9, newValue))) }
+    }
+
+    /// Terminal font from prefs. The automatic chain matches the historical
+    /// hardcoded fallbacks, with a guaranteed final monospaced system font.
+    func resolvedTerminalFont() -> NSFont {
+        let size = CGFloat(fontSize)
+        if !fontName.isEmpty, let f = NSFont(name: fontName, size: size) { return f }
+        return NSFont(name: "MesloLGS NF", size: size)
+            ?? NSFont(name: "SF Mono", size: size)
+            ?? NSFont(name: "Menlo", size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 
     // MARK: Computed
