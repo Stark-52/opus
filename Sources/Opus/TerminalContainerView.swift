@@ -108,6 +108,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let btn = NSButton(title: "", target: self, action: #selector(shieldTapped))
         btn.isBordered = false
         btn.imagePosition = .imageOnly
+        btn.setAccessibilityLabel("Skip permissions toggle")
         btn.translatesAutoresizingMaskIntoConstraints = false
         addSubview(btn)
         NSLayoutConstraint.activate([
