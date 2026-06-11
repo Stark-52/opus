@@ -21,6 +21,12 @@ extension Notification.Name {
     static let opusSkipPermissionsChanged = Notification.Name("com.andygarcia.opus.skipPermissionsChanged")
 }
 
+/// Posted (on main) right after a deliberate spawn/respawn so any stale
+/// "Session ended" overlay on the shared pane can dismiss itself.
+extension Notification.Name {
+    static let claudeBackendDidSpawn = Notification.Name("com.andygarcia.opus.claudeBackendDidSpawn")
+}
+
 final class ClaudeBackend: NSObject, LocalProcessDelegate {
     static let shared = ClaudeBackend()
 
@@ -109,6 +115,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
             environment: nil,
             execName: nil
         )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .claudeBackendDidSpawn, object: nil)
+        }
     }
 
     /// Add a data subscriber. Returns a token used to unsubscribe.
