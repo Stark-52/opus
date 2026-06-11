@@ -74,6 +74,7 @@ final class OpusPreferences {
         static let onboardingShown        = "opus.onboardingShown"
         static let skipPermissions        = "opus.skipPermissions"
         static let resumeLastConversation = "opus.resumeLastConversation"
+        static let confirmRestart         = "opus.confirmRestart"
         static let recentProjects         = "opus.recentProjects"
         // Appearance (used in Phase 4)
         static let appearanceMode         = "opus.appearanceMode"
@@ -111,6 +112,14 @@ final class OpusPreferences {
     var resumeLastConversation: Bool {
         get { defaults.bool(forKey: K.resumeLastConversation) }
         set { write(K.resumeLastConversation, newValue) }
+    }
+
+    /// Ask before Restart Claude Session (hotkey/menu) nukes the current
+    /// conversation. Defaults to TRUE (absent key = ask); the alert's
+    /// "Don't ask again" suppression checkbox flips it off.
+    var confirmRestart: Bool {
+        get { defaults.object(forKey: K.confirmRestart) == nil ? true : defaults.bool(forKey: K.confirmRestart) }
+        set { write(K.confirmRestart, newValue) }
     }
 
     var workingDirectory: String {
