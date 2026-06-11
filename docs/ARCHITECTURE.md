@@ -8,7 +8,7 @@ How Opus is wired internally. Aimed at contributors and curious readers.
 Opus.app
 ├── AppDelegate
 │     ├── installAppMenu()           — minimal menu bar (Settings…, Quit)
-│     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M
+│     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M / Cmd+Ctrl+R
 │     ├── SocketServer               — Unix domain socket at /tmp/opus.sock (mirror mode only)
 │     ├── QuickTerminalPanel?        — slide-down NSPanel host (panel/both modes)
 │     ├── MainTerminalWindow?        — standalone NSWindow host (main/both modes)
@@ -145,9 +145,8 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.panelGeometry.display<DisplayID>` | `["width": Double, "height": Double]` | — |
 | `opus.skipPermissions` | Bool | `false` |
 | `opus.resumeLastConversation` | Bool | `false` |
-| `opus.launchAtLogin` | Bool | `false` |
-| `opus.terminalFontFamily` | String | "" (system default) |
-| `opus.terminalFontSize` | Double | `0` (system default) |
+| `opus.fontName` | String | "" (system default) |
+| `opus.fontSize` | Double | `14` |
 | `opus.recentProjects` | `[String]` | `[]` |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
