@@ -740,6 +740,7 @@ private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
         switch hkID.id {
         case 1: AppDelegate.shared?.toggleNativePanel()
         case 2: MainTerminalWindow.shared.toggle()
+        case 3: ClaudeBackend.shared.restart(resume: false)
         default: break
         }
     }
@@ -753,6 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyRefMain: EventHotKeyRef?
+    private var hotKeyRefRestart: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     private var nativePanel: QuickTerminalPanel?
@@ -781,6 +783,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         installAppMenu()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(onSkipPermissionsChanged),
+            name: .opusSkipPermissionsChanged, object: nil
+        )
 
         if display.includesPanel {
             nativePanel = QuickTerminalPanel()
@@ -861,6 +867,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(
+            title: "Restart Claude Session",
+            action: #selector(restartSessionAction),
+            keyEquivalent: ""
+        ))
+        let skipItem = NSMenuItem(
+            title: "Skip Permissions (dangerous)",
+            action: #selector(toggleSkipPermissionsAction),
+            keyEquivalent: ""
+        )
+        skipItem.state = ClaudeBackend.shared.skipPermissionsActive ? .on : .off
+        menu.addItem(skipItem)
+        let switchItem = NSMenuItem(title: "Switch Project", action: nil, keyEquivalent: "")
+        let switchMenu = NSMenu(title: "Switch Project")
+        populateSwitchProjectMenu(switchMenu)
+        switchItem.submenu = switchMenu
+        menu.addItem(switchItem)
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(
             title: "Settings…",
             action: #selector(openSettings),
             keyEquivalent: ""
@@ -933,9 +957,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ note: Notification) {
         socketServer.stop()
-        if let ref = hotKeyRef     { UnregisterEventHotKey(ref) }
-        if let ref = hotKeyRefMain { UnregisterEventHotKey(ref) }
-        if let ref = handlerRef    { RemoveEventHandler(ref) }
+        if let ref = hotKeyRef        { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefMain    { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }
+        if let ref = handlerRef       { RemoveEventHandler(ref) }
     }
 
     // MARK: Actions
@@ -946,6 +971,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    private var skipPermissionsMenuItem: NSMenuItem?
+
+    @objc private func restartSessionAction() {
+        ClaudeBackend.shared.restart(resume: false)
+    }
+
+    @objc private func toggleSkipPermissionsAction() {
+        ClaudeBackend.shared.toggleSkipPermissions()
+    }
+
+    @objc private func onSkipPermissionsChanged() {
+        skipPermissionsMenuItem?.state =
+            ClaudeBackend.shared.skipPermissionsActive ? .on : .off
+    }
+
+    /// Fill a Switch Project menu with the MRU list + "Other…". Used by both
+    /// the app menu (via NSMenuDelegate, rebuilt on open) and the Dock menu
+    /// (rebuilt per right-click by AppKit).
+    private func populateSwitchProjectMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let prefs = OpusPreferences.shared
+        var projects = prefs.recentProjects
+        if !projects.contains(prefs.workingDirectory) {
+            projects.insert(prefs.workingDirectory, at: 0)
+        }
+        for path in projects {
+            let item = NSMenuItem(
+                title: (path as NSString).lastPathComponent,
+                action: #selector(switchProjectAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = path
+            item.toolTip = path
+            item.state = (path == prefs.workingDirectory) ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(NSMenuItem.separator())
+        let other = NSMenuItem(title: "Other…",
+                               action: #selector(switchProjectOtherAction),
+                               keyEquivalent: "")
+        other.target = self
+        menu.addItem(other)
+    }
+
+    @objc private func switchProjectAction(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String,
+              path != OpusPreferences.shared.workingDirectory else { return }
+        OpusPreferences.shared.workingDirectory = path
+        ClaudeBackend.shared.restart(resume: false)
+    }
+
+    @objc private func switchProjectOtherAction() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: OpusPreferences.shared.workingDirectory)
+        NSApp.activate(ignoringOtherApps: true)
+        if panel.runModal() == .OK, let url = panel.url {
+            OpusPreferences.shared.workingDirectory = url.path
+            ClaudeBackend.shared.restart(resume: false)
+        }
     }
 
     // MARK: Setup
@@ -964,6 +1054,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settingsItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(settingsItem)
+
+        appMenu.addItem(NSMenuItem.separator())
+
+        let restartItem = NSMenuItem(
+            title: "Restart Claude Session",
+            action: #selector(restartSessionAction),
+            keyEquivalent: "r"
+        )
+        restartItem.keyEquivalentModifierMask = [.command, .control]
+        restartItem.target = self
+        appMenu.addItem(restartItem)
+
+        let skipItem = NSMenuItem(
+            title: "Skip Permissions (dangerous)",
+            action: #selector(toggleSkipPermissionsAction),
+            keyEquivalent: ""
+        )
+        skipItem.target = self
+        appMenu.addItem(skipItem)
+        skipPermissionsMenuItem = skipItem
+        onSkipPermissionsChanged()
+
+        let switchItem = NSMenuItem(title: "Switch Project", action: nil, keyEquivalent: "")
+        let switchMenu = NSMenu(title: "Switch Project")
+        switchMenu.delegate = self
+        switchItem.submenu = switchMenu
+        appMenu.addItem(switchItem)
 
         appMenu.addItem(NSMenuItem.separator())
 
@@ -1006,6 +1123,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
             NSLog("Opus hotkey Cmd+Ctrl+M registered (status=\(statusM))")
         }
+
+        // Cmd+Ctrl+R → restart the shared Claude session (fresh conversation).
+        // kVK_ANSI_R = 15 — the physical R key, same spot on AZERTY.
+        let idR = EventHotKeyID(signature: OSType(0x4F505553), id: 3)
+        let statusR = RegisterEventHotKey(
+            15,
+            UInt32(cmdKey | controlKey),
+            idR, GetApplicationEventTarget(), 0, &hotKeyRefRestart
+        )
+        NSLog("Opus hotkey Cmd+Ctrl+R registered (status=\(statusR))")
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    // Lazily (re)build the app menu's Switch Project submenu each open so it
+    // always reflects the current MRU list.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "Switch Project" else { return }
+        populateSwitchProjectMenu(menu)
     }
 }
 
