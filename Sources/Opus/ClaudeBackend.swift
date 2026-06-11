@@ -15,7 +15,7 @@ extension Notification.Name {
     static let claudeBackendDidTerminate = Notification.Name("com.andygarcia.opus.claudeBackendDidTerminate")
 }
 
-/// Posted (on the posting thread) when skipPermissionsActive flips — the
+/// Posted (on main) when skipPermissionsActive flips — the
 /// shield buttons and menu items refresh their checked/orange state from it.
 extension Notification.Name {
     static let opusSkipPermissionsChanged = Notification.Name("com.andygarcia.opus.skipPermissionsChanged")
@@ -58,7 +58,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     /// conversation (resume by session ID, --continue fallback).
     func toggleSkipPermissions() {
         skipPermissionsActive.toggle()
-        NotificationCenter.default.post(name: .opusSkipPermissionsChanged, object: nil)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .opusSkipPermissionsChanged, object: nil)
+        }
         restart(resume: true)
     }
 
