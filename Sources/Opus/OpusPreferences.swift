@@ -67,17 +67,17 @@ final class OpusPreferences {
     // MARK: Keys (kept private to force access through the typed properties below)
 
     private enum K {
-        static let initialCommandPreset = "opus.initialCommandPreset"
-        static let customCommand        = "opus.customCommand"
-        static let workingDirectory     = "opus.workingDirectory"
-        static let displayMode          = "opus.displayMode"
-        static let onboardingShown      = "opus.onboardingShown"
+        static let initialCommandPreset   = "opus.initialCommandPreset"
+        static let customCommand          = "opus.customCommand"
+        static let workingDirectory       = "opus.workingDirectory"
+        static let displayMode            = "opus.displayMode"
+        static let onboardingShown        = "opus.onboardingShown"
         static let skipPermissions        = "opus.skipPermissions"
         static let resumeLastConversation = "opus.resumeLastConversation"
         // Appearance (used in Phase 4)
-        static let appearanceMode       = "opus.appearanceMode"
-        static let appearanceTintRGBA   = "opus.appearanceTintRGBA"
-        static let appearanceImagePath  = "opus.appearanceImagePath"
+        static let appearanceMode         = "opus.appearanceMode"
+        static let appearanceTintRGBA     = "opus.appearanceTintRGBA"
+        static let appearanceImagePath    = "opus.appearanceImagePath"
     }
 
     // MARK: Typed accessors
@@ -167,7 +167,7 @@ final class OpusPreferences {
             switch resumeMode {
             case .none: break
             case .continueMostRecent: cmd += " --continue"
-            case .resume(let id): cmd += " --resume \(id)"
+            case .resume(let id): cmd += " --resume \(id)"  // IDs are UUID filenames from ClaudeSessionLocator — no shell metachars
             }
             return cdPrefix + cmd
         case .shell:
