@@ -58,9 +58,32 @@ final class ClaudeSessionLocatorTests: XCTestCase {
     }
 
     func testFallsBackToLegacyDirName() throws {
-        try makeProject("-Users-andy--claude-x", sessions: [(id: "aaaa", age: 60)])
+        try makeProject("-Users-andy--claude-x", sessions: [(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", age: 60)])
         let id = ClaudeSessionLocator.mostRecentSessionId(for: "/Users/andy/.claude/x", projectsRoot: root)
-        XCTAssertEqual(id, "aaaa")
+        XCTAssertEqual(id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    }
+
+    func testRejectsNonUuidFilenames() throws {
+        // The non-UUID file is newer; we must still return the UUID-named one.
+        // (Shell-injection chars like ";" are not valid macOS filenames, so we
+        // use a plain non-UUID string to represent any rogue filename.)
+        try makeProject("-Users-andy-proj2", sessions: [
+            (id: "not-a-uuid", age: 60),
+            (id: "44444444-aaaa-bbbb-cccc-000000000004", age: 3600)
+        ])
+        let id = ClaudeSessionLocator.mostRecentSessionId(for: "/Users/andy/proj2", projectsRoot: root)
+        XCTAssertEqual(id, "44444444-aaaa-bbbb-cccc-000000000004")
+    }
+
+    func testCurrentEncodingWinsOverLegacy() throws {
+        try makeProject("-Users-andy-.claude-y", sessions: [
+            (id: "55555555-aaaa-bbbb-cccc-000000000005", age: 60)
+        ])
+        try makeProject("-Users-andy--claude-y", sessions: [
+            (id: "66666666-aaaa-bbbb-cccc-000000000006", age: 60)
+        ])
+        let id = ClaudeSessionLocator.mostRecentSessionId(for: "/Users/andy/.claude/y", projectsRoot: root)
+        XCTAssertEqual(id, "55555555-aaaa-bbbb-cccc-000000000005")
     }
 
     func testReturnsNilWhenNoProjectDir() {
