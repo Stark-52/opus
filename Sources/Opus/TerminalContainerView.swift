@@ -44,6 +44,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         bootstrapFirstTab()
         // Accept files dragged from Finder → insert their full path (like Terminal.app).
         registerForDraggedTypes([.fileURL])
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(preferencesDidChange),
+            name: .opusPreferencesDidChange, object: nil
+        )
         if useSharedTab0 {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(sharedBackendDidTerminate(_:)),
@@ -142,6 +146,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func skipPermissionsStateChanged() {
         refreshShieldButton()
+    }
+
+    /// Live-apply font changes to every pane. Cheap + idempotent: every pref
+    /// write fires this, so compare before assigning (SwiftTerm's font setter
+    /// recalculates cell metrics and triggers a resize cascade).
+    @objc private func preferencesDidChange() {
+        let newFont = OpusPreferences.shared.resolvedTerminalFont()
+        for paneList in tabPanes {
+            for pane in paneList {
+                let t = pane.terminal
+                if t.font.fontName != newFont.fontName || t.font.pointSize != newFont.pointSize {
+                    t.font = newFont
+                }
+            }
+        }
     }
 
     private func bootstrapFirstTab() {
@@ -623,11 +642,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         t.caretColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
         t.caretTextColor = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
         t.allowMouseReporting = false
-        if let font = NSFont(name: "MesloLGS NF", size: 14)
-            ?? NSFont(name: "SF Mono", size: 14)
-            ?? NSFont(name: "Menlo", size: 14) {
-            t.font = font
-        }
+        t.font = OpusPreferences.shared.resolvedTerminalFont()
     }
 
     // MARK: TerminalViewDelegate
