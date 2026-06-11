@@ -243,7 +243,12 @@ final class SettingsWindowController: NSWindowController {
         let fontPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         fontPopup.addItem(withTitle: "Automatic (MesloLGS NF)")
         let families = NSFontManager.shared.availableFontFamilies
-            .filter { NSFont(name: $0, size: 13)?.isFixedPitch == true }
+            .filter {
+                guard let face = NSFontManager.shared.availableMembers(ofFontFamily: $0)?.first,
+                      let name = face[0] as? String,
+                      let f = NSFont(name: name, size: 13) else { return false }
+                return f.isFixedPitch
+            }
             .sorted()
         self.fontFamilies = families
         fontPopup.addItems(withTitles: families)
@@ -260,6 +265,11 @@ final class SettingsWindowController: NSWindowController {
         sizeLabel.alignment = .right
         let sizeField = NSTextField(string: String(Int(OpusPreferences.shared.fontSize)))
         sizeField.alignment = .center
+        let sizeFormatter = NumberFormatter()
+        sizeFormatter.minimum = 9
+        sizeFormatter.maximum = 24
+        sizeFormatter.allowsFloats = false
+        sizeField.formatter = sizeFormatter
         sizeField.target = self
         sizeField.action = #selector(onFontSizeSubmitted(_:))
         self.fontSizeField = sizeField
