@@ -31,7 +31,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     /// Per-app-run permission mode for the shared session (new private tabs
     /// inherit it too). Seeded from the Settings default; flipped live by the
     /// shield button / menu toggle.
-    private(set) var skipPermissionsActive = OpusPreferences.shared.skipPermissions
+    /// Seeded lazily (first access happens in spawn, after init) so the two
+    /// singletons' initializers can never form a swift_once re-entrancy cycle.
+    private(set) lazy var skipPermissionsActive = OpusPreferences.shared.skipPermissions
 
     /// True while a deliberate restart is in flight — suppresses the
     /// dead-session overlay and makes processTerminated respawn instead.
@@ -110,15 +112,23 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     }
 
     /// Add a data subscriber. Returns a token used to unsubscribe.
+    /// The subscribers dict is only ever touched on the main queue —
+    /// SocketServer calls this from its accept/read queues, so hop if needed.
     @discardableResult
     func subscribe(_ handler: @escaping (ArraySlice<UInt8>) -> Void) -> UUID {
         let token = UUID()
-        subscribers[token] = handler
+        onMain { self.subscribers[token] = handler }
         return token
     }
 
     func unsubscribe(_ token: UUID) {
-        subscribers.removeValue(forKey: token)
+        onMain { self.subscribers.removeValue(forKey: token) }
+    }
+
+    /// Run on main — synchronously when already there (preserves the historic
+    /// "subscribed before this call returns" behavior for main-thread callers).
+    private func onMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
     }
 
     /// Send input bytes to claude (from any client).
