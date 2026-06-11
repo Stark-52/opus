@@ -192,7 +192,14 @@ final class OpusPreferences {
     /// hardcoded fallbacks, with a guaranteed final monospaced system font.
     func resolvedTerminalFont() -> NSFont {
         let size = CGFloat(fontSize)
-        if !fontName.isEmpty, let f = NSFont(name: fontName, size: size) { return f }
+        if !fontName.isEmpty {
+            if let f = NSFont(name: fontName, size: size) { return f }
+            // Family names don't always resolve as face names (e.g. "JetBrains
+            // Mono") — fall back to the family's first member via NSFontManager.
+            if let face = NSFontManager.shared.availableMembers(ofFontFamily: fontName)?.first,
+               let psName = face[0] as? String,
+               let f = NSFont(name: psName, size: size) { return f }
+        }
         return NSFont(name: "MesloLGS NF", size: size)
             ?? NSFont(name: "SF Mono", size: size)
             ?? NSFont(name: "Menlo", size: size)
