@@ -25,6 +25,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "opus-attach"
+        ),
+        .testTarget(
+            name: "OpusTests",
+            dependencies: ["Opus"]
         )
     ]
 )

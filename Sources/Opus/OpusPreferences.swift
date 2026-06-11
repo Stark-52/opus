@@ -11,6 +11,13 @@ extension Notification.Name {
     static let opusPreferencesDidChange = Notification.Name("com.andygarcia.opus.preferencesDidChange")
 }
 
+/// How a spawned claude reattaches to past conversations.
+enum OpusResumeMode: Equatable {
+    case none
+    case continueMostRecent            // claude --continue
+    case resume(sessionId: String)     // claude --resume <id>
+}
+
 /// Initial-command presets the user picks from in Settings → General.
 enum OpusInitialCommandPreset: String, CaseIterable {
     case claude = "claude"        // /bin/zsh -i -c "cd <cwd> && command claude"
@@ -65,6 +72,8 @@ final class OpusPreferences {
         static let workingDirectory     = "opus.workingDirectory"
         static let displayMode          = "opus.displayMode"
         static let onboardingShown      = "opus.onboardingShown"
+        static let skipPermissions        = "opus.skipPermissions"
+        static let resumeLastConversation = "opus.resumeLastConversation"
         // Appearance (used in Phase 4)
         static let appearanceMode       = "opus.appearanceMode"
         static let appearanceTintRGBA   = "opus.appearanceTintRGBA"
@@ -84,6 +93,21 @@ final class OpusPreferences {
     var customCommand: String {
         get { defaults.string(forKey: K.customCommand) ?? "" }
         set { write(K.customCommand, newValue) }
+    }
+
+    /// Default for new Opus launches — ClaudeBackend seeds its runtime
+    /// `skipPermissionsActive` from this. The shield button flips the runtime
+    /// state without touching this default.
+    var skipPermissions: Bool {
+        get { defaults.bool(forKey: K.skipPermissions) }
+        set { write(K.skipPermissions, newValue) }
+    }
+
+    /// Launch claude with --continue so the most recent conversation in the
+    /// working directory reopens on Opus start.
+    var resumeLastConversation: Bool {
+        get { defaults.bool(forKey: K.resumeLastConversation) }
+        set { write(K.resumeLastConversation, newValue) }
     }
 
     var workingDirectory: String {
@@ -123,20 +147,50 @@ final class OpusPreferences {
 
     // MARK: Computed
 
-    /// The actual shell command to run inside the spawned zsh, based on
-    /// preset + custom + working directory.
-    func resolvedSpawnCommand() -> String {
+    /// Pure command builder — static so tests exercise it without UserDefaults.
+    /// Launch flags (skip-permissions, resume) only apply to the .claude
+    /// preset: .shell doesn't run claude and .custom runs the user's verbatim
+    /// command (including its empty-string claude fallback).
+    static func composeSpawnCommand(
+        preset: OpusInitialCommandPreset,
+        customCommand: String,
+        workingDirectory: String,
+        skipPermissions: Bool,
+        resumeMode: OpusResumeMode
+    ) -> String {
         let cwd = workingDirectory.replacingOccurrences(of: "\"", with: "\\\"")
         let cdPrefix = "cd \"\(cwd)\" && "
-        switch initialCommandPreset {
+        switch preset {
         case .claude:
-            return cdPrefix + "command claude"
+            var cmd = "command claude"
+            if skipPermissions { cmd += " --dangerously-skip-permissions" }
+            switch resumeMode {
+            case .none: break
+            case .continueMostRecent: cmd += " --continue"
+            case .resume(let id): cmd += " --resume \(id)"
+            }
+            return cdPrefix + cmd
         case .shell:
             return cdPrefix + "exec /bin/zsh -i"
         case .custom:
             let cmd = customCommand.trimmingCharacters(in: .whitespacesAndNewlines)
             return cmd.isEmpty ? cdPrefix + "command claude" : cdPrefix + cmd
         }
+    }
+
+    /// The actual shell command to run inside the spawned zsh. Default args
+    /// keep existing call sites (private tabs) compiling with no flags.
+    func resolvedSpawnCommand(
+        skipPermissions: Bool = false,
+        resumeMode: OpusResumeMode = .none
+    ) -> String {
+        Self.composeSpawnCommand(
+            preset: initialCommandPreset,
+            customCommand: customCommand,
+            workingDirectory: workingDirectory,
+            skipPermissions: skipPermissions,
+            resumeMode: resumeMode
+        )
     }
 
     // MARK: Internal
