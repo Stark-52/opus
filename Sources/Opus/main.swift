@@ -866,16 +866,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ))
         }
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(
+        let restartDockItem = NSMenuItem(
             title: "Restart Claude Session",
             action: #selector(restartSessionAction),
             keyEquivalent: ""
-        ))
+        )
+        restartDockItem.target = self
+        menu.addItem(restartDockItem)
         let skipItem = NSMenuItem(
             title: "Skip Permissions (dangerous)",
             action: #selector(toggleSkipPermissionsAction),
             keyEquivalent: ""
         )
+        skipItem.target = self
         skipItem.state = ClaudeBackend.shared.skipPermissionsActive ? .on : .off
         menu.addItem(skipItem)
         let switchItem = NSMenuItem(title: "Switch Project", action: nil, keyEquivalent: "")
@@ -974,6 +977,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var skipPermissionsMenuItem: NSMenuItem?
+    private weak var switchProjectMenu: NSMenu?
 
     @objc private func restartSessionAction() {
         ClaudeBackend.shared.restart(resume: false)
@@ -994,9 +998,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func populateSwitchProjectMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         let prefs = OpusPreferences.shared
+        let cwd = prefs.workingDirectory
         var projects = prefs.recentProjects
-        if !projects.contains(prefs.workingDirectory) {
-            projects.insert(prefs.workingDirectory, at: 0)
+        if !projects.contains(cwd) {
+            projects.insert(cwd, at: 0)
         }
         for path in projects {
             let item = NSMenuItem(
@@ -1007,7 +1012,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self
             item.representedObject = path
             item.toolTip = path
-            item.state = (path == prefs.workingDirectory) ? .on : .off
+            item.state = (path == cwd) ? .on : .off
             menu.addItem(item)
         }
         menu.addItem(NSMenuItem.separator())
@@ -1031,7 +1036,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: OpusPreferences.shared.workingDirectory)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate(ignoringOtherApps: true)  // Dock-menu path: app may not be active yet
         if panel.runModal() == .OK, let url = panel.url {
             OpusPreferences.shared.workingDirectory = url.path
             ClaudeBackend.shared.restart(resume: false)
@@ -1080,6 +1085,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let switchMenu = NSMenu(title: "Switch Project")
         switchMenu.delegate = self
         switchItem.submenu = switchMenu
+        switchProjectMenu = switchMenu
         appMenu.addItem(switchItem)
 
         appMenu.addItem(NSMenuItem.separator())
@@ -1138,9 +1144,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     // Lazily (re)build the app menu's Switch Project submenu each open so it
-    // always reflects the current MRU list.
+    // always reflects the current MRU list. Identity check (===) is safer than
+    // title matching — avoids false positives if another menu reuses the same title.
     func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu.title == "Switch Project" else { return }
+        guard menu === switchProjectMenu else { return }
         populateSwitchProjectMenu(menu)
     }
 }
