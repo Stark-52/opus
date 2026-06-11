@@ -33,12 +33,12 @@ final class ClaudeSessionLocatorTests: XCTestCase {
         XCTAssertEqual(candidates.first, "-Users-andy-Documents-GitHub-ClaudeUltra")
     }
 
-    func testLegacyEncodingReplacesDots() {
+    func testDottedPathYieldsBothEncodings() {
         let candidates = ClaudeSessionLocator.projectDirNameCandidates(
             for: "/Users/andy/.claude/worktrees/x")
         XCTAssertEqual(candidates, [
-            "-Users-andy-.claude-worktrees-x",   // current: dots kept
-            "-Users-andy--claude-worktrees-x"    // legacy: dots → dashes
+            "-Users-andy--claude-worktrees-x",   // current: all non-alnum → dash
+            "-Users-andy-.claude-worktrees-x"    // older: dots kept
         ])
     }
 
@@ -57,8 +57,10 @@ final class ClaudeSessionLocatorTests: XCTestCase {
         XCTAssertEqual(id, "22222222-aaaa-bbbb-cccc-000000000002")
     }
 
-    func testFallsBackToLegacyDirName() throws {
-        try makeProject("-Users-andy--claude-x", sessions: [(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", age: 60)])
+    func testFallsBackToOlderDotKeepingDirName() throws {
+        // Only the older dot-keeping encoding exists on disk; lookup must still find it
+        // (second candidate: "-Users-andy-.claude-x").
+        try makeProject("-Users-andy-.claude-x", sessions: [(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", age: 60)])
         let id = ClaudeSessionLocator.mostRecentSessionId(for: "/Users/andy/.claude/x", projectsRoot: root)
         XCTAssertEqual(id, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     }
@@ -75,11 +77,12 @@ final class ClaudeSessionLocatorTests: XCTestCase {
         XCTAssertEqual(id, "44444444-aaaa-bbbb-cccc-000000000004")
     }
 
-    func testCurrentEncodingWinsOverLegacy() throws {
-        try makeProject("-Users-andy-.claude-y", sessions: [
+    func testCurrentEncodingWinsOverOlder() throws {
+        // All-dash dir (current encoding) must be preferred over dot-keeping dir (older).
+        try makeProject("-Users-andy--claude-y", sessions: [
             (id: "55555555-aaaa-bbbb-cccc-000000000005", age: 60)
         ])
-        try makeProject("-Users-andy--claude-y", sessions: [
+        try makeProject("-Users-andy-.claude-y", sessions: [
             (id: "66666666-aaaa-bbbb-cccc-000000000006", age: 60)
         ])
         let id = ClaudeSessionLocator.mostRecentSessionId(for: "/Users/andy/.claude/y", projectsRoot: root)
