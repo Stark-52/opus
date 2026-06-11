@@ -31,8 +31,11 @@ enum ClaudeSessionLocator {
                 includingPropertiesForKeys: [.contentModificationDateKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
+            // Enforce UUID shape — the ID is interpolated unquoted into a
+            // zsh command (`--resume <id>`), so never trust raw filenames.
             let newest = files
                 .filter { $0.pathExtension == "jsonl" }
+                .filter { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil }
                 .max { a, b in
                     let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey])
                         .contentModificationDate) ?? .distantPast
