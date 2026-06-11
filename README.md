@@ -17,9 +17,12 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Main window** (`Cmd+Ctrl+M`) — standard NSWindow, fullscreen-capable, frame auto-saved across launches.
 - **Multi-tab** — `Cmd+T` new private tab (own session), `Cmd+W` close current pane/tab, `Cmd+1..9` switch tab.
 - **Splits** — `Cmd+D` side-by-side, `Cmd+Shift+D` top/bottom. Nested via `NSSplitView` (iTerm2 conventions).
+- **Per-conversation dangerous mode** — a shield button (top-right of the panel and main window) relaunches the shared Claude session with `--dangerously-skip-permissions` and resumes the exact same conversation (`--resume <session-id>`, resolved from `~/.claude/projects/`). Click again to restore permission prompts, same conversation. Orange = armed. Also in the App/Dock menus.
+- **Restart Claude Session** (`Cmd+Ctrl+R`) — kill + respawn the shared session fresh, without quitting Opus. All surfaces stay attached.
+- **Switch Project** — App/Dock menu of your 8 most recent working directories; picking one restarts the session in that project.
 - **Settings** (`Cmd+,`) — three tabs:
-  - **General** — initial command (Claude / shell / custom), working directory.
-  - **Appearance** — default blur / transparent / custom tint color / background image.
+  - **General** — initial command (Claude / shell / custom), skip-permissions default, resume-last-conversation (`--continue`), working directory, launch at login.
+  - **Appearance** — default blur / transparent / custom tint color / background image, terminal font family + size (live).
   - **Display** — choose between the four display modes above.
 - **First-launch onboarding** — bundles macOS permission prompts upfront so they don't surprise you mid-session.
 - **Session-ended overlay** — when Claude exits and there are no other live panes, you get a centered "Start new session" / "Close Opus" prompt instead of a frozen dead terminal.
@@ -63,6 +66,7 @@ Opus.app
 ├── ClaudeBackend (singleton, owns child PTY via SwiftTerm LocalProcess)
 │     └── multi-subscriber broadcast — same bytes to every client
 ├── OpusPreferences (UserDefaults singleton)
+├── ClaudeSessionLocator (session-ID lookup for --resume)
 ├── QuickTerminalPanel (NSPanel) → embeds TerminalContainerView
 ├── MainTerminalWindow (NSWindow) → embeds TerminalContainerView
 ├── TerminalContainerView (shared NSView — tabs + panes + splits + tab bar)
