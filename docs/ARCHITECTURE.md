@@ -84,9 +84,9 @@ the `opus.skipPermissions` default. The shield button in
 `TerminalContainerView` flips it via `toggleSkipPermissions()`, which restarts
 with `--resume <session-id>` so the same conversation reopens with the new
 permission mode. `ClaudeSessionLocator` resolves the ID: encode the cwd into
-Claude Code's project-dir name (`/` → `-`, dots kept; legacy all-non-alnum
-fallback), then take the most recently modified UUID-named `*.jsonl` in
-`~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
+Claude Code's project-dir name (every non-alphanumeric → `-`; older
+dot-keeping encoding as fallback), then take the most recently modified
+UUID-named `*.jsonl` in `~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
 worst case the existing "Session ended" overlay.
 
 ## PTY ownership
