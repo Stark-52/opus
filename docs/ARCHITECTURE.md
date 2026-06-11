@@ -145,6 +145,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.panelGeometry.display<DisplayID>` | `["width": Double, "height": Double]` | — |
 | `opus.skipPermissions` | Bool | `false` |
 | `opus.resumeLastConversation` | Bool | `false` |
+| `opus.confirmRestart` | Bool | `true` (absent key = ask) |
 | `opus.fontName` | String | "" (system default) |
 | `opus.fontSize` | Double | `14` |
 | `opus.recentProjects` | `[String]` | `[]` |

@@ -740,7 +740,7 @@ private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
         switch hkID.id {
         case 1: AppDelegate.shared?.toggleNativePanel()
         case 2: MainTerminalWindow.shared.toggle()
-        case 3: ClaudeBackend.shared.restart(resume: false)
+        case 3: AppDelegate.shared?.restartSessionRequested()
         default: break
         }
     }
@@ -980,6 +980,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private weak var switchProjectMenu: NSMenu?
 
     @objc private func restartSessionAction() {
+        restartSessionRequested()
+    }
+
+    /// Restart entry point shared by the hotkey and both menus. A fresh
+    /// session discards the live conversation, so confirm by default —
+    /// the alert's suppression checkbox ("Don't ask again") and the
+    /// Settings checkbox both drive `OpusPreferences.confirmRestart`.
+    func restartSessionRequested() {
+        guard OpusPreferences.shared.confirmRestart else {
+            ClaudeBackend.shared.restart(resume: false)
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)  // alert needs key status; the panel is non-activating
+        let alert = NSAlert()
+        alert.messageText = "Restart Claude session?"
+        alert.informativeText =
+            "This kills the current session and starts a fresh conversation — " +
+            "anything still running in it will be interrupted. The old conversation " +
+            "stays on disk (claude --resume can reopen it)."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Restart")
+        alert.addButton(withTitle: "Cancel")
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Don't ask again"
+        let response = alert.runModal()
+        if alert.suppressionButton?.state == .on {
+            OpusPreferences.shared.confirmRestart = false
+        }
+        guard response == .alertFirstButtonReturn else { return }
         ClaudeBackend.shared.restart(resume: false)
     }
 

@@ -22,6 +22,7 @@ final class SettingsWindowController: NSWindowController {
     private var resumeCheckbox: NSButton?
     private var loginErrorLabel: NSTextField?
     private var loginItemCheckbox: NSButton?
+    private var confirmRestartCheckbox: NSButton?
     private var fontSizeField: NSTextField?
     private var fontSizeStepper: NSStepper?
     private var fontFamilies: [String] = []
@@ -118,6 +119,14 @@ final class SettingsWindowController: NSWindowController {
         cwdPickBtn.bezelStyle = .rounded
         self.cwdField = cwdField
 
+        // — Restart confirmation —
+        let confirmCheckbox = NSButton(
+            checkboxWithTitle: "Ask before restarting the session (Cmd+Ctrl+R)",
+            target: self, action: #selector(onConfirmRestartToggled(_:))
+        )
+        confirmCheckbox.state = OpusPreferences.shared.confirmRestart ? .on : .off
+        self.confirmRestartCheckbox = confirmCheckbox
+
         // — Launch at login —
         let loginCheckbox = NSButton(
             checkboxWithTitle: "Launch Opus at login",
@@ -133,7 +142,7 @@ final class SettingsWindowController: NSWindowController {
         self.loginErrorLabel = loginError
 
         for v in [cmdLabel, cmdPopup, customField, skipCheckbox, skipHint, resumeCheckbox,
-                  cwdLabel, cwdField, cwdPickBtn, loginCheckbox, loginError] {
+                  cwdLabel, cwdField, cwdPickBtn, confirmCheckbox, loginCheckbox, loginError] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -171,7 +180,11 @@ final class SettingsWindowController: NSWindowController {
             cwdPickBtn.centerYAnchor.constraint(equalTo: cwdLabel.centerYAnchor),
             cwdPickBtn.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
 
-            loginCheckbox.topAnchor.constraint(equalTo: cwdField.bottomAnchor, constant: 24),
+            confirmCheckbox.topAnchor.constraint(equalTo: cwdField.bottomAnchor, constant: 24),
+            confirmCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            confirmCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            loginCheckbox.topAnchor.constraint(equalTo: confirmCheckbox.bottomAnchor, constant: 10),
             loginCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
             loginCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
 
@@ -426,6 +439,10 @@ final class SettingsWindowController: NSWindowController {
         OpusPreferences.shared.resumeLastConversation = (sender.state == .on)
     }
 
+    @objc private func onConfirmRestartToggled(_ sender: NSButton) {
+        OpusPreferences.shared.confirmRestart = (sender.state == .on)
+    }
+
     @objc private func onLaunchAtLoginToggled(_ sender: NSButton) {
         // Note: SMAppService needs the app at its final install location
         // (e.g. ~/Applications/). If launched translocated (e.g. straight
@@ -507,6 +524,8 @@ final class SettingsWindowController: NSWindowController {
 
     func show() {
         loginItemCheckbox?.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+        // The restart alert's "Don't ask again" can flip this behind our back.
+        confirmRestartCheckbox?.state = OpusPreferences.shared.confirmRestart ? .on : .off
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
