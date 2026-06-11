@@ -74,6 +74,7 @@ final class OpusPreferences {
         static let onboardingShown        = "opus.onboardingShown"
         static let skipPermissions        = "opus.skipPermissions"
         static let resumeLastConversation = "opus.resumeLastConversation"
+        static let recentProjects         = "opus.recentProjects"
         // Appearance (used in Phase 4)
         static let appearanceMode         = "opus.appearanceMode"
         static let appearanceTintRGBA     = "opus.appearanceTintRGBA"
@@ -115,7 +116,26 @@ final class OpusPreferences {
             defaults.string(forKey: K.workingDirectory)
                 ?? (NSHomeDirectory() + "/Documents/GitHub/ClaudeUltra")
         }
-        set { write(K.workingDirectory, newValue) }
+        set {
+            write(K.workingDirectory, newValue)
+            recentProjects = Self.updatedRecentProjects(recentProjects, adding: newValue)
+        }
+    }
+
+    /// MRU list of working directories (front = most recent, max 8). Fed by
+    /// the workingDirectory setter; consumed by the Switch Project menus.
+    var recentProjects: [String] {
+        get { (defaults.array(forKey: K.recentProjects) as? [String]) ?? [] }
+        set { write(K.recentProjects, newValue) }
+    }
+
+    /// Pure MRU helper — static for testability.
+    static func updatedRecentProjects(_ list: [String], adding path: String) -> [String] {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return list }
+        var out = list.filter { $0 != trimmed }
+        out.insert(trimmed, at: 0)
+        return Array(out.prefix(8))
     }
 
     var displayMode: OpusDisplayMode {
