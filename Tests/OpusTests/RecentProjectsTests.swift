@@ -13,11 +13,16 @@ final class RecentProjectsTests: XCTestCase {
     }
 
     func testCapsAtEight() {
-        let initial = (1...8).map { "/p\($0)" }
+        let initial = (1...OpusPreferences.recentProjectsLimit).map { "/p\($0)" }
         let r = OpusPreferences.updatedRecentProjects(initial, adding: "/new")
-        XCTAssertEqual(r.count, 8)
+        XCTAssertEqual(r.count, OpusPreferences.recentProjectsLimit)
         XCTAssertEqual(r.first, "/new")
-        XCTAssertFalse(r.contains("/p8"))
+        XCTAssertFalse(r.contains("/p\(OpusPreferences.recentProjectsLimit)"))
+    }
+
+    func testNormalizesTrailingSlash() {
+        let r = OpusPreferences.updatedRecentProjects(["/a/b"], adding: "/a/b/")
+        XCTAssertEqual(r, ["/a/b"])
     }
 
     func testIgnoresEmptyPath() {
