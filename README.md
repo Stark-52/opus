@@ -18,7 +18,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Multi-tab** — `Cmd+T` new private tab (own session), `Cmd+W` close current pane/tab, `Cmd+1..9` switch tab.
 - **Splits** — `Cmd+D` side-by-side, `Cmd+Shift+D` top/bottom. Nested via `NSSplitView` (iTerm2 conventions).
 - **Per-conversation dangerous mode** — a shield button (top-right of the panel and main window) relaunches the shared Claude session with `--dangerously-skip-permissions` and resumes the exact same conversation (`--resume <session-id>`, resolved from `~/.claude/projects/`). Click again to restore permission prompts, same conversation. Orange = armed. Also in the App/Dock menus.
-- **Restart Claude Session** (`Cmd+Ctrl+R`) — kill + respawn the shared session fresh, without quitting Opus. All surfaces stay attached.
+- **Restart Claude Session** (`Cmd+Ctrl+R`) — kill + respawn the shared session fresh, without quitting Opus. All surfaces stay attached. Asks for confirmation by default ("Don't ask again" checkbox in the alert, re-enable in Settings → General).
 - **Switch Project** — App/Dock menu of your 8 most recent working directories; picking one restarts the session in that project.
 - **Settings** (`Cmd+,`) — three tabs:
   - **General** — initial command (Claude / shell / custom), skip-permissions default, resume-last-conversation (`--continue`), working directory, launch at login.
