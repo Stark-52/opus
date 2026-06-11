@@ -101,9 +101,14 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     }
 
     func start() {
+        // Private tabs inherit the live dangerous-mode state but NEVER resume:
+        // --continue here would attach the same transcript as tab 0 (two
+        // claudes writing one session file).
         process.startProcess(
             executable: "/bin/zsh",
-            args: ["-i", "-c", OpusPreferences.shared.resolvedSpawnCommand()],
+            args: ["-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
+                skipPermissions: ClaudeBackend.shared.skipPermissionsActive,
+                resumeMode: .none)],
             environment: nil,
             execName: nil
         )
