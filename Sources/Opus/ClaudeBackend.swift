@@ -119,6 +119,23 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
             environment: SpawnEnvironment.make(),
             execName: nil
         )
+        // forkpty can fail (fd exhaustion, jetsam pressure). SwiftTerm leaves
+        // shellPid at 0 and will never call processTerminated — clear our
+        // reference so startIfNeeded/restart aren't wedged forever, and surface
+        // the dead-session overlay instead of a silent black pane.
+        if p.shellPid <= 0 {
+            NSLog("ClaudeBackend: spawn failed (forkpty returned no pid)")
+            process = nil
+            isRestarting = false
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .claudeBackendDidTerminate,
+                    object: nil,
+                    userInfo: ["exitCode": -1]
+                )
+            }
+            return
+        }
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .claudeBackendDidSpawn, object: nil)
         }
