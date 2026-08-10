@@ -23,6 +23,7 @@ final class SettingsWindowController: NSWindowController {
     private var loginErrorLabel: NSTextField?
     private var loginItemCheckbox: NSButton?
     private var confirmRestartCheckbox: NSButton?
+    private var notifyOnBellCheckbox: NSButton?
     private var fontSizeField: NSTextField?
     private var fontSizeStepper: NSStepper?
     private var fontFamilies: [String] = []
@@ -141,8 +142,18 @@ final class SettingsWindowController: NSWindowController {
         loginError.isHidden = true
         self.loginErrorLabel = loginError
 
+        // — Bell → notification/Dock badge — visible regardless of preset
+        // (unlike skip/resume, which only make sense with the .claude preset).
+        let notifyCheckbox = NSButton(
+            checkboxWithTitle: "Notify when Claude needs attention",
+            target: self, action: #selector(onNotifyOnBellToggled(_:))
+        )
+        notifyCheckbox.state = OpusPreferences.shared.notifyOnBell ? .on : .off
+        self.notifyOnBellCheckbox = notifyCheckbox
+
         for v in [cmdLabel, cmdPopup, customField, skipCheckbox, skipHint, resumeCheckbox,
-                  cwdLabel, cwdField, cwdPickBtn, confirmCheckbox, loginCheckbox, loginError] {
+                  cwdLabel, cwdField, cwdPickBtn, confirmCheckbox, loginCheckbox, loginError,
+                  notifyCheckbox] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -190,7 +201,11 @@ final class SettingsWindowController: NSWindowController {
 
             loginError.topAnchor.constraint(equalTo: loginCheckbox.bottomAnchor, constant: 4),
             loginError.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor, constant: 18),
-            loginError.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+            loginError.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            notifyCheckbox.topAnchor.constraint(equalTo: loginError.bottomAnchor, constant: 10),
+            notifyCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            notifyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20)
         ])
 
         item.view = view
@@ -443,6 +458,10 @@ final class SettingsWindowController: NSWindowController {
         OpusPreferences.shared.confirmRestart = (sender.state == .on)
     }
 
+    @objc private func onNotifyOnBellToggled(_ sender: NSButton) {
+        OpusPreferences.shared.notifyOnBell = (sender.state == .on)
+    }
+
     @objc private func onLaunchAtLoginToggled(_ sender: NSButton) {
         // Note: SMAppService needs the app at its final install location
         // (e.g. ~/Applications/). If launched translocated (e.g. straight
@@ -526,6 +545,7 @@ final class SettingsWindowController: NSWindowController {
         loginItemCheckbox?.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
         // The restart alert's "Don't ask again" can flip this behind our back.
         confirmRestartCheckbox?.state = OpusPreferences.shared.confirmRestart ? .on : .off
+        notifyOnBellCheckbox?.state = OpusPreferences.shared.notifyOnBell ? .on : .off
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
