@@ -70,6 +70,17 @@ let restoreTermios: @convention(c) (Int32) -> Void = { _ in
 signal(SIGINT,  restoreTermios)
 signal(SIGTERM, restoreTermios)
 signal(SIGHUP,  restoreTermios)
+signal(SIGPIPE, SIG_IGN)   // dead socket must not kill us mid-write
+
+/// Restore the TTY and exit — used when the socket write side dies.
+func exitDisconnected() -> Never {
+    if isTTY {
+        var t = oldTermiosCopy
+        tcsetattr(0, TCSADRAIN, &t)
+    }
+    FileHandle.standardError.write("\nopus-attach: connection closed\n".data(using: .utf8)!)
+    exit(0)
+}
 
 // MARK: window-size reporting (initial + on SIGWINCH)
 
@@ -92,7 +103,7 @@ func sendCurrentSize() {
         UInt8(ws.ws_col >> 8), UInt8(ws.ws_col & 0xff),
         UInt8(ws.ws_row >> 8), UInt8(ws.ws_row & 0xff)
     ]
-    _ = write(sock, &msg, msg.count)
+    if write(sock, &msg, msg.count) < 0 && errno == EPIPE { exitDisconnected() }
 }
 
 sendCurrentSize()   // initial size at connect
@@ -131,7 +142,7 @@ var buf = [UInt8](repeating: 0, count: 4096)
 while true {
     let n = read(0, &buf, buf.count)
     if n <= 0 { break }
-    _ = write(sock, &buf, n)
+    if write(sock, &buf, n) < 0 { exitDisconnected() }
 }
 
 if isTTY {
