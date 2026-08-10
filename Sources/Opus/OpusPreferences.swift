@@ -228,7 +228,14 @@ final class OpusPreferences {
         skipPermissions: Bool,
         resumeMode: OpusResumeMode
     ) -> String {
-        let cwd = workingDirectory.replacingOccurrences(of: "\"", with: "\\\"")
+        // zsh double quotes still expand $VAR, $(...), backticks, and honor
+        // backslashes. Escape all four; backslash FIRST or it re-escapes the
+        // escapes we just added.
+        let cwd = workingDirectory
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "$", with: "\\$")
+            .replacingOccurrences(of: "`", with: "\\`")
         let cdPrefix = "cd \"\(cwd)\" && "
         switch preset {
         case .claude:

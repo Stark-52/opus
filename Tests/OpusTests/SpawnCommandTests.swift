@@ -70,4 +70,31 @@ final class SpawnCommandTests: XCTestCase {
         )
         XCTAssertEqual(cmd, "cd \"/Users/test/Pro\\\"ject\" && command claude")
     }
+
+    func testCwdWithDollarIsEscaped() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "",
+            workingDirectory: "/Users/test/pro$ject",
+            skipPermissions: false, resumeMode: .none
+        )
+        XCTAssertEqual(cmd, "cd \"/Users/test/pro\\$ject\" && command claude")
+    }
+
+    func testCwdWithBacktickIsEscaped() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "",
+            workingDirectory: "/Users/test/pro`ject",
+            skipPermissions: false, resumeMode: .none
+        )
+        XCTAssertEqual(cmd, "cd \"/Users/test/pro\\`ject\" && command claude")
+    }
+
+    func testCwdWithBackslashIsEscaped() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "",
+            workingDirectory: "/Users/test/pro\\ject",
+            skipPermissions: false, resumeMode: .none
+        )
+        XCTAssertEqual(cmd, "cd \"/Users/test/pro\\\\ject\" && command claude")
+    }
 }
