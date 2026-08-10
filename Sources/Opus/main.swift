@@ -450,10 +450,11 @@ final class QuickTerminalPanel: NSObject {
         pinBtn.isBordered = false
         pinBtn.imagePosition = .imageOnly
         pinBtn.translatesAutoresizingMaskIntoConstraints = false
+        pinBtn.setAccessibilityLabel("Pin panel toggle")
         blur.addSubview(pinBtn)
         NSLayoutConstraint.activate([
             pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 6),
-            pinBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -46),
+            pinBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -72),
             pinBtn.widthAnchor.constraint(equalToConstant: 24),
             pinBtn.heightAnchor.constraint(equalToConstant: 22)
         ])
