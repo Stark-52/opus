@@ -768,6 +768,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
     func bell(source: TerminalView) {
+        // Report the RINGING pane's tab title, not necessarily the active
+        // one — a background tab can bell too. Same lookup pattern as
+        // setTerminalTitle just above.
+        for (tabIdx, paneList) in tabPanes.enumerated() where paneList.contains(where: { $0.terminal === source }) {
+            ClaudeAttention.shared.bellReceived(title: tabTitles.indices.contains(tabIdx) ? tabTitles[tabIdx] : "")
+            return
+        }
         ClaudeAttention.shared.bellReceived(title: tabTitles.indices.contains(activeTabIndex) ? tabTitles[activeTabIndex] : "")
     }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}

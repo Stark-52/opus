@@ -9,13 +9,43 @@ final class ClaudeAttention {
     static let shared = ClaudeAttention()
     private var authRequested = false
 
+    /// Timestamp of the last signal actually fired. Exposed read-only so
+    /// tests can assert debounce behavior without touching AppKit/UN state.
+    private(set) var lastSignalAt: Date?
+
+    /// Whether Opus is currently visible/focused to the user. Wired by
+    /// AppDelegate at launch to also account for the non-activating panel
+    /// (NSApp.isActive alone misses it — see applicationDidFinishLaunching).
+    /// Default keeps the old NSApp.isActive-only behavior for safety (and
+    /// for anything that constructs ClaudeAttention before AppDelegate wires
+    /// the real check, e.g. tests).
+    var isUserLookingAtOpus: () -> Bool = { NSApp.isActive }
+
+    /// The actual badge/bounce/notification side effects, factored out so
+    /// tests can swap in a no-op: UNUserNotificationCenter.current() can
+    /// crash/error in a bundle-less SPM test process, so nothing in the test
+    /// target may reach the real implementation.
+    var postSystemSignals: (String) -> Void = { _ in }
+
+    /// Bell storms (several rings in quick succession) collapse to a single
+    /// signal instead of stacking one notification banner per bell.
+    private static let debounceInterval: TimeInterval = 3
+
+    private init() {
+        postSystemSignals = { [weak self] title in
+            NSApp.dockTile.badgeLabel = "●"
+            NSApp.requestUserAttention(.informationalRequest)   // Dock bounce, once
+            self?.postNotification(title: title)
+        }
+    }
+
     func bellReceived(title: String) {
         guard OpusPreferences.shared.notifyOnBell else { return }
         // Only signal when the user is NOT already looking at Opus.
-        guard !NSApp.isActive else { return }
-        NSApp.dockTile.badgeLabel = "●"
-        NSApp.requestUserAttention(.informationalRequest)   // Dock bounce, once
-        postNotification(title: title)
+        guard !isUserLookingAtOpus() else { return }
+        if let last = lastSignalAt, Date().timeIntervalSince(last) < Self.debounceInterval { return }
+        lastSignalAt = Date()
+        postSystemSignals(title)
     }
 
     func clear() {
