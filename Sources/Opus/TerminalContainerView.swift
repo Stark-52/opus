@@ -25,6 +25,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
     private var shieldButton: NSButton?
+    private var findBar: FindBarView?
+    private var lastSearchTerm = ""
 
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
@@ -147,6 +149,43 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     @objc private func skipPermissionsStateChanged() {
         refreshShieldButton()
     }
+
+    // MARK: Find bar (Cmd+F scrollback search over SwiftTerm's built-in engine)
+
+    func toggleFindBar() {
+        if let bar = findBar {
+            bar.removeFromSuperview()
+            findBar = nil
+            activeTerminal?.clearSearch()
+            if let t = activeTerminal { window?.makeFirstResponder(t) }
+            return
+        }
+        let bar = FindBarView(frame: .zero)
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.onNext = { [weak self] term in
+            guard !term.isEmpty else { return }
+            self?.lastSearchTerm = term
+            _ = self?.activeTerminal?.findNext(term)
+        }
+        bar.onPrevious = { [weak self] term in
+            guard !term.isEmpty else { return }
+            self?.lastSearchTerm = term
+            _ = self?.activeTerminal?.findPrevious(term)
+        }
+        bar.onClose = { [weak self] in self?.toggleFindBar() }
+        addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 60),
+            bar.widthAnchor.constraint(equalToConstant: 320),
+            bar.heightAnchor.constraint(equalToConstant: 30),
+        ])
+        window?.makeFirstResponder(bar.field)
+        findBar = bar
+    }
+
+    func findNextInActivePane()     { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
+    func findPreviousInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
 
     /// Live-apply font changes to every pane. Cheap + idempotent: every pref
     /// write fires this, so compare before assigning (SwiftTerm's font setter
