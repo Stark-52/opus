@@ -323,8 +323,12 @@ final class OpusPreferences {
         }
     }
 
-    /// The actual shell command to run inside the spawned zsh. Default args
-    /// keep existing call sites (private tabs) compiling with no flags.
+    /// The actual shell command to run inside the spawned zsh. Private tabs
+    /// (FilteredClaudeTab.start) call this passing the live skip-permissions
+    /// state explicitly and always `resumeMode: .none` — they inherit the
+    /// current dangerous-mode/permission-mode flags but never resume, since
+    /// `--continue`/`--resume` there would attach the same transcript tab 0
+    /// is already writing (two claudes on one session file).
     func resolvedSpawnCommand(
         skipPermissions: Bool = false,
         resumeMode: OpusResumeMode = .none

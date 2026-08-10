@@ -650,6 +650,11 @@ final class QuickTerminalPanel: NSObject {
         25: 8,  // 9
     ]
 
+    /// Cmd-key chars that must fall through to the find bar's field editor
+    /// (instead of acting on the live session) while it has focus. F/G are
+    /// deliberately excluded — they're meant to work FROM the field.
+    private static let findBarBypassChars: Set<String> = ["c", "v", "t", "w", "d", ","]
+
     private func handleKeyEvent(_ ev: NSEvent) -> NSEvent? {
         guard ev.window === panel else { return ev }
         let mods = KeyMods.shortcutMods(ev.modifierFlags)
@@ -657,6 +662,14 @@ final class QuickTerminalPanel: NSObject {
         // Cmd alone — tab/pane lifecycle + tab switching.
         if mods == .command {
             if let chars = ev.charactersIgnoringModifiers?.lowercased() {
+                // While the find bar's field owns focus, Cmd+C/V/T/W/D/, must
+                // reach the field editor (copy/paste/select-all etc.) instead
+                // of acting on the live session behind it — Cmd+V would paste
+                // the clipboard into claude's prompt (and can submit it),
+                // Cmd+C with no terminal selection sends 0x03 (interrupt).
+                // Cmd+F/G stay intercepted: F closes the bar, G steps the
+                // search — both are meant to work FROM the field.
+                if container.findBarHasFocus, Self.findBarBypassChars.contains(chars) { return ev }
                 switch chars {
                 case "t": container.spawnNewTab(); return nil
                 case "w": container.closeActivePane(); return nil
@@ -670,12 +683,19 @@ final class QuickTerminalPanel: NSObject {
                 }
             }
             // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
+            // Left intercepted even while the find bar has focus — zooming
+            // while searching is harmless (no live-session side effect).
             switch ev.keyCode {
             case 24: OpusPreferences.shared.bumpFontSize(+1); return nil
             case 27: OpusPreferences.shared.bumpFontSize(-1); return nil
             case 29: OpusPreferences.shared.resetFontSize(); return nil
             default: break
             }
+            // Tab-switch digits: pass through while the find bar has focus.
+            // Switching tabs from inside the field would auto-close the bar
+            // (its target pane changed) anyway, so letting the digit reach
+            // the field first is simpler than special-casing the close order.
+            if container.findBarHasFocus { return ev }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
                 container.switchTab(to: tabIdx)
                 return nil

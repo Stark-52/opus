@@ -52,14 +52,21 @@ final class ClaudeAttention {
         NSApp.dockTile.badgeLabel = nil
     }
 
+    /// Constant so a fresh signal REPLACES any still-showing banner instead
+    /// of stacking one notification per bell over a long session.
+    private static let notificationIdentifier = "opus.claude.attention"
+
     private func postNotification(title: String) {
+        // UNUserNotificationCenter requires a real bundle; badge + Dock
+        // bounce (postSystemSignals' other side effects) stay alive without one.
+        guard Bundle.main.bundleIdentifier != nil else { return }
         let center = UNUserNotificationCenter.current()
         let fire = {
             let content = UNMutableNotificationContent()
             content.title = "Claude needs you"
             content.body = title.isEmpty ? "The session is waiting." : title
             let req = UNNotificationRequest(
-                identifier: UUID().uuidString, content: content, trigger: nil)
+                identifier: Self.notificationIdentifier, content: content, trigger: nil)
             center.add(req, withCompletionHandler: nil)
         }
         if authRequested { fire(); return }
