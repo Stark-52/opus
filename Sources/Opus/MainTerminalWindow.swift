@@ -63,6 +63,13 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             case "g": container.findNextInActivePane(); return nil
             default: break
             }
+            // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
+            switch ev.keyCode {
+            case 24: OpusPreferences.shared.bumpFontSize(+1); return nil
+            case 27: OpusPreferences.shared.bumpFontSize(-1); return nil
+            case 29: OpusPreferences.shared.resetFontSize(); return nil
+            default: break
+            }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
                 container.switchTab(to: tabIdx)
                 return nil

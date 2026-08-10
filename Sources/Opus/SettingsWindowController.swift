@@ -26,6 +26,7 @@ final class SettingsWindowController: NSWindowController {
     private var notifyOnBellCheckbox: NSButton?
     private var fontSizeField: NSTextField?
     private var fontSizeStepper: NSStepper?
+    private var scrollbackLinesField: NSTextField?
     private var fontFamilies: [String] = []
 
     private convenience init() {
@@ -311,8 +312,22 @@ final class SettingsWindowController: NSWindowController {
         sizeStepper.action = #selector(onFontSizeStepped(_:))
         self.fontSizeStepper = sizeStepper
 
+        let scrollbackLabel = NSTextField(labelWithString: "Scrollback lines")
+        scrollbackLabel.alignment = .right
+        let scrollbackField = NSTextField(string: String(OpusPreferences.shared.scrollbackLines))
+        scrollbackField.alignment = .center
+        let scrollbackFormatter = NumberFormatter()
+        scrollbackFormatter.minimum = 1_000
+        scrollbackFormatter.maximum = 200_000
+        scrollbackFormatter.allowsFloats = false
+        scrollbackField.formatter = scrollbackFormatter
+        scrollbackField.target = self
+        scrollbackField.action = #selector(onScrollbackLinesSubmitted(_:))
+        self.scrollbackLinesField = scrollbackField
+
         for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn,
-                  fontLabel, fontPopup, sizeLabel, sizeField, sizeStepper] {
+                  fontLabel, fontPopup, sizeLabel, sizeField, sizeStepper,
+                  scrollbackLabel, scrollbackField] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -355,7 +370,14 @@ final class SettingsWindowController: NSWindowController {
             sizeField.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
             sizeField.widthAnchor.constraint(equalToConstant: 48),
             sizeStepper.centerYAnchor.constraint(equalTo: sizeLabel.centerYAnchor),
-            sizeStepper.leadingAnchor.constraint(equalTo: sizeField.trailingAnchor, constant: 4)
+            sizeStepper.leadingAnchor.constraint(equalTo: sizeField.trailingAnchor, constant: 4),
+
+            scrollbackLabel.topAnchor.constraint(equalTo: sizeLabel.bottomAnchor, constant: 20),
+            scrollbackLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            scrollbackLabel.widthAnchor.constraint(equalToConstant: 160),
+            scrollbackField.centerYAnchor.constraint(equalTo: scrollbackLabel.centerYAnchor),
+            scrollbackField.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            scrollbackField.widthAnchor.constraint(equalToConstant: 80)
         ])
 
         refreshAppearanceVisibility(mode: currentMode)
@@ -531,6 +553,12 @@ final class SettingsWindowController: NSWindowController {
         fontSizeStepper?.integerValue = clamped
     }
 
+    @objc private func onScrollbackLinesSubmitted(_ sender: NSTextField) {
+        OpusPreferences.shared.scrollbackLines = Int(sender.intValue)
+        let clamped = OpusPreferences.shared.scrollbackLines
+        sender.stringValue = String(clamped)
+    }
+
     private func refreshAppearanceVisibility(mode: String) {
         let showTint = (mode == "tint")
         let showImage = (mode == "image")
@@ -546,6 +574,8 @@ final class SettingsWindowController: NSWindowController {
         // The restart alert's "Don't ask again" can flip this behind our back.
         confirmRestartCheckbox?.state = OpusPreferences.shared.confirmRestart ? .on : .off
         notifyOnBellCheckbox?.state = OpusPreferences.shared.notifyOnBell ? .on : .off
+        fontSizeField?.stringValue = String(Int(OpusPreferences.shared.fontSize))
+        scrollbackLinesField?.stringValue = String(OpusPreferences.shared.scrollbackLines)
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
