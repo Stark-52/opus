@@ -228,7 +228,9 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         }
     }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-    func bell(source: TerminalView) {}
+    func bell(source: TerminalView) {
+        ClaudeAttention.shared.bellReceived(title: title)
+    }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         if let url = URL(string: link) { NSWorkspace.shared.open(url) }
@@ -731,6 +733,10 @@ final class QuickTerminalPanel: NSObject {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
         }
+
+        // The panel is a non-activating NSPanel, so didBecomeActiveNotification
+        // doesn't fire when it's revealed — clear the attention badge here too.
+        ClaudeAttention.shared.clear()
     }
 
     private func hide() {
@@ -851,6 +857,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(onSkipPermissionsChanged),
             name: .opusSkipPermissionsChanged, object: nil
         )
+        // The Dock badge/bounce should clear as soon as the user looks back
+        // at Opus. The panel is non-activating (see QuickTerminalPanel.show),
+        // so this alone doesn't cover it — that path clears explicitly too.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { _ in ClaudeAttention.shared.clear() }
 
         if display.includesPanel {
             nativePanel = QuickTerminalPanel()

@@ -75,6 +75,7 @@ final class OpusPreferences {
         static let skipPermissions        = "opus.skipPermissions"
         static let resumeLastConversation = "opus.resumeLastConversation"
         static let confirmRestart         = "opus.confirmRestart"
+        static let notifyOnBell           = "opus.notifyOnBell"
         static let recentProjects         = "opus.recentProjects"
         // Appearance (used in Phase 4)
         static let appearanceMode         = "opus.appearanceMode"
@@ -120,6 +121,13 @@ final class OpusPreferences {
     var confirmRestart: Bool {
         get { defaults.object(forKey: K.confirmRestart) == nil ? true : defaults.bool(forKey: K.confirmRestart) }
         set { write(K.confirmRestart, newValue) }
+    }
+
+    /// Native notification + Dock badge when a session rings the bell while
+    /// Opus is in the background. Default ON.
+    var notifyOnBell: Bool {
+        get { defaults.object(forKey: K.notifyOnBell) == nil ? true : defaults.bool(forKey: K.notifyOnBell) }
+        set { write(K.notifyOnBell, newValue) }
     }
 
     var workingDirectory: String {

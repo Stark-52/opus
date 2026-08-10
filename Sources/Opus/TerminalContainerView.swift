@@ -767,7 +767,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-    func bell(source: TerminalView) {}
+    func bell(source: TerminalView) {
+        ClaudeAttention.shared.bellReceived(title: tabTitles.indices.contains(activeTabIndex) ? tabTitles[activeTabIndex] : "")
+    }
     func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
         if let url = URL(string: link) { NSWorkspace.shared.open(url) }
