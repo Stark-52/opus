@@ -341,6 +341,9 @@ final class QuickTerminalPanel: NSObject {
     private var container: TerminalContainerView!
     private var keyMonitor: Any?
     private var visible = false
+    /// Bumped by every show()/hide() — a hide completion whose generation is
+    /// stale (a show ran since) must NOT orderOut the panel.
+    private var animationGeneration = 0
     var isVisible: Bool { visible }
     var terminalContainer: TerminalContainerView { container }
     private var suppressResizeSave = false
@@ -639,6 +642,7 @@ final class QuickTerminalPanel: NSObject {
     }
 
     private func show() {
+        animationGeneration += 1
         let screen = activeScreen()
         let screenFrame = screen.visibleFrame
         let saved = PanelGeometryDefaults.read(forScreen: screen)
@@ -725,13 +729,16 @@ final class QuickTerminalPanel: NSObject {
         slide.isRemovedOnCompletion = false
         layer.add(slide, forKey: "slideOut")
 
+        animationGeneration += 1
+        let gen = animationGeneration
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            self?.panel.orderOut(nil)
-            self?.panel.contentView?.layer?.removeAllAnimations()
+            guard let self, self.animationGeneration == gen, !self.visible else { return }
+            self.panel.orderOut(nil)
+            self.panel.contentView?.layer?.removeAllAnimations()
         })
     }
 
