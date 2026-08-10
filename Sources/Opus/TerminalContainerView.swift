@@ -732,6 +732,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         t.caretTextColor = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
         t.allowMouseReporting = false
         t.font = OpusPreferences.shared.resolvedTerminalFont()
+        // Scrollback applied at pane creation; existing panes keep their depth until recreated.
         t.getTerminal().changeScrollback(OpusPreferences.shared.scrollbackLines)
     }
 

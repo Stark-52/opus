@@ -51,17 +51,19 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
 
     private func handleKey(_ ev: NSEvent) -> NSEvent? {
         let mods = KeyMods.shortcutMods(ev.modifierFlags)
-        if mods == .command, let c = ev.charactersIgnoringModifiers?.lowercased() {
-            switch c {
-            case "t": container.spawnNewTab(); return nil
-            case "w": container.closeActivePane(); return nil
-            case "d": container.splitActivePane(vertical: true); return nil
-            case "c": container.copySelectionToPasteboard(); return nil
-            case "v": container.pasteFromPasteboard(); return nil
-            case ",": SettingsWindowController.shared.show(); return nil
-            case "f": container.toggleFindBar(); return nil
-            case "g": container.findNextInActivePane(); return nil
-            default: break
+        if mods == .command {
+            if let c = ev.charactersIgnoringModifiers?.lowercased() {
+                switch c {
+                case "t": container.spawnNewTab(); return nil
+                case "w": container.closeActivePane(); return nil
+                case "d": container.splitActivePane(vertical: true); return nil
+                case "c": container.copySelectionToPasteboard(); return nil
+                case "v": container.pasteFromPasteboard(); return nil
+                case ",": SettingsWindowController.shared.show(); return nil
+                case "f": container.toggleFindBar(); return nil
+                case "g": container.findNextInActivePane(); return nil
+                default: break
+                }
             }
             // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
             switch ev.keyCode {

@@ -575,6 +575,7 @@ final class SettingsWindowController: NSWindowController {
         confirmRestartCheckbox?.state = OpusPreferences.shared.confirmRestart ? .on : .off
         notifyOnBellCheckbox?.state = OpusPreferences.shared.notifyOnBell ? .on : .off
         fontSizeField?.stringValue = String(Int(OpusPreferences.shared.fontSize))
+        fontSizeStepper?.integerValue = Int(OpusPreferences.shared.fontSize)
         scrollbackLinesField?.stringValue = String(OpusPreferences.shared.scrollbackLines)
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
