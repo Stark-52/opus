@@ -106,10 +106,10 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         // claudes writing one session file).
         process.startProcess(
             executable: "/bin/zsh",
-            args: ["-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
+            args: ["-l", "-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: ClaudeBackend.shared.skipPermissionsActive,
                 resumeMode: .none)],
-            environment: nil,
+            environment: SpawnEnvironment.make(),
             execName: nil
         )
     }

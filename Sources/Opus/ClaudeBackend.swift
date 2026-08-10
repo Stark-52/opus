@@ -97,7 +97,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         guard process == nil else { return }
         let p = LocalProcess(delegate: self)
         process = p
-        // -i sources .zshrc so PATH includes ~/.local/bin where claude lives.
+        // -l -i runs a login+interactive shell like a real terminal would:
+        // /etc/zprofile (path_helper) restores the system PATH baseline and
+        // .zshrc adds ~/.local/bin where claude lives.
         // `command claude` skips the .zshrc wrapper to avoid recursion.
         // Bench mode: if /tmp/opus_bench_active exists, cat the bench file and
         // capture timing instead of launching claude — used for the rendering
@@ -113,8 +115,8 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         }
         p.startProcess(
             executable: "/bin/zsh",
-            args: ["-i", "-c", cmd],
-            environment: nil,
+            args: ["-l", "-i", "-c", cmd],
+            environment: SpawnEnvironment.make(),
             execName: nil
         )
         DispatchQueue.main.async {
