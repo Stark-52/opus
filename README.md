@@ -28,6 +28,12 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Session-ended overlay** — when Claude exits and there are no other live panes, you get a centered "Start new session" / "Close Opus" prompt instead of a frozen dead terminal.
 - **Event-driven resize** — `opus-attach` reports SIGWINCH via a self-pipe; the broadcaster ioctls the master PTY and SIGWINCHes the child on focus change. No polling.
 - **Cursor stays visible in Claude's TUI** — DECTCEM hide/show sequences (`\e[?25l` / `\e[?25h`) are filtered out before reaching SwiftTerm so the caret doesn't disappear inside the panel.
+- **Find in scrollback** (`Cmd+F`) — a find bar over SwiftTerm's built-in search engine. Enter = next match, Shift+Enter = previous, Esc = close.
+- **"Claude needs you" notifications** — a terminal bell fires a Dock badge + bounce and a native notification when Opus is backgrounded, debounced so a bell storm collapses to one signal.
+- **Pin button** (top-right of the panel) — disables panel autohide so it stays visible while you work in another app, for monitoring long-running sessions.
+- **`opus-attach send`** — push a one-shot prompt into the live shared session from scripts, cron, git hooks, or Raycast, without attaching a terminal.
+- **Font zoom** (`Cmd+=` / `Cmd+-` / `Cmd+0`) — live font size adjustment, plus a configurable scrollback ceiling in Settings.
+- **Permission-mode picker** — right-click the shield button to pick a `--permission-mode` preset (default / plan / auto-accept edits) independent of the dangerous-mode toggle.
 
 ## Build
 
@@ -47,10 +53,10 @@ Pin to the Dock once it's running.
 
 ## Wire-up in your shell
 
-Add to your `~/.zshrc` so `claude` in Terminal.app auto-attaches to the panel's session when Opus is running:
+Optional: add a `claude-join()` function to your `~/.zshrc` so you can voluntarily attach a Terminal.app tab to the panel's shared session whenever you want, instead of starting a fresh `claude`:
 
 ```zsh
-claude() {
+claude-join() {
     if [ -S /tmp/opus.sock ]; then
         exec opus-attach
     else
@@ -58,6 +64,8 @@ claude() {
     fi
 }
 ```
+
+Run `claude-join` when you want this tab mirroring the shared session; run plain `claude` for an independent one. It's a voluntary attach, not an override of `claude` itself.
 
 ### Push a prompt from anywhere
 
@@ -110,6 +118,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- v1.3 (2026-08-11): Cmd+F search, attention notifications, panel pin, opus-attach send, font zoom + scrollback setting, permission-mode picker, transcript-marker env fix.
 - v1.2.2 (2026-08-10): 12 bugfixes from the multi-agent review — restart targets the focused pane, SIGPIPE hardening, Caps Lock shortcuts, panel toggle race, and more.
 
 ## License
