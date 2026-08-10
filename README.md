@@ -28,7 +28,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Session-ended overlay** — when Claude exits and there are no other live panes, you get a centered "Start new session" / "Close Opus" prompt instead of a frozen dead terminal.
 - **Event-driven resize** — `opus-attach` reports SIGWINCH via a self-pipe; the broadcaster ioctls the master PTY and SIGWINCHes the child on focus change. No polling.
 - **Cursor stays visible in Claude's TUI** — DECTCEM hide/show sequences (`\e[?25l` / `\e[?25h`) are filtered out before reaching SwiftTerm so the caret doesn't disappear inside the panel.
-- **Find in scrollback** (`Cmd+F`) — a find bar over SwiftTerm's built-in search engine. Enter = next match, Shift+Enter = previous, Esc = close.
+- **Find in scrollback** (`Cmd+F`) — a find bar over SwiftTerm's built-in search engine. Enter = next match, Shift+Enter = previous, Esc = close. `Cmd+G` / `Cmd+Shift+G` step to the next/previous match without refocusing the bar.
 - **"Claude needs you" notifications** — a terminal bell fires a Dock badge + bounce and a native notification when Opus is backgrounded, debounced so a bell storm collapses to one signal.
 - **Pin button** (top-right of the panel) — disables panel autohide so it stays visible while you work in another app, for monitoring long-running sessions.
 - **`opus-attach send`** — push a one-shot prompt into the live shared session from scripts, cron, git hooks, or Raycast, without attaching a terminal.

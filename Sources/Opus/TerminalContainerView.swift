@@ -175,7 +175,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func permissionModePicked(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
-              let mode = OpusPermissionMode(rawValue: raw) else { return }
+              let mode = OpusPermissionMode(rawValue: raw),
+              mode != OpusPreferences.shared.permissionMode else { return }   // re-picking the checked mode must not kill a running turn
         OpusPreferences.shared.permissionMode = mode
         refreshShieldButton()
         ClaudeBackend.shared.restart(resume: true)   // same conversation, new flags
@@ -218,6 +219,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func findNextInActivePane()     { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
     func findPreviousInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
 
+    /// True while the find bar's field (or its field editor) owns focus.
+    /// The key monitors must not act on the live panes in that state.
+    ///
+    /// Verified empirically (small AppKit harness outside the test target,
+    /// since XCTest can't reliably drive real firstResponder/field-editor
+    /// state): starting an edit on an NSSearchField makes the window's
+    /// firstResponder the shared field-editor NSTextView, and that view IS
+    /// nested inside the search field's view hierarchy for the duration of
+    /// editing (AppKit inserts it as a subview to render the caret/selection).
+    /// So `isDescendant(of: bar)` alone catches both "the field itself has
+    /// focus" and "the field editor is actively editing it" — no fallback
+    /// to `bar.field.currentEditor()` needed, though that also held true
+    /// in the same harness.
+    var findBarHasFocus: Bool {
+        guard let bar = findBar, let fr = window?.firstResponder as? NSView else { return false }
+        return fr.isDescendant(of: bar)
+    }
+
     /// The find bar targets the active pane; when that context changes the
     /// bar must go with it, or blind keystrokes land in a live session.
     private func closeFindBarIfOpen() {
@@ -238,6 +257,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 }
             }
         }
+        // Cross-surface sync: picking a permission mode in ONE shared-tab-0
+        // surface (e.g. panelAndMain's panel) writes the pref, which posts
+        // this same notification to every container — refresh so the OTHER
+        // surface's shield menu checkmark follows along. No-ops on containers
+        // without a shield button (refreshShieldButton guards on shieldButton
+        // being nil).
+        refreshShieldButton()
     }
 
     private func bootstrapFirstTab() {
@@ -301,6 +327,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             ClaudeBackend.shared.restart(resume: false)
             return
         }
+        closeFindBarIfOpen()
         if let wrapper = pane.wrapper {
             hideDeadOverlay(forPane: pane)   // stale overlay would eat the fresh TUI
             wrapper.restartFresh()
@@ -375,6 +402,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func splitActivePane(vertical: Bool) {
         guard let oldPane = activePane,
               tabPanes.indices.contains(activeTabIndex) else { return }
+        closeFindBarIfOpen()
 
         let oldView = oldPane.terminal
         let parent = oldView.superview

@@ -46,7 +46,7 @@ Opus.app
       ├── permissionMode → shield's right-click `--permission-mode` preset (default/plan/acceptEdits)
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload
 
-Tests/OpusTests/          — first test target (22 unit tests)
+Tests/OpusTests/          — first test target (62 unit tests)
       ├── spawn-command flag assembly
       ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
       └── MRU recent-projects list
@@ -161,6 +161,9 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.fontName` | String | "" (system default) |
 | `opus.fontSize` | Double | `14` |
 | `opus.recentProjects` | `[String]` | `[]` |
+| `opus.notifyOnBell` | Bool | `true` (absent key = on) |
+| `opus.panelPinned` | Bool | `false` |
+| `opus.scrollbackLines` | Int | `10_000` (clamped 1,000–200,000) |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
 

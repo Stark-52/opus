@@ -49,10 +49,20 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         }
     }
 
+    /// Cmd-key chars that must fall through to the find bar's field editor
+    /// (instead of acting on the live session) while it has focus. F/G are
+    /// deliberately excluded — they're meant to work FROM the field. Kept
+    /// in sync with QuickTerminalPanel.findBarBypassChars.
+    private static let findBarBypassChars: Set<String> = ["c", "v", "t", "w", "d", ","]
+
     private func handleKey(_ ev: NSEvent) -> NSEvent? {
         let mods = KeyMods.shortcutMods(ev.modifierFlags)
         if mods == .command {
             if let c = ev.charactersIgnoringModifiers?.lowercased() {
+                // See QuickTerminalPanel.handleKeyEvent for the full rationale:
+                // Cmd+V into a focused find-bar field must not paste into the
+                // live claude prompt, Cmd+C there must not send an interrupt.
+                if container.findBarHasFocus, Self.findBarBypassChars.contains(c) { return ev }
                 switch c {
                 case "t": container.spawnNewTab(); return nil
                 case "w": container.closeActivePane(); return nil
@@ -66,12 +76,16 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
                 }
             }
             // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
+            // Left intercepted even while the find bar has focus — harmless.
             switch ev.keyCode {
             case 24: OpusPreferences.shared.bumpFontSize(+1); return nil
             case 27: OpusPreferences.shared.bumpFontSize(-1); return nil
             case 29: OpusPreferences.shared.resetFontSize(); return nil
             default: break
             }
+            // Tab-switch digits: pass through while the find bar has focus —
+            // see QuickTerminalPanel.handleKeyEvent for the reasoning.
+            if container.findBarHasFocus { return ev }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
                 container.switchTab(to: tabIdx)
                 return nil

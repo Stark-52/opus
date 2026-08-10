@@ -107,7 +107,10 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         // -l -i runs a login+interactive shell like a real terminal would:
         // /etc/zprofile (path_helper) restores the system PATH baseline and
         // .zshrc adds ~/.local/bin where claude lives.
-        // `command claude` skips the .zshrc wrapper to avoid recursion.
+        // `command claude` bypasses any shell function/alias a user's .zshrc
+        // might define for the name `claude` — e.g. if the optional
+        // `claude-join` wrapper documented in the README were named `claude`
+        // instead, this avoids spawning it recursively.
         // Bench mode: if /tmp/opus_bench_active exists, cat the bench file and
         // capture timing instead of launching claude — used for the rendering
         // benchmark vs Ghostty.
