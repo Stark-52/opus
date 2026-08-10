@@ -794,6 +794,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let socketServer = SocketServer()
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        // A vanished socket client must never SIGPIPE-kill the app.
+        signal(SIGPIPE, SIG_IGN)
+
         Self.shared = self
 
         // Kill any stale dtach/socket leftovers so each launch is fresh.
