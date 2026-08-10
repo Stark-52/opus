@@ -59,6 +59,8 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             case "c": container.copySelectionToPasteboard(); return nil
             case "v": container.pasteFromPasteboard(); return nil
             case ",": SettingsWindowController.shared.show(); return nil
+            case "f": container.toggleFindBar(); return nil
+            case "g": container.findNextInActivePane(); return nil
             default: break
             }
             if let tabIdx = Self.kc_Digits[ev.keyCode] {
@@ -68,6 +70,9 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         }
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "d" {
             container.splitActivePane(vertical: false); return nil
+        }
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "g" {
+            container.findPreviousInActivePane(); return nil
         }
         return ev
     }
