@@ -187,6 +187,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func findNextInActivePane()     { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
     func findPreviousInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
 
+    /// The find bar targets the active pane; when that context changes the
+    /// bar must go with it, or blind keystrokes land in a live session.
+    private func closeFindBarIfOpen() {
+        guard findBar != nil else { return }
+        toggleFindBar()   // removes the bar, clears the search, restores focus
+    }
+
     /// Live-apply font changes to every pane. Cheap + idempotent: every pref
     /// write fires this, so compare before assigning (SwiftTerm's font setter
     /// recalculates cell metrics and triggers a resize cascade).
@@ -292,6 +299,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // other tabs alive).
         if tabIdx == 0 && pane.wrapper == nil && !force { return }
 
+        // Both guards above have resolved (a pane WILL actually close from
+        // here on) — safe to close the bar without leaving a stray side
+        // effect on either early-return path.
+        closeFindBarIfOpen()
+
         pane.terminate()
 
         let view = pane.terminal
@@ -385,6 +397,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     func switchTab(to index: Int) {
         guard tabs.indices.contains(index) else { return }
+        closeFindBarIfOpen()
 
         // Before we leave the current tab, remember which pane has focus so we
         // can restore it next time the user comes back.
