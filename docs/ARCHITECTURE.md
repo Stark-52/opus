@@ -9,7 +9,7 @@ Opus.app
 ├── AppDelegate
 │     ├── installAppMenu()           — minimal menu bar (Settings…, Quit)
 │     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M / Cmd+Ctrl+R
-│     ├── SocketServer               — Unix domain socket at /tmp/opus.sock (mirror mode only)
+│     ├── SocketServer               — Unix domain socket at /tmp/opus.sock, always running regardless of displayMode; also serves `opus-attach send` one-shot prompt injection
 │     ├── QuickTerminalPanel?        — slide-down NSPanel host (panel/both modes)
 │     ├── MainTerminalWindow?        — standalone NSWindow host (main/both modes)
 │     ├── SettingsWindowController   — NSTabView with General / Appearance / Display
@@ -34,11 +34,16 @@ Opus.app
 │     │     ├── shared  → ClaudeBackend subscriber, no own process (mirrors Terminal.app)
 │     │     └── private → own FilteredClaudeTab wrapping LocalProcess
 │     ├── TerminalViewDelegate impl (send/sizeChanged/setTerminalTitle/clipboardCopy/…)
+│     ├── FindBarView — Cmd+F find bar over SwiftTerm's built-in scrollback search (Enter/Shift+Enter/Esc)
 │     └── copySelectionToPasteboard() / pasteFromPasteboard()
+│
+├── ClaudeAttention (singleton)
+│     └── turns terminal BELs into a Dock badge + notification ("Claude needs you") when Opus is backgrounded, debounced 3s
 │
 └── OpusPreferences (singleton)
       ├── UserDefaults-backed key/value store
       ├── posts opusPreferencesDidChange on every write
+      ├── permissionMode → shield's right-click `--permission-mode` preset (default/plan/acceptEdits)
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload
 
 Tests/OpusTests/          — first test target (22 unit tests)
@@ -88,6 +93,12 @@ Claude Code's project-dir name (every non-alphanumeric → `-`; older
 dot-keeping encoding as fallback), then take the most recently modified
 UUID-named `*.jsonl` in `~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
 worst case the existing "Session ended" overlay.
+
+Right-clicking the shield opens a menu of `OpusPermissionMode` presets (`--permission-mode` values, e.g. `plan`/`acceptEdits`); the shield's own `--dangerously-skip-permissions` toggle always wins when both are active.
+
+## Spawn environment
+
+`SpawnEnvironment.make` builds the child process env: forces `TERM`/`COLORTERM`/`LANG`, guarantees `/usr/bin:/bin:/usr/sbin:/sbin` are on `PATH` (SwiftTerm's default env omits it), and strips inherited Claude Code session markers (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, etc.) so a spawned `claude` isn't mistaken for a nested child session, which would silently disable transcript persistence and break `--resume`.
 
 ## PTY ownership
 
@@ -144,6 +155,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.appearanceImagePath` | String? | `nil` |
 | `opus.panelGeometry.display<DisplayID>` | `["width": Double, "height": Double]` | — |
 | `opus.skipPermissions` | Bool | `false` |
+| `opus.permissionMode` | `OpusPermissionMode` (default/plan/acceptEdits) | `default` |
 | `opus.resumeLastConversation` | Bool | `false` |
 | `opus.confirmRestart` | Bool | `true` (absent key = ask) |
 | `opus.fontName` | String | "" (system default) |
