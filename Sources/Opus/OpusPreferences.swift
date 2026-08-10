@@ -84,6 +84,7 @@ final class OpusPreferences {
         static let appearanceImagePath    = "opus.appearanceImagePath"
         static let fontName               = "opus.fontName"
         static let fontSize               = "opus.fontSize"
+        static let scrollbackLines        = "opus.scrollbackLines"
     }
 
     // MARK: Typed accessors
@@ -213,6 +214,22 @@ final class OpusPreferences {
         }
         set { write(K.fontSize, min(24, max(9, newValue))) }
     }
+
+    /// Scrollback depth per pane. Long agent runs easily blow the SwiftTerm
+    /// default; clamp keeps memory sane (a line is cheap but not free).
+    var scrollbackLines: Int {
+        get {
+            let v = defaults.integer(forKey: K.scrollbackLines)
+            return v == 0 ? 10_000 : min(200_000, max(1_000, v))
+        }
+        set { write(K.scrollbackLines, min(200_000, max(1_000, newValue))) }
+    }
+
+    /// Bump font size by delta, clamped to 9…24 bounds.
+    func bumpFontSize(_ delta: Double) { fontSize = fontSize + delta }
+
+    /// Reset font size to default (14 points).
+    func resetFontSize() { fontSize = 14 }
 
     /// Terminal font from prefs. The automatic chain matches the historical
     /// hardcoded fallbacks, with a guaranteed final monospaced system font.
