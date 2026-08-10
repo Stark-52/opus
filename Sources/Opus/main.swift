@@ -875,11 +875,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let display = OpusPreferences.shared.displayMode
 
+        // The socket server now always runs: opus-attach send (one-shot prompt
+        // injection) must work in every display mode, not just the mirror one.
+        socketServer.start()
         if display.includesNativeTerminal {
-            // Start the Unix socket server so external clients (opus-attach in
-            // Terminal.app) can subscribe to the same claude session as the panel.
-            socketServer.start()
-
             // Phase 3b — focus-following resize for Terminal.app. When Terminal.app
             // becomes the active app, query its front window's cols/rows and resize
             // claude's PTY so the rendering matches.
