@@ -306,7 +306,7 @@ final class OpusSplitView: NSSplitView {
 
 /// UserDefaults keys for panel size persistence. Keyed by screen size so a
 /// resize on the laptop display doesn't dictate the panel size on a 34" UWQHD.
-private enum PanelGeometryDefaults {
+enum PanelGeometryDefaults {
     static func key(forScreen screen: NSScreen) -> String {
         // Prefer the CGDirectDisplayID (unique per physical connector, stable across
         // reboots) so two identical monitors don't share one saved geometry.
@@ -330,6 +330,16 @@ private enum PanelGeometryDefaults {
             ["width": Double(width), "height": Double(height)],
             forKey: key(forScreen: screen)
         )
+    }
+    /// Saved sizes come from a possibly different display/resolution era —
+    /// never let them exceed the screen the panel is about to slide onto.
+    static func clamped(
+        saved: (width: CGFloat, height: CGFloat)?,
+        toVisible visible: NSRect
+    ) -> (width: CGFloat, height: CGFloat) {
+        let w = min(saved?.width ?? visible.width, visible.width)
+        let h = min(saved?.height ?? visible.height * 0.4, visible.height)
+        return (width: w, height: h)
     }
 }
 
@@ -645,9 +655,11 @@ final class QuickTerminalPanel: NSObject {
         animationGeneration += 1
         let screen = activeScreen()
         let screenFrame = screen.visibleFrame
-        let saved = PanelGeometryDefaults.read(forScreen: screen)
-        let w = saved?.width ?? screenFrame.width
-        let h = saved?.height ?? screenFrame.height * 0.4
+        let size = PanelGeometryDefaults.clamped(
+            saved: PanelGeometryDefaults.read(forScreen: screen),
+            toVisible: screenFrame)
+        let w = size.width
+        let h = size.height
         let frame = screenFrame   // kept for the existing maxY math below
 
         let target = NSRect(x: frame.origin.x, y: frame.maxY - h, width: w, height: h)
