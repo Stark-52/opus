@@ -20,12 +20,35 @@ enum SpawnEnvironment {
     /// Directories that must survive any dotfile PATH surgery.
     static let systemPathEntries = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 
+    /// Claude Code stamps its child processes with session markers. If Opus
+    /// itself was launched from inside a Claude Code session (open(1) leaks
+    /// the caller's environment through LaunchServices), an inherited marker
+    /// makes the spawned claude believe it is a nested child session and it
+    /// disables transcript persistence — silently breaking --resume. Strip
+    /// the runtime markers; deliberate user CONFIG vars (e.g.
+    /// CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION) pass through.
+    static let claudeSessionMarkers = [
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CLAUDE_CODE_SSE_PORT",
+        "CLAUDE_CODE_MESSAGING_SOCKET",
+        "CLAUDE_CODE_BRIDGE_SESSION_ID",
+        "CLAUDE_CODE_EXECPATH",
+        "CLAUDE_PID",
+        "CLAUDE_EFFORT",
+    ]
+
     /// Build the child environment in SwiftTerm's "KEY=VALUE" format.
     /// `base` defaults to the app's own environment; injectable for tests.
     static func make(
         base: [String: String] = ProcessInfo.processInfo.environment
     ) -> [String] {
         var env = base
+        for marker in claudeSessionMarkers {
+            env.removeValue(forKey: marker)
+        }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         if (env["LANG"] ?? "").isEmpty {
