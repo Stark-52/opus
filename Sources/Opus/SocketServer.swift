@@ -42,6 +42,10 @@ final class SocketServer {
             close(listenFD); listenFD = -1
             return
         }
+        // connect() on a UNIX socket requires write permission on the socket
+        // file — don't rely on ambient umask to keep other local users out of
+        // a zero-auth prompt-injection channel.
+        chmod(path, 0o600)
         guard listen(listenFD, 4) == 0 else {
             NSLog("Opus SocketServer: listen() failed errno=\(errno)")
             return

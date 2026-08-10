@@ -10,8 +10,10 @@
 //     Sent client→server only, on initial connect and on every SIGWINCH.
 //     Server uses it to resize claude's PTY to match this terminal's actual size.
 //
-// Usage:    opus-attach           (uses /tmp/opus.sock)
-//           opus-attach <path>    (custom socket path)
+// Usage:    opus-attach                     (uses /tmp/opus.sock)
+//           opus-attach <path>              (custom socket path)
+//           opus-attach send [-n] <text...> (one-shot prompt injection, then exit;
+//                                             -n = don't submit, just type it)
 
 import Foundation
 import Darwin
@@ -66,8 +68,9 @@ if sendMode {
     payload.withUnsafeBufferPointer { buf in
         _ = write(sock, buf.baseAddress, buf.count)
     }
-    // Give the kernel a beat to flush before closing the socket.
-    usleep(100_000)
+    // No flush delay needed: on AF_UNIX stream sockets a successful write()
+    // has already handed the bytes to the kernel, and close() does not
+    // discard data still buffered for the peer.
     close(sock)
     exit(0)
 }

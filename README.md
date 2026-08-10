@@ -67,6 +67,12 @@ claude() {
 Works from scripts, cron, git hooks, Raycast: anything that can run a binary
 can drive the live Claude session.
 
+The socket now runs in every display mode (not just when Terminal.app is
+part of the mix), so `claude-join`/`opus-attach` mirroring and `send` both
+work regardless of which display mode Opus is set to.
+
+Quote your text, especially with apostrophes: `opus-attach send "don't forget"`.
+
 ## Architecture
 
 ```
@@ -83,7 +89,7 @@ Opus.app
 │     └── splits via NSSplitView (nested, axis-mixed)
 ├── SettingsWindowController (General / Appearance / Display tabs)
 ├── OnboardingWindowController (first-launch TCC prompts)
-└── SocketServer (/tmp/opus.sock, only when displayMode includes Terminal.app)
+└── SocketServer (/tmp/opus.sock, always running regardless of displayMode)
       └── opus-attach clients — Terminal.app windows
 ```
 
