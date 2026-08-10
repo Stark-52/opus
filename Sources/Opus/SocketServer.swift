@@ -82,6 +82,10 @@ final class SocketServer {
         var token: UUID?
         let writer = SocketClientWriter(fd: fd, onFailure: {
             if let t = token { ClaudeBackend.shared.unsubscribe(t) }
+            // Wake the read loop's blocking read(fd) (n<=0 -> break) so it
+            // can unwind and tear down; writer.shutdown() still owns the
+            // single close(fd) once that loop exits.
+            _ = Darwin.shutdown(fd, SHUT_RDWR)
             NSLog("Opus SocketServer: client write failed, dropping fd=\(fd)")
         })
         token = ClaudeBackend.shared.subscribe { slice in
@@ -93,6 +97,9 @@ final class SocketServer {
             while true {
                 let n = read(fd, &buffer, buffer.count)
                 if n <= 0 { break }
+
+                // Parse leading control sequence(s) — opus-attach may stack
+                // multiple size updates if WINCH fires rapidly.
                 var i = 0
                 while i + Self.opusCtrlSize <= n &&
                       Array(buffer[i..<(i + 5)]) == Self.opusMagic {
