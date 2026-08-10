@@ -232,6 +232,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
+    // MARK: Tab index arithmetic
+
+    /// Pure index arithmetic for tab removal: shift down when a lower-index
+    /// tab disappears, clamp when the active tab itself (or the tail) went.
+    static func activeTabIndexAfterClosing(_ closed: Int, active: Int, newCount: Int) -> Int {
+        var a = active
+        if closed < a { a -= 1 }
+        if a >= newCount { a = max(0, newCount - 1) }
+        return a
+    }
+
     func closePane(_ pane: TabPane, force: Bool = false) {
         guard let tabIdx = tabPanes.firstIndex(where: { panes in panes.contains(where: { $0 === pane }) }),
               let paneIdx = tabPanes[tabIdx].firstIndex(where: { $0 === pane }) else { return }
@@ -265,7 +276,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             tabPanes.remove(at: tabIdx)
             tabActivePaneIndex.remove(at: tabIdx)
             tabTitles.remove(at: tabIdx)
-            if activeTabIndex >= tabs.count { activeTabIndex = max(0, tabs.count - 1) }
+            activeTabIndex = Self.activeTabIndexAfterClosing(
+                tabIdx, active: activeTabIndex, newCount: tabs.count)
             switchTab(to: activeTabIndex)
         } else {
             // Refocus a neighbor pane in the same tab.
