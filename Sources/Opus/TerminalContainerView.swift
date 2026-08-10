@@ -124,6 +124,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             btn.heightAnchor.constraint(equalToConstant: 22)
         ])
         shieldButton = btn
+
+        // Right-click / ctrl-click: choose a --permission-mode preset. Skip
+        // Permissions (left-click) always wins over these when active — see
+        // composeSpawnCommand.
+        let menu = NSMenu()
+        for mode in OpusPermissionMode.allCases {
+            let item = NSMenuItem(title: mode.displayName,
+                                  action: #selector(permissionModePicked(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            menu.addItem(item)
+        }
+        btn.menu = menu   // right-click opens it
+
         refreshShieldButton()
     }
 
@@ -140,6 +155,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         btn.toolTip = active
             ? "Skip permissions: ON — Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
             : "Skip permissions: OFF — click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
+
+        // Re-state the permission-mode menu's checkmark to match the current
+        // pref — this runs on every skipPermissions flip too, since the
+        // shield's own toggle changes what "active" flag combo is in effect.
+        let current = OpusPreferences.shared.permissionMode
+        for item in btn.menu?.items ?? [] {
+            item.state = (item.representedObject as? String == current.rawValue) ? .on : .off
+        }
     }
 
     @objc private func shieldTapped() {
@@ -148,6 +171,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func skipPermissionsStateChanged() {
         refreshShieldButton()
+    }
+
+    @objc private func permissionModePicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = OpusPermissionMode(rawValue: raw) else { return }
+        OpusPreferences.shared.permissionMode = mode
+        refreshShieldButton()
+        ClaudeBackend.shared.restart(resume: true)   // same conversation, new flags
     }
 
     // MARK: Find bar (Cmd+F scrollback search over SwiftTerm's built-in engine)

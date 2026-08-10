@@ -33,6 +33,24 @@ enum OpusInitialCommandPreset: String, CaseIterable {
     }
 }
 
+/// Claude Code's `--permission-mode` presets, offered from the shield's
+/// right-click menu. `.standard` omits the flag entirely (claude's own
+/// default); the shield's `--dangerously-skip-permissions` toggle always
+/// wins over this when both are active (see composeSpawnCommand).
+enum OpusPermissionMode: String, CaseIterable {
+    case standard    = "default"
+    case plan        = "plan"
+    case acceptEdits = "acceptEdits"   // exact casing claude's CLI expects
+
+    var displayName: String {
+        switch self {
+        case .standard:    return "Ask for permissions (default)"
+        case .plan:        return "Plan mode"
+        case .acceptEdits: return "Auto-accept edits"
+        }
+    }
+}
+
 /// Which surfaces Opus exposes the shared Claude session through. All
 /// combinations keep tab 0 of every surface subscribed to the same
 /// ClaudeBackend broadcast, so what you type in one shows everywhere.
@@ -68,6 +86,7 @@ final class OpusPreferences {
 
     private enum K {
         static let initialCommandPreset   = "opus.initialCommandPreset"
+        static let permissionMode         = "opus.permissionMode"
         static let customCommand          = "opus.customCommand"
         static let workingDirectory       = "opus.workingDirectory"
         static let displayMode            = "opus.displayMode"
@@ -100,6 +119,17 @@ final class OpusPreferences {
     var customCommand: String {
         get { defaults.string(forKey: K.customCommand) ?? "" }
         set { write(K.customCommand, newValue) }
+    }
+
+    /// `--permission-mode` preset applied to spawned claude processes (global,
+    /// not per-project — see the shield's right-click menu). Overridden by
+    /// `skipPermissions` when that's active (see composeSpawnCommand).
+    var permissionMode: OpusPermissionMode {
+        get {
+            let raw = defaults.string(forKey: K.permissionMode) ?? OpusPermissionMode.standard.rawValue
+            return OpusPermissionMode(rawValue: raw) ?? .standard
+        }
+        set { write(K.permissionMode, newValue.rawValue) }
     }
 
     /// Default for new Opus launches — ClaudeBackend seeds its runtime
@@ -260,7 +290,8 @@ final class OpusPreferences {
         customCommand: String,
         workingDirectory: String,
         skipPermissions: Bool,
-        resumeMode: OpusResumeMode
+        resumeMode: OpusResumeMode,
+        permissionMode: OpusPermissionMode = .standard
     ) -> String {
         // zsh double quotes still expand $VAR, $(...), backticks, and honor
         // backslashes. Escape all four; backslash FIRST or it re-escapes the
@@ -275,6 +306,9 @@ final class OpusPreferences {
         case .claude:
             var cmd = "command claude"
             if skipPermissions { cmd += " --dangerously-skip-permissions" }
+            if !skipPermissions && permissionMode != .standard {
+                cmd += " --permission-mode \(permissionMode.rawValue)"
+            }
             switch resumeMode {
             case .none: break
             case .continueMostRecent: cmd += " --continue"
@@ -300,7 +334,8 @@ final class OpusPreferences {
             customCommand: customCommand,
             workingDirectory: workingDirectory,
             skipPermissions: skipPermissions,
-            resumeMode: resumeMode
+            resumeMode: resumeMode,
+            permissionMode: permissionMode
         )
     }
 
