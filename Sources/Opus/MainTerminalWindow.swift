@@ -50,7 +50,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
     }
 
     private func handleKey(_ ev: NSEvent) -> NSEvent? {
-        let mods = ev.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let mods = KeyMods.shortcutMods(ev.modifierFlags)
         if mods == .command, let c = ev.charactersIgnoringModifiers?.lowercased() {
             switch c {
             case "t": container.spawnNewTab(); return nil
