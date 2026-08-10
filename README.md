@@ -94,6 +94,10 @@ For deeper internals (PTY ownership model, NSPanel macOS 14+ quirks, NSSplitView
 
 Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tested on macOS Tahoe (26.x) with French AZERTY layout. Pull requests welcome but not actively solicited. Bug reports via GitHub Issues are read.
 
+## Changelog
+
+- v1.2.2 (2026-08-10): 12 bugfixes from the multi-agent review — restart targets the focused pane, SIGPIPE hardening, Caps Lock shortcuts, panel toggle race, and more.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
