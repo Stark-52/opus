@@ -608,6 +608,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         pane.terminal.feed(text: "\u{001B}c")
     }
 
+    /// Walk up the view hierarchy to the TerminalView hosting this control.
+    /// The dead overlay nests controls (terminal > overlay > stack > button),
+    /// so a fixed superview count is fragile — climb until we hit the terminal.
+    static func enclosingTerminalView(from view: NSView) -> TerminalView? {
+        var current: NSView? = view.superview
+        while let v = current {
+            if let t = v as? TerminalView { return t }
+            current = v.superview
+        }
+        return nil
+    }
+
     @objc private func restartSharedFromOverlay(_ sender: NSButton) {
         ClaudeBackend.shared.startIfNeeded()
         guard tabPanes.indices.contains(0),
@@ -616,9 +628,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     @objc private func restartPrivateFromOverlay(_ sender: NSButton) {
-        // Walk up: button → overlay → terminal → find the matching pane.
-        guard let overlay = sender.superview,
-              let terminal = overlay.superview as? TerminalView else { return }
+        guard let terminal = Self.enclosingTerminalView(from: sender) else { return }
         for paneList in tabPanes {
             if let pane = paneList.first(where: { $0.terminal === terminal }),
                let wrapper = pane.wrapper {
