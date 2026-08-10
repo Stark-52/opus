@@ -59,6 +59,14 @@ claude() {
 }
 ```
 
+### Push a prompt from anywhere
+
+    opus-attach send "run the test suite and fix failures"   # submits
+    opus-attach send -n "half-typed thought"                  # types without submitting
+
+Works from scripts, cron, git hooks, Raycast: anything that can run a binary
+can drive the live Claude session.
+
 ## Architecture
 
 ```

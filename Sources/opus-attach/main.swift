@@ -16,7 +16,17 @@
 import Foundation
 import Darwin
 
-let socketPath = CommandLine.arguments.count >= 2 ? CommandLine.arguments[1] : "/tmp/opus.sock"
+// Subcommand: `opus-attach send [-n] <text...>` — one-shot prompt injection
+// into the live shared session, then exit. No TTY dance, no mirror.
+var args = Array(CommandLine.arguments.dropFirst())
+var sendMode = false
+var sendNoNewline = false
+if args.first == "send" {
+    sendMode = true
+    args.removeFirst()
+    if args.first == "-n" { sendNoNewline = true; args.removeFirst() }
+}
+let socketPath = (!sendMode && args.count >= 1) ? args[0] : "/tmp/opus.sock"
 let OPUS_MAGIC: [UInt8] = [0x1B, 0x4F, 0x70, 0x75, 0x73]   // "ESC O p u s"
 
 // MARK: connect
@@ -43,6 +53,23 @@ let connectOK = withUnsafePointer(to: &addr) { ptr -> Bool in
 guard connectOK else {
     FileHandle.standardError.write("opus-attach: cannot connect to \(socketPath) — is Opus running?\n".data(using: .utf8)!)
     exit(1)
+}
+
+if sendMode {
+    let text = args.joined(separator: " ")
+    guard !text.isEmpty else {
+        FileHandle.standardError.write("usage: opus-attach send [-n] <text>\n".data(using: .utf8)!)
+        exit(1)
+    }
+    var payload = Array(text.utf8)
+    if !sendNoNewline { payload.append(0x0D) }   // CR submits the prompt
+    payload.withUnsafeBufferPointer { buf in
+        _ = write(sock, buf.baseAddress, buf.count)
+    }
+    // Give the kernel a beat to flush before closing the socket.
+    usleep(100_000)
+    close(sock)
+    exit(0)
 }
 
 // MARK: TTY raw mode + restore on exit/signal
