@@ -368,6 +368,7 @@ final class QuickTerminalPanel: NSObject {
     var isVisible: Bool { visible }
     var terminalContainer: TerminalContainerView { container }
     private var suppressResizeSave = false
+    private var pinButton: NSButton?
 
     override init() {
         let screen = NSScreen.main ?? NSScreen.screens.first!
@@ -444,6 +445,21 @@ final class QuickTerminalPanel: NSObject {
         // current displayMode includes the native Terminal surface.
         openBtn.isHidden = !OpusPreferences.shared.displayMode.includesNativeTerminal
 
+        // Pin button — disables autohide when focused elsewhere
+        let pinBtn = NSButton(title: "", target: self, action: #selector(pinTapped))
+        pinBtn.isBordered = false
+        pinBtn.imagePosition = .imageOnly
+        pinBtn.translatesAutoresizingMaskIntoConstraints = false
+        blur.addSubview(pinBtn)
+        NSLayoutConstraint.activate([
+            pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 6),
+            pinBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -46),
+            pinBtn.widthAnchor.constraint(equalToConstant: 24),
+            pinBtn.heightAnchor.constraint(equalToConstant: 22)
+        ])
+        self.pinButton = pinBtn
+        refreshPinButton()
+
         // Force layout so the blur has its initial bounds before we add the container.
         blur.layoutSubtreeIfNeeded()
 
@@ -516,6 +532,24 @@ final class QuickTerminalPanel: NSObject {
         AppDelegate.shared?.launchTerminalSession()
     }
 
+    @objc private func pinTapped() {
+        OpusPreferences.shared.panelPinned.toggle()
+        refreshPinButton()
+    }
+
+    private func refreshPinButton() {
+        guard let btn = pinButton else { return }
+        let pinned = OpusPreferences.shared.panelPinned
+        btn.image = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin",
+                            accessibilityDescription: "Pin panel")
+        btn.contentTintColor = pinned
+            ? NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.9)   // brand cyan
+            : NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.45)
+        btn.toolTip = pinned
+            ? "Pinned: the panel stays visible when it loses focus. Click to unpin."
+            : "Pin the panel so it stays visible while you work in another app."
+    }
+
     @objc private func panelDidBecomeKey() {
         // Push the active pane's dimensions to claude — meaningful only if the
         // active pane is the shared one (no wrapper), since private panes own
@@ -527,6 +561,7 @@ final class QuickTerminalPanel: NSObject {
 
     @objc private func onPreferencesChanged() {
         applyAppearance()
+        refreshPinButton()
     }
 
     private func applyAppearance() {
@@ -783,6 +818,7 @@ final class QuickTerminalPanel: NSObject {
         if let until = ignoreResignKeyUntil, until > Date() {
             return  // resign caused by Space switch — don't autohide
         }
+        if OpusPreferences.shared.panelPinned { return }   // pinned = never autohide
         if visible { hide() }
     }
 }

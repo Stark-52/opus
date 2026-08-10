@@ -77,6 +77,7 @@ final class OpusPreferences {
         static let confirmRestart         = "opus.confirmRestart"
         static let notifyOnBell           = "opus.notifyOnBell"
         static let recentProjects         = "opus.recentProjects"
+        static let panelPinned            = "opus.panelPinned"
         // Appearance (used in Phase 4)
         static let appearanceMode         = "opus.appearanceMode"
         static let appearanceTintRGBA     = "opus.appearanceTintRGBA"
@@ -128,6 +129,14 @@ final class OpusPreferences {
     var notifyOnBell: Bool {
         get { defaults.object(forKey: K.notifyOnBell) == nil ? true : defaults.bool(forKey: K.notifyOnBell) }
         set { write(K.notifyOnBell, newValue) }
+    }
+
+    /// Pin the panel so it stays visible when it loses focus. Default OFF
+    /// (autohide on focus loss). When pinned, the explicit Cmd+Ctrl+T still
+    /// hides the panel.
+    var panelPinned: Bool {
+        get { defaults.bool(forKey: K.panelPinned) }
+        set { write(K.panelPinned, newValue) }
     }
 
     var workingDirectory: String {
