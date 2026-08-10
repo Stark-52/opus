@@ -35,24 +35,20 @@ final class SocketClientWriterTests: XCTestCase {
         writer.shutdown()
     }
 
-    func testBackpressureCapTriggersFailure() {
-        let (a, _) = makePair()   // nobody reads b → kernel buffer fills
+    func testQueuedBacklogTripsCap() {
+        let (a, _) = makePair()   // nobody reads b → kernel buffer fills, queue backs up
         let failed = expectation(description: "onFailure via cap")
         failed.assertForOverFulfill = false
-        let writer = SocketClientWriter(fd: a, onFailure: { failed.fulfill() })
-        // Push well past the 4 MB pending cap while the socket back-pressures.
-        //
-        // Deviation from the brief's 80x128KB loop (see task-4-report.md):
-        // macOS's default AF_UNIX buffers (net.local.stream.{send,recv}space
-        // = 8 KB each) are far smaller than a single 128 KB chunk. With
-        // nobody ever draining `b`, the writer's *first* enqueue() already
-        // parks forever in the EAGAIN retry loop, and because the writer
-        // queue is serial, no later enqueue() call ever runs far enough to
-        // add its own bytes to pendingBytes — so 80 small chunks never
-        // accumulate past the cap; the loop just times out. A single chunk
-        // whose own size already exceeds the cap trips the guard
-        // deterministically, before any write(2) is attempted.
-        writer.enqueue(Data(repeating: 0x43, count: SocketClientWriter.pendingCap + 64 * 1024))
+        // Stall timeout way out of the picture — this test is specifically
+        // about the enqueue-side backlog accounting, not the stall budget.
+        let writer = SocketClientWriter(fd: a, stallTimeout: 30, onFailure: { failed.fulfill() })
+        // pendingBytes is now updated synchronously in enqueue(), under
+        // lock, before the chunk is ever handed to the write queue — so the
+        // cap sees the REAL queued backlog of many small chunks, not just
+        // whichever one happens to be mid-write. 128 KB x 40 = 5 MB total;
+        // the 4 MB cap trips synchronously around the 33rd chunk
+        // (32 x 128 KB == the cap exactly; the 33rd pushes it over).
+        for _ in 0..<40 { writer.enqueue(Data(repeating: 0x43, count: 128 * 1024)) }
         wait(for: [failed], timeout: 5.0)
         writer.shutdown()
     }
