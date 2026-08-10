@@ -112,6 +112,13 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
             environment: SpawnEnvironment.make(),
             execName: nil
         )
+        if process.shellPid <= 0 {
+            NSLog("FilteredClaudeTab: spawn failed (forkpty returned no pid)")
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.container?.handlePrivateTabTerminated(self)
+            }
+        }
     }
 
     /// SIGHUP claude so it cleans up TUI state and exits before we drop the pane.
