@@ -56,4 +56,14 @@ final class SocketClientWriterTests: XCTestCase {
         wait(for: [failed], timeout: 5.0)
         writer.shutdown()
     }
+
+    func testStalledPeerIsDroppedAfterStallTimeout() {
+        let (a, _) = makePair()   // nobody reads → kernel buffer fills fast
+        let failed = expectation(description: "onFailure via stall budget")
+        failed.assertForOverFulfill = false
+        let writer = SocketClientWriter(fd: a, stallTimeout: 0.2, onFailure: { failed.fulfill() })
+        writer.enqueue(Data(repeating: 0x43, count: 256 * 1024))   // > kernel buf, < pendingCap
+        wait(for: [failed], timeout: 5.0)
+        writer.shutdown()
+    }
 }
