@@ -864,6 +864,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main) { _ in ClaudeAttention.shared.clear() }
 
+        // A visible Opus surface means the user can already see the bell's
+        // outcome — signal only when NOTHING of Opus is on screen. The panel is
+        // non-activating, so NSApp.isActive alone misses the primary use mode.
+        ClaudeAttention.shared.isUserLookingAtOpus = { [weak self] in
+            if NSApp.isActive { return true }
+            if let panel = self?.nativePanel, panel.isVisible { return true }
+            if OpusPreferences.shared.displayMode.includesMain,
+               MainTerminalWindow.shared.window?.isVisible == true { return true }
+            return false
+        }
+
         if display.includesPanel {
             nativePanel = QuickTerminalPanel()
         }
