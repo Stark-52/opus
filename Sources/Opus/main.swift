@@ -134,7 +134,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     /// Kill the running claude and respawn a FRESH session in the same pane.
     /// Used by the restart hotkey/menus when this pane is the active one.
     func restartFresh() {
-        if process?.shellPid ?? 0 > 0 {
+        if process?.running == true {
             isRestarting = true
             kill(process.shellPid, SIGHUP)
         } else {
