@@ -127,6 +127,21 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         start()
     }
 
+    /// True while a deliberate in-place restart is in flight — makes
+    /// processTerminated respawn in the same pane instead of closing it.
+    private var isRestarting = false
+
+    /// Kill the running claude and respawn a FRESH session in the same pane.
+    /// Used by the restart hotkey/menus when this pane is the active one.
+    func restartFresh() {
+        if process?.shellPid ?? 0 > 0 {
+            isRestarting = true
+            kill(process.shellPid, SIGHUP)
+        } else {
+            restart()   // nothing running (dead pane) — plain respawn
+        }
+    }
+
     /// Inject bytes into this pane's PTY process. Used by `QuickTerminalPanel.pasteFromPasteboard`
     /// and `QuickTerminalPanel.copySelectionToPasteboard` (and the equivalent
     /// methods on `TerminalContainerView`) when the active pane is private
@@ -147,6 +162,12 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            if self.isRestarting {
+                self.isRestarting = false
+                self.terminal.feed(text: "\u{001B}c")   // clear the dead TUI
+                self.restart()
+                return
+            }
             // panel host now also routes through container — see Task 13.
             self.container?.handlePrivateTabTerminated(self)
         }
@@ -320,6 +341,8 @@ final class QuickTerminalPanel: NSObject {
     private var container: TerminalContainerView!
     private var keyMonitor: Any?
     private var visible = false
+    var isVisible: Bool { visible }
+    var terminalContainer: TerminalContainerView { container }
     private var suppressResizeSave = false
 
     override init() {
@@ -989,16 +1012,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Settings checkbox both drive `OpusPreferences.confirmRestart`.
     func restartSessionRequested() {
         guard OpusPreferences.shared.confirmRestart else {
-            ClaudeBackend.shared.restart(resume: false)
+            performActiveRestart()
             return
         }
         NSApp.activate(ignoringOtherApps: true)  // alert needs key status; the panel is non-activating
         let alert = NSAlert()
         alert.messageText = "Restart Claude session?"
         alert.informativeText =
-            "This kills the current session and starts a fresh conversation — " +
-            "anything still running in it will be interrupted. The old conversation " +
-            "stays on disk (claude --resume can reopen it)."
+            "This kills the session in the focused pane and starts a fresh " +
+            "conversation. Anything still running in it will be interrupted. " +
+            "The old conversation stays on disk (claude --resume can reopen it)."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Restart")
         alert.addButton(withTitle: "Cancel")
@@ -1009,6 +1032,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             OpusPreferences.shared.confirmRestart = false
         }
         guard response == .alertFirstButtonReturn else { return }
+        performActiveRestart()
+    }
+
+    /// The container whose session the restart should target: the key
+    /// window's container when it belongs to Opus, else the visible panel,
+    /// else the main window when it's on screen. Fallback: shared backend.
+    private func performActiveRestart() {
+        if let panel = nativePanel, panel.isVisible,
+           panel.terminalContainer.window?.isKeyWindow == true {
+            panel.terminalContainer.restartActiveSession()
+            return
+        }
+        let display = OpusPreferences.shared.displayMode
+        if display.includesMain, MainTerminalWindow.shared.window?.isVisible == true {
+            MainTerminalWindow.shared.terminalContainer.restartActiveSession()
+            return
+        }
+        if let panel = nativePanel, panel.isVisible {
+            panel.terminalContainer.restartActiveSession()
+            return
+        }
         ClaudeBackend.shared.restart(resume: false)
     }
 

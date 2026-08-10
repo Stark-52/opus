@@ -9,6 +9,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
     static let shared = MainTerminalWindow()
 
     private var container: TerminalContainerView!
+    var terminalContainer: TerminalContainerView { container }
     private var keyMonitor: Any?
 
     private convenience init() {

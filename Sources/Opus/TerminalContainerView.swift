@@ -217,6 +217,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         closePane(pane)
     }
 
+    /// Restart the session backing the ACTIVE pane: the shared backend when
+    /// the shared pane has focus, that pane's private claude otherwise.
+    func restartActiveSession() {
+        guard let pane = activePane else {
+            ClaudeBackend.shared.restart(resume: false)
+            return
+        }
+        if let wrapper = pane.wrapper {
+            hideDeadOverlay(forPane: pane)   // stale overlay would eat the fresh TUI
+            wrapper.restartFresh()
+        } else {
+            ClaudeBackend.shared.restart(resume: false)
+        }
+    }
+
     func closePane(_ pane: TabPane, force: Bool = false) {
         guard let tabIdx = tabPanes.firstIndex(where: { panes in panes.contains(where: { $0 === pane }) }),
               let paneIdx = tabPanes[tabIdx].firstIndex(where: { $0 === pane }) else { return }
