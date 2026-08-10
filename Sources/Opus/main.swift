@@ -592,7 +592,7 @@ final class QuickTerminalPanel: NSObject {
 
     private func handleKeyEvent(_ ev: NSEvent) -> NSEvent? {
         guard ev.window === panel else { return ev }
-        let mods = ev.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let mods = KeyMods.shortcutMods(ev.modifierFlags)
 
         // Cmd alone — tab/pane lifecycle + tab switching.
         if mods == .command {
