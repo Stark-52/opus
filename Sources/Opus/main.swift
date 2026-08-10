@@ -662,6 +662,9 @@ final class QuickTerminalPanel: NSObject {
         panel.contentView?.wantsLayer = true
 
         guard let layer = panel.contentView?.layer else { return }
+        // A raced hide() leaves its fill-forward "slideOut" attached (its
+        // completion is generation-suppressed) — sweep it before animating in.
+        layer.removeAnimation(forKey: "slideOut")
         let translateUp = CATransform3DMakeTranslation(0, h, 0)
 
         // Start hidden: translated above + alpha 0
