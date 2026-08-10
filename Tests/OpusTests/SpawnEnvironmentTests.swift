@@ -61,4 +61,40 @@ final class SpawnEnvironmentTests: XCTestCase {
         let keys = env.map { String($0.prefix(upTo: $0.firstIndex(of: "=") ?? $0.endIndex)) }
         XCTAssertEqual(keys.count, Set(keys).count)
     }
+
+    func testClaudeSessionMarkersAreStripped() {
+        let env = SpawnEnvironment.make(base: [
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_CHILD_SESSION": "true",
+            "CLAUDE_CODE_SESSION_ID": "abc",
+            "CLAUDE_CODE_ENTRYPOINT": "cli",
+            "CLAUDE_CODE_SSE_PORT": "1234",
+            "CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/x.sock",
+            "CLAUDE_CODE_BRIDGE_SESSION_ID": "def",
+            "CLAUDE_CODE_EXECPATH": "/usr/local/bin/claude",
+            "CLAUDE_PID": "42",
+            "CLAUDE_EFFORT": "xhigh",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        ])
+        for marker in SpawnEnvironment.claudeSessionMarkers {
+            XCTAssertFalse(env.contains { $0.hasPrefix("\(marker)=") },
+                           "\(marker) must not leak into spawned sessions")
+        }
+    }
+
+    func testUserClaudeConfigVarsSurvive() {
+        // User CONFIG (not session markers) must pass through untouched.
+        let env = SpawnEnvironment.make(base: [
+            "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION": "1",
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        ])
+        XCTAssertTrue(env.contains("CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1"))
+    }
+
+    func testMarkerListCoversTheCriticalOnes() {
+        for critical in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION",
+                         "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_ENTRYPOINT"] {
+            XCTAssertTrue(SpawnEnvironment.claudeSessionMarkers.contains(critical))
+        }
+    }
 }
