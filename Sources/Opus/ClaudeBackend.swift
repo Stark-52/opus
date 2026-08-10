@@ -77,6 +77,13 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
                 mode = .continueMostRecent
             }
         }
+        if isRestarting {
+            // A restart is already in flight: the SIGTERM/SIGKILL dance is
+            // armed and processTerminated will respawn. Just record the most
+            // recent intent — no second signal volley.
+            pendingResumeMode = mode
+            return
+        }
         guard let p = process, p.shellPid > 0 else {
             // Nothing running (dead-overlay state) — just spawn.
             spawn(resumeMode: mode)
