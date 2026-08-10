@@ -97,4 +97,26 @@ final class SpawnCommandTests: XCTestCase {
         )
         XCTAssertEqual(cmd, "cd \"/Users/test/pro\\\\ject\" && command claude")
     }
+
+    func testPermissionModePlanAddsFlag() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, permissionMode: .plan
+        )
+        XCTAssertEqual(cmd, prefix + "command claude --permission-mode plan")
+    }
+    func testSkipPermissionsWinsOverPermissionMode() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: true, resumeMode: .none, permissionMode: .acceptEdits
+        )
+        XCTAssertEqual(cmd, prefix + "command claude --dangerously-skip-permissions")
+    }
+    func testStandardModeAddsNothing() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, permissionMode: .standard
+        )
+        XCTAssertEqual(cmd, prefix + "command claude")
+    }
 }
