@@ -167,6 +167,8 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        // A stale exit callback from a replaced LocalProcess must not act on the pane's fresh session.
+        guard source === process else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if self.isRestarting {
@@ -1043,8 +1045,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the alert's suppression checkbox ("Don't ask again") and the
     /// Settings checkbox both drive `OpusPreferences.confirmRestart`.
     func restartSessionRequested() {
+        // Resolve the target BEFORE the confirm alert can run — the alert
+        // steals key status (NSApp.activate + runModal), which drives
+        // QuickTerminalPanel.panelDidResignKey() → hide() → visible = false
+        // synchronously. Resolving after the alert would then see the panel
+        // as not visible and fall through to the shared-backend fallback
+        // even when a private pane was actually focused.
+        let target = activeRestartContainer()
         guard OpusPreferences.shared.confirmRestart else {
-            performActiveRestart()
+            fireRestart(target)
             return
         }
         NSApp.activate(ignoringOtherApps: true)  // alert needs key status; the panel is non-activating
@@ -1064,28 +1073,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             OpusPreferences.shared.confirmRestart = false
         }
         guard response == .alertFirstButtonReturn else { return }
-        performActiveRestart()
+        fireRestart(target)
+    }
+
+    /// Fire the restart on a container resolved by `activeRestartContainer()`.
+    /// Shared by both the no-confirm and confirm paths so they always act on
+    /// the SAME pre-resolved target. nil → shared backend fallback.
+    private func fireRestart(_ target: TerminalContainerView?) {
+        if let target {
+            target.restartActiveSession()
+        } else {
+            ClaudeBackend.shared.restart(resume: false)
+        }
     }
 
     /// The container whose session the restart should target: the key
     /// window's container when it belongs to Opus, else the visible panel,
-    /// else the main window when it's on screen. Fallback: shared backend.
-    private func performActiveRestart() {
+    /// else the main window when it's on screen. nil → shared backend
+    /// fallback. Must be called before any alert can steal key status (see
+    /// restartSessionRequested) — resolution itself is alert-safe since
+    /// TerminalContainerView.activePane falls back to tabActivePaneIndex.
+    private func activeRestartContainer() -> TerminalContainerView? {
         if let panel = nativePanel, panel.isVisible,
            panel.terminalContainer.window?.isKeyWindow == true {
-            panel.terminalContainer.restartActiveSession()
-            return
+            return panel.terminalContainer
         }
         let display = OpusPreferences.shared.displayMode
         if display.includesMain, MainTerminalWindow.shared.window?.isVisible == true {
-            MainTerminalWindow.shared.terminalContainer.restartActiveSession()
-            return
+            return MainTerminalWindow.shared.terminalContainer
         }
         if let panel = nativePanel, panel.isVisible {
-            panel.terminalContainer.restartActiveSession()
-            return
+            return panel.terminalContainer
         }
-        ClaudeBackend.shared.restart(resume: false)
+        return nil
     }
 
     @objc private func toggleSkipPermissionsAction() {
