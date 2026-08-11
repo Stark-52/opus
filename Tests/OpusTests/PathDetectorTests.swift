@@ -77,4 +77,36 @@ final class PathDetectorTests: XCTestCase {
         let result = PathDetector.extract(line: "(src/a.swift)", clickColumn: 0, cwd: cwd)
         XCTAssertNil(result)
     }
+
+    // MARK: Fix round 1 — sentence-ending dot glued to a bare file mention
+
+    func testSentenceEndingDotIsSwallowedIntoTheRawToken() {
+        // Documents the raw (pre-fix) behavior at the PathDetector layer:
+        // '.' is a token char, so the scan can't distinguish a file
+        // extension's dot from a sentence-ending period immediately after
+        // it. TerminalContainerView is the one that retries with
+        // trailingDotStripped when this doesn't exist on disk.
+        let line = "The fix is in src/Foo.swift. Please check."
+        let result = PathDetector.extract(line: line, clickColumn: 18, cwd: cwd)
+        XCTAssertEqual(result?.path, "/Users/dev/project/src/Foo.swift.")
+    }
+
+    func testTrailingDotStrippedRecoversTheRealPath() {
+        XCTAssertEqual(PathDetector.trailingDotStripped("/Users/dev/project/src/Foo.swift."),
+                        "/Users/dev/project/src/Foo.swift")
+    }
+
+    func testTrailingDotStrippedNilOnCleanPath() {
+        XCTAssertNil(PathDetector.trailingDotStripped("/Users/dev/project/src/Foo.swift"))
+    }
+
+    func testTrailingDotStrippedNilOnAllDots() {
+        // Guards the empty-after-stripping case explicitly rather than
+        // returning "".
+        XCTAssertNil(PathDetector.trailingDotStripped("..."))
+    }
+
+    func testTrailingDotStrippedStripsMultiple() {
+        XCTAssertEqual(PathDetector.trailingDotStripped("src/a.swift.."), "src/a.swift")
+    }
 }

@@ -439,10 +439,27 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let cwd = OpusPreferences.shared.workingDirectory
             guard let candidate = PathDetector.extract(line: hit.text, clickColumn: hit.col, cwd: cwd)
             else { return false }
-            guard FileManager.default.fileExists(atPath: candidate.path) else { return false }
 
-            openInEditor(path: candidate.path, line: candidate.line)
-            return true
+            // A bare file mention ending a sentence ("...in src/Foo.swift.
+            // Please check.") swallows the sentence-ending period into the
+            // token — '.' is a legitimate path character (dotfiles,
+            // extensions), so the scan can't tell it apart from one that
+            // isn't. If the primary candidate doesn't exist, retry once
+            // with trailing dots stripped before giving up. Line-number
+            // handling is untouched: a real `:line` citation never has a
+            // trailing dot in the first place (the suffix parse stops at
+            // the first non-digit), so this retry only ever fires for the
+            // no-line-number shape.
+            let fm = FileManager.default
+            if fm.fileExists(atPath: candidate.path) {
+                openInEditor(path: candidate.path, line: candidate.line)
+                return true
+            }
+            if let stripped = PathDetector.trailingDotStripped(candidate.path), fm.fileExists(atPath: stripped) {
+                openInEditor(path: stripped, line: candidate.line)
+                return true
+            }
+            return false
         }
         return false
     }
