@@ -28,6 +28,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
+    // Cockpit (Lot 3, Task 4) — context-window burn meter, see the MARK
+    // section near the bottom of this file for the timer/read/parse pipeline.
+    private var contextMeterBar: ContextMeterBar!
+    private var contextMeterTimer: Timer?
+
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
     private var tabActivePaneIndex: [Int] = []
@@ -135,7 +140,157 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBar = bar
         tabBarHeightConstraint = heightC
 
+        // Context meter — pinned directly above the tab bar (tracks its
+        // topAnchor, so it sits in the right place whether the bar is
+        // showing at 26pt or collapsed to 0pt with a single tab). Always
+        // present in the view hierarchy (never isHidden) — visibility is
+        // alpha-only, toggled by refreshContextMeter's read result, so a
+        // fade-in/out never needs a relayout pass.
+        let meter = ContextMeterBar(frame: .zero)
+        meter.translatesAutoresizingMaskIntoConstraints = false
+        meter.alphaValue = 0
+        addSubview(meter)
+        NSLayoutConstraint.activate([
+            meter.leadingAnchor.constraint(equalTo: leadingAnchor),
+            meter.trailingAnchor.constraint(equalTo: trailingAnchor),
+            meter.bottomAnchor.constraint(equalTo: bar.topAnchor),
+            meter.heightAnchor.constraint(equalToConstant: 2)
+        ])
+        contextMeterBar = meter
+
         layoutSubtreeIfNeeded()
+    }
+
+    // MARK: Cockpit — context-window burn meter (Lot 3, Task 4)
+    //
+    // A 10s Timer, running only while this container is actually in a
+    // window (started/stopped from viewDidMoveToWindow — see below), reads
+    // the ACTIVE tab's transcript tail and updates `contextMeterBar`. The
+    // read + JSON scan happens on a background queue; only the final
+    // NSView property writes happen on main.
+    //
+    // Both TerminalContainerView instances (QuickTerminalPanel's and
+    // MainTerminalWindow's) run this independently when both are visible —
+    // see the class-level doc comment on `useSharedTab0` for why there are
+    // two containers at all. That means up to two independent 32KB tail
+    // reads of the SAME transcript file every 10s when both surfaces are on
+    // screen simultaneously. Accepted: 32KB every 10s is noise-level disk
+    // I/O, each container's bar only ever needs to reflect ITS OWN active
+    // tab (which can legitimately differ between the panel and the main
+    // window — e.g. panel on tab 0, main window's user-clicked to tab 2),
+    // and de-duplicating would mean threading cross-container coordination
+    // through for a cost that was never real to begin with.
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            startContextMeterTimer()
+        } else {
+            stopContextMeterTimer()
+        }
+    }
+
+    private func startContextMeterTimer() {
+        guard contextMeterTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            self?.refreshContextMeter()
+        }
+        timer.tolerance = 2
+        contextMeterTimer = timer
+        // Fire once immediately rather than leaving the bar blank (alpha 0,
+        // its initial state) for up to 10s after the window appears.
+        refreshContextMeter()
+    }
+
+    private func stopContextMeterTimer() {
+        contextMeterTimer?.invalidate()
+        contextMeterTimer = nil
+    }
+
+    /// The session id whose transcript the meter should read for the
+    /// CURRENTLY ACTIVE tab: the spawn-order-bound id when the active
+    /// pane's SessionStart has already matched (`sessionId(for:)`), else —
+    /// only for the shared pane (`pane.wrapper == nil`, tab 0) — the most
+    /// recently modified transcript in the configured working directory's
+    /// project dir. A private pane that's still unbound has no such
+    /// fallback: it never resumes an existing transcript (see
+    /// `FilteredClaudeTab.start`'s `resumeMode: .none`), so there's no
+    /// "most recent session" that could possibly be ITS session.
+    private func activeSessionIdForContextMeter() -> String? {
+        guard tabPanes.indices.contains(activeTabIndex) else { return nil }
+        let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
+        let panes = tabPanes[activeTabIndex]
+        guard panes.indices.contains(idx) else { return nil }
+        let pane = panes[idx]
+        if let bound = sessionId(for: pane) { return bound }
+        guard pane.wrapper == nil else { return nil }
+        return ClaudeSessionLocator.mostRecentSessionId(for: OpusPreferences.shared.workingDirectory)
+    }
+
+    /// Locate `<sessionId>.jsonl` under `~/.claude/projects/<encoded cwd>/`,
+    /// trying both of `ClaudeSessionLocator`'s known cwd-encoding schemes
+    /// (see its doc comment) rather than duplicating that encoding logic
+    /// here.
+    private static func transcriptURL(sessionId: String, cwd: String) -> URL? {
+        let fm = FileManager.default
+        let projectsRoot = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/projects")
+        for name in ClaudeSessionLocator.projectDirNameCandidates(for: cwd) {
+            let url = projectsRoot.appendingPathComponent(name).appendingPathComponent("\(sessionId).jsonl")
+            if fm.fileExists(atPath: url.path) { return url }
+        }
+        return nil
+    }
+
+    /// Tail-read (see `ContextMeter.tailBudgetBytes`) the transcript for
+    /// `sessionId`/`cwd` via `FileHandle` seek — never a whole-file read, a
+    /// live transcript can run to tens of megabytes. `nil` when the file
+    /// doesn't exist (session id not yet flushed to disk, wrong cwd, or a
+    /// stale id from a closed/replaced session) or can't be opened.
+    private static func readTranscriptTail(sessionId: String, cwd: String) -> Data? {
+        guard let url = transcriptURL(sessionId: sessionId, cwd: cwd),
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        let tailStart = size > UInt64(ContextMeter.tailBudgetBytes) ? size - UInt64(ContextMeter.tailBudgetBytes) : 0
+        guard (try? handle.seek(toOffset: tailStart)) != nil else { return nil }
+        return try? handle.readToEnd()
+    }
+
+    /// Timer tick (and the one immediate call from `startContextMeterTimer`)
+    /// — resolves the active session, reads+parses off the main queue, then
+    /// hops back to apply the result to the bar.
+    private func refreshContextMeter() {
+        guard let sessionId = activeSessionIdForContextMeter() else {
+            contextMeterBar.alphaValue = 0
+            return
+        }
+        let cwd = OpusPreferences.shared.workingDirectory
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Self.readTranscriptTail(sessionId: sessionId, cwd: cwd)
+                .flatMap { ContextMeter.usage(fromTranscriptTail: $0) }
+            DispatchQueue.main.async {
+                self?.applyContextMeterResult(result)
+            }
+        }
+    }
+
+    /// Main-thread-only: paint the bar (or hide it) from a background scan's
+    /// result. `nil` (no transcript, no usage-bearing record yet, or the
+    /// session is otherwise unreadable) hides the bar entirely rather than
+    /// drawing a misleading 0%.
+    private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
+        guard let result, result.limit > 0 else {
+            contextMeterBar.alphaValue = 0
+            return
+        }
+        let rawFraction = Double(result.tokens) / Double(result.limit)
+        contextMeterBar.fraction = CGFloat(min(max(rawFraction, 0), 1))
+        contextMeterBar.alphaValue = 1
+        let kTokens = Int((Double(result.tokens) / 1000).rounded())
+        let kLimit = Int((Double(result.limit) / 1000).rounded())
+        let percent = Int((rawFraction * 100).rounded())
+        contextMeterBar.toolTip = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
     }
 
     // MARK: Dangerous-mode shield button
@@ -535,6 +690,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 rows: UInt16(pane.terminal.getTerminal().rows)
             )
         }
+
+        // The active tab just changed — refresh the context meter now
+        // rather than leaving the PREVIOUS tab's stale reading on screen
+        // for up to 10s (the periodic timer alone would otherwise let a
+        // just-switched-to tab show a flatly wrong bar/tooltip). Deviation
+        // beyond the controller spec's literal "10s Timer" wording, kept
+        // because a stale-tab bar is a real, easily-hit correctness gap,
+        // not a hypothetical.
+        refreshContextMeter()
     }
 
     func copySelectionToPasteboard() {
