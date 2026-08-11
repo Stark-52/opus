@@ -281,11 +281,28 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // see installShieldButton; this dot is unconditional so it also
         // works for a hypothetical non-shared container). Mirrors the
         // ACTIVE tab's state regardless of tab count — see refreshTabBarStates.
+        //
+        // Fix round 1 (v1.4.1 review): trailing constant is -88, not the
+        // originally-specified -56 — geometry check against Fix 3's z-order
+        // change caught an overlap. In BLUR coordinates (container is inset
+        // 14pt on every side from QuickTerminalPanel's blur, so
+        // containerTrailingEdge = blurWidth - 14): at -56 the dot spanned
+        // [blurW-78, blurW-70]. The panel-level pin button
+        // (`pinBtn.trailingAnchor == blur.trailingAnchor, constant: -72`,
+        // width 24) spans [blurW-96, blurW-72] in that same coordinate
+        // space — a 6pt overlap with the dot's old position. Fix 3 (same
+        // release) re-parents the pin ABOVE the container in z-order to fix
+        // ITS OWN visibility bug, which means the pin now draws over the
+        // dot in that overlap band instead of the reverse. At -88 the dot
+        // spans [blurW-110, blurW-102]: a 6pt clear gap left of the pin's
+        // left edge (blurW-96), and 36pt clear of the shield button's left
+        // edge (blurW-66, container trailing -28, width 24) on the other
+        // side.
         let dot = PaneActivityDot(frame: .zero)
         dot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(dot)
         NSLayoutConstraint.activate([
-            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -56),
+            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -88),
             dot.topAnchor.constraint(equalTo: topAnchor, constant: 9),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8)
