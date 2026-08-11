@@ -489,7 +489,7 @@ final class QuickTerminalPanel: NSObject {
         openBtn.translatesAutoresizingMaskIntoConstraints = false
         blur.addSubview(openBtn)
         NSLayoutConstraint.activate([
-            openBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 6),
+            openBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
             openBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -10),
             openBtn.widthAnchor.constraint(equalToConstant: 24),
             openBtn.heightAnchor.constraint(equalToConstant: 22)
@@ -506,7 +506,7 @@ final class QuickTerminalPanel: NSObject {
         pinBtn.setAccessibilityLabel("Pin panel toggle")
         blur.addSubview(pinBtn)
         NSLayoutConstraint.activate([
-            pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 6),
+            pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
             pinBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -72),
             pinBtn.widthAnchor.constraint(equalToConstant: 24),
             pinBtn.heightAnchor.constraint(equalToConstant: 22)
