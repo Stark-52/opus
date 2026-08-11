@@ -115,6 +115,20 @@ final class ClaudeStateStore {
     // reintroduce the same race if a future caller ever spawned a second
     // concurrent `.continueMostRecent` session.
     //
+    // ACCEPTED EDGE CASE, PARKED (dual-container starvation on a cold
+    // --continue launch): if a SECOND shared-tab-0 container bootstraps
+    // (e.g. MainTerminalWindow, built lazily) while `resumeLastConversation`
+    // is on and the FIRST container's `.continueMostRecent` spawn is still
+    // waiting on its own not-yet-arrived SessionStart, both containers'
+    // `registerPendingSpawn` entries for tab 0 land in this ONE FIFO — but
+    // only ONE SessionStart ever fires for that single shared process, so
+    // whichever entry doesn't win stays stranded, permanently `.idle`. Not
+    // fixed here (requires `resumeLastConversation` ON AND both surfaces
+    // live at once — outside this app's real single-surface-first usage,
+    // and self-healing): the very next KNOWN-id restart of the shared pane
+    // (shield toggle, plain restart, Cmd+K) re-binds via `sharedBackendDidSpawn`
+    // directly, no FIFO involved, clearing the stale `.idle` dot.
+    //
     // Keyed by the pane's TerminalView identity (ObjectIdentifier), same
     // pattern already used by `TerminalContainerView.deadOverlays`. Entries
     // for panes that have since closed are never removed — see
