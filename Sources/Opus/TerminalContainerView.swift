@@ -44,6 +44,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // observer registered in init below.
     private var commandClickMonitor: Any?
 
+    // Cockpit (Lot 3, Task 7) — broadcast input to every pane of the ACTIVE
+    // tab. See the MARK section near `broadcast(data:)` below for the full
+    // routing/arming story.
+    /// When armed, every keystroke typed into any pane of the ACTIVE tab is
+    /// written to EVERY pane of that tab, not just the one the user is
+    /// looking at. Always scoped to whichever tab was active at arm time —
+    /// switching tabs, closing a pane, or splitting all disarm first (see
+    /// `switchTab`/`closePane`/`splitActivePane`), so `broadcastArmed ==
+    /// true` is an invariant that always means "the CURRENT active tab's
+    /// panes are bordered and receiving broadcast input," never a stale tab
+    /// left over from before a switch.
+    private(set) var broadcastArmed = false { didSet { refreshBroadcastBorders() } }
+
+    /// Icy-cyan brand color — same RGB as `OpusSplitView.dividerColor` — at
+    /// a much louder 0.8 alpha (the divider's own 0.30 is meant to be
+    /// subtle; this needs to read as an unmistakable state change).
+    private static let broadcastBorderColor = NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.8).cgColor
+
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
     private var tabActivePaneIndex: [Int] = []
@@ -758,6 +776,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // here on) — safe to close the bar without leaving a stray side
         // effect on either early-return path.
         closeFindBarIfOpen()
+        // Cockpit (Lot 3, Task 7): the pane set is about to change — disarm
+        // broadcast unconditionally (simplest correct rule; covers every
+        // call site, including `handlePrivateTabTerminated`'s closePane
+        // calls for a pane dying in a BACKGROUND tab, not just Cmd+W on the
+        // active one). Runs before the pane is actually removed below, so
+        // if it belonged to the active tab, refreshBroadcastBorders still
+        // sees it in `tabPanes[activeTabIndex]` and clears its border too.
+        broadcastArmed = false
 
         pane.terminate()
 
@@ -805,6 +831,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         guard let oldPane = activePane,
               tabPanes.indices.contains(activeTabIndex) else { return }
         closeFindBarIfOpen()
+        // Cockpit (Lot 3, Task 7): the pane set is about to change — disarm
+        // broadcast unconditionally, same rule as `closePane`.
+        broadcastArmed = false
 
         let oldView = oldPane.terminal
         let parent = oldView.superview
@@ -861,6 +890,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func switchTab(to index: Int) {
         guard tabs.indices.contains(index) else { return }
         closeFindBarIfOpen()
+        // Cockpit (Lot 3, Task 7): any tab change disarms broadcast. This
+        // MUST run before `activeTabIndex` is reassigned below — disarming
+        // (broadcastArmed's didSet → refreshBroadcastBorders) needs to see
+        // the OLD activeTabIndex so it clears the border on the tab being
+        // LEFT, not the one being switched to.
+        broadcastArmed = false
 
         // Before we leave the current tab, remember which pane has focus so we
         // can restore it next time the user comes back.
@@ -1361,9 +1396,89 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         t.getTerminal().changeScrollback(OpusPreferences.shared.scrollbackLines)
     }
 
+    // MARK: Cockpit — broadcast input to every pane of the active tab (Lot 3, Task 7)
+
+    /// Toggle broadcast arming (Cmd+Shift+I, wired in both hosts' key
+    /// handlers). Arming is a silent no-op when the active tab has fewer
+    /// than 2 panes — there's nothing to broadcast TO, and a lone pane
+    /// broadcasting to itself is meaningless. No beep, no toast: the border
+    /// painted by `refreshBroadcastBorders` is the only indicator, by
+    /// design (keyboard-only feature, no toolbar button).
+    func toggleBroadcast() {
+        guard tabPanes.indices.contains(activeTabIndex) else { return }
+        if !broadcastArmed && tabPanes[activeTabIndex].count < 2 { return }
+        broadcastArmed.toggle()
+    }
+
+    /// Paint (armed) or clear (disarmed) the 2pt icy-cyan border on every
+    /// pane of the ACTIVE tab. `wantsLayer` is already `true` on every
+    /// `TerminalView` — SwiftTerm's `MacTerminalView` sets it in its own
+    /// `init` — so `.layer` is guaranteed non-nil here without this
+    /// container forcing it; the explicit set below is defensive insurance,
+    /// not a fix for anything observed.
+    private func refreshBroadcastBorders() {
+        guard tabPanes.indices.contains(activeTabIndex) else { return }
+        let width: CGFloat = broadcastArmed ? 2 : 0
+        for pane in tabPanes[activeTabIndex] {
+            pane.terminal.wantsLayer = true
+            pane.terminal.layer?.borderWidth = width
+            pane.terminal.layer?.borderColor = Self.broadcastBorderColor
+        }
+    }
+
+    /// The single broadcast interception point — called both from this
+    /// container's own `send(source:data:)` below (the shared pane's
+    /// `TerminalViewDelegate`, since `TabPane.makeShared` sets `terminal.
+    /// terminalDelegate = container`) and from `FilteredClaudeTab.
+    /// send(source:data:)` (every private pane's own delegate) for every
+    /// keystroke. Returns `true` when `broadcastArmed` and `source` belongs
+    /// to the ACTIVE tab — in that case `data` has already been written to
+    /// every pane of that tab via `broadcast(data:)`, which includes
+    /// `source`'s own PTY in its walk, so the caller must NOT also send it
+    /// again (that's exactly what the `true` return tells it: skip your
+    /// normal single-target send). Returns `false` when disarmed, or when
+    /// `source` isn't in the active tab (a background tab's pane isn't
+    /// first responder and shouldn't be producing input today, but costs
+    /// nothing to guard) — the caller proceeds with its own normal send.
+    func interceptForBroadcast(source: TerminalView, data: ArraySlice<UInt8>) -> Bool {
+        guard broadcastArmed, isPaneInActiveTab(source) else { return false }
+        broadcast(data: data)
+        return true
+    }
+
+    private func isPaneInActiveTab(_ terminal: TerminalView) -> Bool {
+        guard tabPanes.indices.contains(activeTabIndex) else { return false }
+        return tabPanes[activeTabIndex].contains { $0.terminal === terminal }
+    }
+
+    /// Write `data` to every pane of the ACTIVE tab: private panes via
+    /// their own PTY wrapper (`sendInput`), the shared pane via
+    /// `ClaudeBackend` directly. NEVER `terminal.feed()` on any of them —
+    /// that would forge a duplicate echo; the PTYs already echo their own
+    /// input back through the normal read loop, so feeding here on top of
+    /// that would double every character on screen. `sharedSent` caps the
+    /// shared-backend write at exactly one call even if the active tab
+    /// somehow held two shared panes (it never does today — `TabPane.
+    /// makeShared` is only ever called once, for tab 0 — but the guard is
+    /// free insurance against a future regression that lets two slip into
+    /// the same tab's pane list).
+    private func broadcast(data: ArraySlice<UInt8>) {
+        guard tabPanes.indices.contains(activeTabIndex) else { return }
+        var sharedSent = false
+        for pane in tabPanes[activeTabIndex] {
+            if let wrapper = pane.wrapper {
+                wrapper.sendInput(bytes: data)
+            } else if !sharedSent {
+                ClaudeBackend.shared.send(data: data)
+                sharedSent = true
+            }
+        }
+    }
+
     // MARK: TerminalViewDelegate
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        if interceptForBroadcast(source: source, data: data) { return }
         ClaudeBackend.shared.send(data: data)
     }
 

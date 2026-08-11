@@ -236,6 +236,13 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     // MARK: TerminalViewDelegate
 
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        // Cockpit (Lot 3, Task 7): let the container broadcast this
+        // keystroke to every pane of the active tab (including this pane's
+        // own PTY) when armed — see `TerminalContainerView.
+        // interceptForBroadcast`'s doc comment for why the normal
+        // `process.send` below must be skipped in that case (it would
+        // double-send to this same pane).
+        if container?.interceptForBroadcast(source: source, data: data) == true { return }
         process.send(data: data)
     }
 
@@ -758,6 +765,12 @@ final class QuickTerminalPanel: NSObject {
         if mods == [.command, .shift],
            ev.charactersIgnoringModifiers?.lowercased() == "g" {
             container.findPreviousInActivePane(); return nil
+        }
+        // Cmd+Shift+I — toggle broadcast input to every pane of the active
+        // tab (Lot 3, Task 7). "I" for Input.
+        if mods == [.command, .shift],
+           ev.charactersIgnoringModifiers?.lowercased() == "i" {
+            container.toggleBroadcast(); return nil
         }
         return ev
     }
