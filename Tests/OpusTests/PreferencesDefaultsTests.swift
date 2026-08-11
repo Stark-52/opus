@@ -22,6 +22,14 @@ final class PreferencesDefaultsTests: XCTestCase {
         OpusPreferences.shared.scrollbackLines = 10_000   // restore
     }
 
+    func testEditorCommandDefault() {
+        UserDefaults.standard.removeObject(forKey: "opus.editorCommand")
+        XCTAssertEqual(OpusPreferences.shared.editorCommand, "code -g {target}")
+        OpusPreferences.shared.editorCommand = "subl {target}"
+        XCTAssertEqual(OpusPreferences.shared.editorCommand, "subl {target}")
+        OpusPreferences.shared.editorCommand = "code -g {target}"   // restore
+    }
+
     func testBumpFontSizeClampsAtBounds() {
         OpusPreferences.shared.fontSize = 24
         OpusPreferences.shared.bumpFontSize(+1)

@@ -104,6 +104,8 @@ final class OpusPreferences {
         static let fontName               = "opus.fontName"
         static let fontSize               = "opus.fontSize"
         static let scrollbackLines        = "opus.scrollbackLines"
+        // Cockpit (Lot 3, Task 5)
+        static let editorCommand          = "opus.editorCommand"
     }
 
     // MARK: Typed accessors
@@ -119,6 +121,18 @@ final class OpusPreferences {
     var customCommand: String {
         get { defaults.string(forKey: K.customCommand) ?? "" }
         set { write(K.customCommand, newValue) }
+    }
+
+    /// Shell command template for Cmd+click-opens-file (Lot 3, Task 5).
+    /// `{target}` is replaced with a shell-quoted `path` (or `path:line`
+    /// when a line number was parsed) before running via `/bin/zsh -lc`.
+    /// Pattern of `customCommand` above, except the default here is already
+    /// a directly runnable command rather than an empty string with a
+    /// fallback applied elsewhere — there's no equivalent of `.claude`'s
+    /// preset system for this one setting.
+    var editorCommand: String {
+        get { defaults.string(forKey: K.editorCommand) ?? "code -g {target}" }
+        set { write(K.editorCommand, newValue) }
     }
 
     /// `--permission-mode` preset applied to spawned claude processes (global,
