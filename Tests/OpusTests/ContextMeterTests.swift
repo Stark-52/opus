@@ -46,14 +46,39 @@ final class ContextMeterTests: XCTestCase {
         XCTAssertEqual(result?.tokens, 900)
     }
 
-    func testAssistantRecordWithoutUsage_skipped_priorMatchStillWins() {
+    /// Defensive case: a `usage` key missing entirely (not the real
+    /// `<synthetic>` shape — see the two zeroed-usage tests below for that;
+    /// this covers any record shape this parser hasn't seen in practice).
+    func testAssistantRecordMissingUsageKeyEntirely_skipped_priorMatchStillWins() {
         let tail = data([
             #"{"type":"system","cwd":"/x"}"#,
             assistantLine(model: "claude-opus-4-8", input: 111, cacheCreation: 0, cacheRead: 0),
-            #"{"type":"assistant","message":{"model":"<synthetic>"}}"#,   // no usage object at all
+            #"{"type":"assistant","message":{"model":"claude-opus-4-8"}}"#,   // no usage object at all
         ])
         let result = ContextMeter.usage(fromTranscriptTail: tail)
         XCTAssertEqual(result?.tokens, 111)
+    }
+
+    /// The REAL `<synthetic>`-model shape (Fix round 1 — see file header):
+    /// `usage` IS present, but every field is 0. Must be treated as a
+    /// non-match, not as "the session is now at 0 tokens."
+    func testZeroedSyntheticUsageRecordAfterReal_realOneWins() {
+        let tail = data([
+            #"{"type":"system","cwd":"/x"}"#,
+            assistantLine(model: "claude-opus-4-8", input: 500, cacheCreation: 200, cacheRead: 300),
+            assistantLine(model: "<synthetic>", input: 0, cacheCreation: 0, cacheRead: 0, output: 0),
+        ])
+        let result = ContextMeter.usage(fromTranscriptTail: tail)
+        XCTAssertEqual(result?.tokens, 1000)
+    }
+
+    func testTailWithOnlyZeroedUsageRecords_returnsNil() {
+        let tail = data([
+            #"{"type":"system","cwd":"/x"}"#,
+            assistantLine(model: "<synthetic>", input: 0, cacheCreation: 0, cacheRead: 0, output: 0),
+            assistantLine(model: "<synthetic>", input: 0, cacheCreation: 0, cacheRead: 0, output: 0),
+        ])
+        XCTAssertNil(ContextMeter.usage(fromTranscriptTail: tail))
     }
 
     func testMalformedLine_skipped() {

@@ -23,9 +23,19 @@
 // opus-5" all observed on this machine). No "[1m]" suffix was observed here,
 // but that suffix is documented Anthropic API convention for the 1M-context
 // beta (e.g. "claude-sonnet-4-20250514[1m]") — kept per the controller spec
-// even though unconfirmed locally. Not every assistant record carries
-// `usage` (a `<synthetic>`-model record was also observed, with no usage
-// object) — those are skipped, not treated as a parse failure.
+// even though unconfirmed locally.
+//
+// Fix round 1 correction: every `type:"assistant"` record carries a `usage`
+// key — my original claim that `<synthetic>`-model records omit it entirely
+// was empirically wrong (reviewer re-verified across 12,076 real assistant
+// records on this machine: 100% have a `usage` object; the 30 `<synthetic>`-
+// model ones among them have `usage` present with every field zeroed —
+// `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`,
+// `output_tokens` all `0`). A zero-summed record is therefore a REAL,
+// well-formed record that carries no information — treated as a non-match
+// below (skip, keep the last real match) rather than as "the session's
+// context is now empty," which is what naively accepting it as the newest
+// match would have shown.
 import AppKit
 import Foundation
 
@@ -75,6 +85,14 @@ enum ContextMeter {
     /// records being appended in transcript order: whichever came latest in
     /// the file is the freshest context snapshot.
     ///
+    /// A record whose usage sums to exactly 0 is ALSO skipped (fold round 1
+    /// fix) — see the file header's "Fix round 1 correction": real
+    /// `<synthetic>`-model records carry a well-formed but all-zero `usage`
+    /// object, and naively letting the LAST-in-file rule accept one would
+    /// have the bar drop to a misleading "context window is empty" the
+    /// moment one appears after a real turn, rather than keeping the prior
+    /// real reading.
+    ///
     /// Skips the tail buffer's first line unconditionally — same rule as
     /// `SessionIndex.latestAiTitle` (see that function's doc comment): a
     /// tail read starts at an arbitrary seek offset into the file, so its
@@ -97,8 +115,14 @@ enum ContextMeter {
             let input = usage["input_tokens"] as? Int ?? 0
             let cacheRead = usage["cache_read_input_tokens"] as? Int ?? 0
             let cacheCreation = usage["cache_creation_input_tokens"] as? Int ?? 0
+            let tokens = input + cacheRead + cacheCreation
+            // Zero-summed usage (real `<synthetic>`-model records — see file
+            // header) carries no information; skip it so a real match
+            // earlier in the tail keeps winning instead of being clobbered
+            // by a misleading "empty" reading.
+            guard tokens > 0 else { continue }
             result = (
-                tokens: input + cacheRead + cacheCreation,
+                tokens: tokens,
                 limit: limit(forModel: message["model"] as? String)
             )
         }
