@@ -36,6 +36,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// doc comment for the staleness guard this enables.
     private var contextMeterGeneration = 0
 
+    // Cockpit (Lot 3, Task 5) — Cmd+click file[:line] references. The
+    // returned monitor token must be retained (AppKit invalidates/drops an
+    // unretained one), same as MainTerminalWindow.keyMonitor. Never removed
+    // — see the class-level doc comment above: a TerminalContainerView
+    // lives for the app's lifetime, same as every NotificationCenter
+    // observer registered in init below.
+    private var commandClickMonitor: Any?
+
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
     private var tabActivePaneIndex: [Int] = []
@@ -92,6 +100,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             self, selector: #selector(paneActivityChanged),
             name: .opusPaneActivityChanged, object: nil
         )
+        // Cockpit (Lot 3, Task 5): Cmd+leftMouseDown → try to open a
+        // file[:line] reference under the click. A LOCAL monitor sees the
+        // event before AppKit dispatches it into the responder chain, so
+        // returning nil here fully suppresses SwiftTerm's own mouseDown
+        // (no text selection / caret placement happens for a click that
+        // opened a file). Returning the event unchanged when nothing
+        // resolved lets normal Cmd+click-through-to-selection behavior
+        // proceed exactly as before this feature existed.
+        commandClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] ev in
+            guard let self, ev.window === self.window, ev.modifierFlags.contains(.command) else { return ev }
+            return self.handleCommandClick(at: ev.locationInWindow) ? nil : ev
+        }
         if useSharedTab0 {
             NotificationCenter.default.addObserver(
                 self, selector: #selector(sharedBackendDidTerminate(_:)),
@@ -396,6 +416,119 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         OpusPreferences.shared.permissionMode = mode
         refreshShieldButton()
         ClaudeBackend.shared.restart(resume: true)   // same conversation, new flags
+    }
+
+    // MARK: Cockpit — Cmd+click file[:line] → editor (Lot 3, Task 5)
+
+    /// Hit-test every visible pane in the ACTIVE tab (splits put more than
+    /// one on screen at once; other tabs are hidden and out of scope) for
+    /// the one containing `windowPoint`, read the terminal line under the
+    /// click, try to resolve a file reference, and open it if the file
+    /// actually exists. Returns `true` only when something was opened —
+    /// that's what tells the installing monitor whether to swallow the
+    /// click (suppress selection) or let it fall through to SwiftTerm.
+    private func handleCommandClick(at windowPoint: NSPoint) -> Bool {
+        guard tabPanes.indices.contains(activeTabIndex) else { return false }
+        for pane in tabPanes[activeTabIndex] {
+            let terminal = pane.terminal
+            guard !terminal.isHidden else { continue }
+            let local = terminal.convert(windowPoint, from: nil)
+            guard terminal.bounds.contains(local) else { continue }
+
+            guard let hit = resolvePathClick(in: terminal, at: local) else { return false }
+            let cwd = OpusPreferences.shared.workingDirectory
+            guard let candidate = PathDetector.extract(line: hit.text, clickColumn: hit.col, cwd: cwd)
+            else { return false }
+            guard FileManager.default.fileExists(atPath: candidate.path) else { return false }
+
+            openInEditor(path: candidate.path, line: candidate.line)
+            return true
+        }
+        return false
+    }
+
+    /// Maps a click already known to be inside `terminal`'s bounds to
+    /// (line text, column). Returns `nil` on any out-of-range math rather
+    /// than clamping here — PathDetector.extract does its own column
+    /// clamping against the LINE text it's given, but a column outside the
+    /// terminal's actual `cols`/`rows` grid means the click missed the
+    /// glyph area entirely (e.g. landed on the scroller strip) and there's
+    /// no line to read at all.
+    private func resolvePathClick(in terminal: TerminalView, at local: NSPoint) -> (text: String, col: Int)? {
+        let term = terminal.getTerminal()
+        let cols = term.cols
+        let rows = term.rows
+        guard cols > 0, rows > 0 else { return nil }
+
+        // MacTerminalView always reserves a fixed-width vertical scroller
+        // strip on the trailing edge — `cols` itself is computed elsewhere
+        // (Mac/MacTerminalView.swift's `getEffectiveWidth`) from
+        // `(frame.width - scrollerWidth) / cellWidth`, NOT `frame.width /
+        // cellWidth`. Replicating `frame.width / cols` here (the brief's
+        // literal suggestion) would understate the true cell width and
+        // drift every hit column left of the actual click as x grows —
+        // small in a narrow pane, several columns off near the right edge
+        // of a wide one. `scrollerWidth` itself isn't exposed by SwiftTerm,
+        // but it's just `NSScroller.scrollerWidth(for:scrollerStyle:)` (a
+        // plain AppKit API) with the same `.regular`/`.legacy` arguments
+        // MacTerminalView hardcodes, so it's reproducible from outside.
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        let textWidth = max(terminal.bounds.width - scrollerWidth, 1)
+        let cellWidth = textWidth / CGFloat(cols)
+        let cellHeight = terminal.bounds.height / CGFloat(rows)
+        guard cellWidth > 0, cellHeight > 0 else { return nil }
+
+        let col = Int(floor(local.x / cellWidth))
+        // TerminalView is never flipped (no `isFlipped` override anywhere
+        // in SwiftTerm's Apple/Mac backend — confirmed by reading
+        // Apple/AppleTerminalView.swift and Mac/MacTerminalView.swift), so
+        // it uses AppKit's default: bounds.y = 0 is the BOTTOM of the view,
+        // y grows upward. Row 0 on screen is the TOP, so distance from the
+        // top — what row math wants — is `bounds.height - local.y`.
+        let rowOnScreen = Int(floor((terminal.bounds.height - local.y) / cellHeight))
+        guard col >= 0, col < cols, rowOnScreen >= 0, rowOnScreen < rows else { return nil }
+
+        // `Terminal.getLine(row:)` takes a VIEWPORT-relative row, not an
+        // absolute scrollback index, despite its doc comment's misleading
+        // "relative to the scroll buffer" wording: the implementation is
+        // `buffer.lines[row + buffer.yDisp]` guarded by `row >= rows` (the
+        // small on-screen row count, ~25-50, not the scrollback depth) —
+        // confirmed against SwiftTerm's own HeadlessUsage.md example,
+        // which loops `for row in 0..<terminal.rows { terminal.getLine(row:
+        // row) }`. So `rowOnScreen` (0 = top visible row, same convention
+        // this function already computed) is exactly the right argument.
+        // Adding `getTopVisibleRow()` first — what the brief suggested —
+        // would double-count `yDisp` and blow that `row >= rows` guard for
+        // any pane with scrollback beyond one screen, returning nil on
+        // almost every real click. getTopVisibleRow() is therefore
+        // deliberately NOT used here.
+        guard let bufferLine = term.getLine(row: rowOnScreen) else { return nil }
+        return (bufferLine.translateToString(trimRight: true), col)
+    }
+
+    /// Run `OpusPreferences.editorCommand` with `{target}` replaced by the
+    /// shell-quoted `path` (or `path:line`), off the main queue since
+    /// `Process.waitUntilExit()` blocks. Falls back to
+    /// `NSWorkspace.shared.open` — which at least opens the file in
+    /// whatever app is registered for it — on a non-zero exit or a launch
+    /// failure (e.g. the configured command isn't installed).
+    private func openInEditor(path: String, line: Int?) {
+        let target = line.map { "\(path):\($0)" } ?? path
+        let command = OpusPreferences.shared.editorCommand
+            .replacingOccurrences(of: "{target}", with: shellQuote(target))
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            let openFallback = { DispatchQueue.main.async { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } }
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus != 0 { openFallback() }
+            } catch {
+                openFallback()
+            }
+        }
     }
 
     // MARK: Find bar (Cmd+F scrollback search over SwiftTerm's built-in engine)
