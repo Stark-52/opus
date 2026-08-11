@@ -826,6 +826,11 @@ final class QuickTerminalPanel: NSObject {
         // The panel is a non-activating NSPanel, so didBecomeActiveNotification
         // doesn't fire when it's revealed — clear the attention badge here too.
         ClaudeAttention.shared.clear()
+        // Same reasoning for the per-tab dot: re-summoning the panel doesn't
+        // go through switchTab (the active tab doesn't change), so its dot
+        // would otherwise sit there already-read but still lit until some
+        // unrelated future event happens to clear it.
+        container.markActiveTabSeen()
     }
 
     private func hide() {

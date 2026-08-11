@@ -34,45 +34,27 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabTitles: [String] = []
     private var activeTabIndex: Int = 0
 
-    // MARK: Pane ↔ Claude session association (Lot 3, Task 2 — heuristic v1)
-    //
-    // There's no deterministic session id threaded through at spawn time yet
-    // (that's Task 6: mint --session-id ourselves and pass it straight
-    // through). Until then we associate a pane with the session_id its first
-    // SessionStart hook reports by SPAWN ORDER: every pane spawn records a
-    // pending (paneId, timestamp) entry, and the oldest still-fresh (< 8s)
-    // entry is popped and bound the moment a SessionStart event arrives.
-    //
-    // KNOWN RACE (accepted for v1): two panes spawned under ~1s of each
-    // other can have their SessionStart hooks arrive out of spawn order
-    // (e.g. a slow cold `claude` start racing a fast warm one) — the
-    // heuristic would then bind the wrong sessionId to the wrong pane.
-    // Task 6's deterministic id removes this heuristic (and the race)
-    // entirely; until then this is a cosmetic mismatch (wrong dot on one of
-    // two simultaneously-opened tabs), never a functional one — nothing
-    // reads paneSessionIds to route input/output, only to look up display
-    // state and decide whether to raise a notification.
-    //
-    // Keyed by the pane's TerminalView identity (ObjectIdentifier), same
-    // pattern already used by `deadOverlays` below. Entries for panes that
-    // have since closed are never removed. `refreshTabBarStates()` never
-    // resurfaces one (it only walks panes still present in `tabPanes`), so
-    // that path is genuinely dead-weight-only. `notifyIfNeeded` does a
-    // reverse (by-value) scan over this whole dictionary, stale entries
-    // included — a truly pathological case (a hook from an already-closed
-    // pane's session arriving late, colliding with a *brand new* TerminalView
-    // instance that ARC happened to allocate at the same address as the
-    // closed one, before that new pane's own SessionStart has bound it) could
-    // theoretically misattribute one notification's "is this pane visible"
-    // check. This is unobserved in practice, self-corrects on that new pane's
-    // own SessionStart, and is squarely inside the v1 heuristic's accepted
-    // error budget (see the race note above) — not worth pruning-on-close
-    // machinery for.
-    private var paneSessionIds: [ObjectIdentifier: String] = [:]
-    private var pendingSpawns: [(paneId: ObjectIdentifier, at: Date)] = []
+    // Pane ↔ Claude session association (Lot 3, Task 2 — heuristic v1) used
+    // to be tracked HERE, per-container. Fix round 1 moved it into
+    // `ClaudeStateStore` as a single global registry shared by every
+    // TerminalContainerView (panel and main window alike) — two independent
+    // per-container FIFOs let one container silently steal a SessionStart
+    // hook meant for a pane spawned in the OTHER container, leaving the
+    // robbed pane permanently `.idle` with no recovery. See the doc comment
+    // on `ClaudeStateStore.paneSessionIds`/`pendingSpawns` for the full
+    // story (including the still-accepted, much narrower same-second-burst
+    // race). This container now only holds thin glue: register a pane at
+    // spawn time (`recordPendingSpawn`), and look its bound session up via
+    // `ClaudeStateStore.shared.sessionId(forPaneToken:)` wherever display
+    // state or a notification decision needs it.
 
-    /// True when this container is the tab-0 broadcast subscriber (panel host).
-    /// MainTerminalWindow sets this to false to spawn a fully private tab 0.
+    /// True when this container is the tab-0 broadcast subscriber. Both the
+    /// panel AND MainTerminalWindow pass `true` here (see MainTerminalWindow's
+    /// setupContent) — tab 0 is shared across every Opus surface, Terminal.app
+    /// mirroring included; there is no "fully private tab 0" mode anymore
+    /// (that was true pre-v1.1, before the panelAndMain rework). `false` is
+    /// unused by any current call site but kept as an escape hatch — the
+    /// shield button / skip-permissions wiring below is still gated on it.
     private let useSharedTab0: Bool
 
     init(frame: NSRect, useSharedTab0: Bool) {
@@ -451,6 +433,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 window?.makeFirstResponder(tabPanes[tabIdx][newIdx].terminal)
             }
             refreshActiveTabTitle()
+            // The tab's active pane just changed (the closed split may have
+            // been the one carrying the dot) — recompute its dot from the
+            // now-focused sibling's session instead of leaving the stale one
+            // painted until some unrelated future event happens to repaint it.
+            refreshTabBarStates()
         }
     }
 
@@ -537,7 +524,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         // The user is now looking at this pane — a `.done`/`.needsInput`
         // dot on it has been "read"; clear it back to idle.
-        if let sessionId = paneSessionIds[ObjectIdentifier(pane.terminal)] {
+        if let sessionId = sessionId(for: pane) {
             ClaudeStateStore.shared.markSeen(sessionId: sessionId)
         }
 
@@ -653,24 +640,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Cockpit — pane↔session binding, tab-bar dots, precise notifications
 
-    /// Record a just-spawned pane as awaiting its first SessionStart hook.
-    /// Called from every pane-spawn call site (bootstrapFirstTab's two
-    /// branches, spawnNewTab, splitActivePane) — see the pendingSpawns
-    /// doc comment near the property declaration for the matching/race
-    /// contract.
+    /// Register a just-spawned pane with the GLOBAL binding registry
+    /// (`ClaudeStateStore`, shared by every TerminalContainerView — see its
+    /// doc comment for why this moved out of per-container storage). Called
+    /// from every pane-spawn call site: bootstrapFirstTab's two branches,
+    /// spawnNewTab, splitActivePane.
     private func recordPendingSpawn(_ pane: TabPane) {
-        pendingSpawns.append((paneId: ObjectIdentifier(pane.terminal), at: Date()))
+        ClaudeStateStore.shared.registerPendingSpawn(paneToken: ObjectIdentifier(pane.terminal))
     }
 
-    /// Pops the oldest still-fresh (< 8s old) pending spawn and binds it to
-    /// `sessionId`. Also prunes anything that aged out without ever getting
-    /// a match (a lost/never-arriving hook shouldn't accumulate forever).
-    private func bindOldestPendingSpawn(toSessionId sessionId: String) {
-        let cutoff = Date().addingTimeInterval(-8)
-        pendingSpawns.removeAll { $0.at < cutoff }
-        guard !pendingSpawns.isEmpty else { return }
-        let spawn = pendingSpawns.removeFirst()
-        paneSessionIds[spawn.paneId] = sessionId
+    /// The sessionId bound to `pane`, if the spawn-order heuristic has
+    /// matched a SessionStart to it yet.
+    private func sessionId(for pane: TabPane) -> String? {
+        ClaudeStateStore.shared.sessionId(forPaneToken: ObjectIdentifier(pane.terminal))
     }
 
     /// One PaneActivity per tab, reflecting that tab's ACTIVE pane's bound
@@ -681,7 +663,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let panes = tabPanes[tabIdx]
             let idx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
             guard panes.indices.contains(idx) else { return .idle }
-            guard let sessionId = paneSessionIds[ObjectIdentifier(panes[idx].terminal)] else { return .idle }
+            guard let sessionId = sessionId(for: panes[idx]) else { return .idle }
             return ClaudeStateStore.shared.state(forSessionId: sessionId)
         }
     }
@@ -690,13 +672,33 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         refreshTabBarStates()
     }
 
-    /// The tab title for whichever tab currently owns `paneId` (any pane in
-    /// that tab, not just the active one — matches the `bell(source:)`
-    /// lookup pattern below). Empty string if the pane's tab has already
-    /// closed by the time this runs.
-    private func tabTitle(forBoundPane paneId: ObjectIdentifier) -> String {
+    /// The active tab's active pane, marked as "seen" (clears a `.done`/
+    /// `.needsInput` dot back to idle) and repainted. `switchTab` has its
+    /// own equivalent inline (it already resolves the target pane as part
+    /// of switching); this is for paths that make the SAME tab visible
+    /// again WITHOUT going through switchTab — e.g. QuickTerminalPanel.show()
+    /// re-summoning the panel onto whatever tab was already active.
+    func markActiveTabSeen() {
+        guard tabPanes.indices.contains(activeTabIndex) else { return }
+        let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
+        let panes = tabPanes[activeTabIndex]
+        guard panes.indices.contains(idx) else { return }
+        if let sessionId = sessionId(for: panes[idx]) {
+            ClaudeStateStore.shared.markSeen(sessionId: sessionId)
+        }
+        refreshTabBarStates()
+    }
+
+    /// The tab title for whichever tab currently owns a pane bound to
+    /// `sessionId`. Scans forward via `ClaudeStateStore.sessionId(forPaneToken:)`
+    /// per pane rather than needing a reverse (session → pane) lookup on the
+    /// store — the store only exposes pane→session lookups, since containers
+    /// are the only thing that know the tab/pane structure at all. Empty
+    /// string if no live pane is currently bound to this session (its tab
+    /// already closed, or the heuristic hasn't matched it yet).
+    private func tabTitle(forSessionId sessionId: String) -> String {
         for (tabIdx, panes) in tabPanes.enumerated() {
-            if panes.contains(where: { ObjectIdentifier($0.terminal) == paneId }) {
+            if panes.contains(where: { self.sessionId(for: $0) == sessionId }) {
                 return tabTitles.indices.contains(tabIdx) ? tabTitles[tabIdx] : ""
             }
         }
@@ -705,9 +707,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func claudeEventReceived(_ note: Notification) {
         guard let event = note.userInfo?["event"] as? OpusClaudeEvent else { return }
-        if case .sessionStarted = event.kind {
-            bindOldestPendingSpawn(toSessionId: event.sessionId)
-        }
+        // Pane↔session binding itself now happens inside ClaudeStateStore's
+        // own .opusClaudeEvent observer (it owns the global registry) — this
+        // container only needs to react to the RESULT, for notifications.
         notifyIfNeeded(for: event)
     }
 
@@ -726,16 +728,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let resulting = ClaudeStateStore.nextActivity(current: .idle, event: event.kind)
         guard resulting == .needsInput || resulting == .done else { return }
 
-        let boundPane = paneSessionIds.first(where: { $0.value == event.sessionId })?.key
-        let isVisiblePane: Bool
-        if let boundPane, tabPanes.indices.contains(activeTabIndex) {
+        // Is THIS event's session the one bound to the currently on-screen
+        // pane? Compare via the forward (pane → session) lookup rather than
+        // needing a reverse one — if the active pane is unbound (nil), this
+        // is automatically false, which is the right call: can't prove it's
+        // the visible one, so don't suppress on that basis.
+        var isVisiblePane = false
+        if tabPanes.indices.contains(activeTabIndex) {
             let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
             let panes = tabPanes[activeTabIndex]
-            isVisiblePane = panes.indices.contains(idx) && ObjectIdentifier(panes[idx].terminal) == boundPane
-        } else {
-            // Not bound to any pane yet — can't prove it's the visible one,
-            // so don't suppress on that basis.
-            isVisiblePane = false
+            if panes.indices.contains(idx) {
+                isVisiblePane = sessionId(for: panes[idx]) == event.sessionId
+            }
         }
 
         // Skip only when this IS the on-screen pane AND Opus itself is
@@ -744,8 +748,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // isUserLookingAtOpus() itself before doing anything.
         guard !(isVisiblePane && ClaudeAttention.shared.isUserLookingAtOpus()) else { return }
 
-        let title = boundPane.map(tabTitle(forBoundPane:)) ?? ""
-        ClaudeAttention.shared.bellReceived(title: title)
+        ClaudeAttention.shared.bellReceived(title: tabTitle(forSessionId: event.sessionId))
     }
 
     func handlePrivateTabTerminated(_ wrapper: FilteredClaudeTab) {
