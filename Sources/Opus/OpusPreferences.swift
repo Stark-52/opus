@@ -333,11 +333,25 @@ final class OpusPreferences {
     /// current dangerous-mode/permission-mode flags but never resume, since
     /// `--continue`/`--resume` there would attach the same transcript tab 0
     /// is already writing (two claudes on one session file).
+    ///
+    /// Every spawn path (ClaudeBackend.spawn, FilteredClaudeTab.start) goes
+    /// through here, so this is also where the hooks settings file gets its
+    /// pre-flight check: claude HARD-FAILS (exit 1, no session at all) when
+    /// --settings points at a file that doesn't exist, so "warmed once at
+    /// app launch" isn't enough — a file deleted mid-session would take down
+    /// every subsequent restart/private-tab spawn. ensureSettingsFile() is
+    /// idempotent and cheap (a content-compare, not an unconditional
+    /// rewrite), so doing this unconditionally on every call is fine.
+    /// composeSpawnCommand itself stays a pure static function — no
+    /// filesystem effects there, only here.
     func resolvedSpawnCommand(
         skipPermissions: Bool = false,
         resumeMode: OpusResumeMode = .none
     ) -> String {
-        Self.composeSpawnCommand(
+        if initialCommandPreset == .claude {
+            HookSettingsWriter.ensureSettingsFile()
+        }
+        return Self.composeSpawnCommand(
             preset: initialCommandPreset,
             customCommand: customCommand,
             workingDirectory: workingDirectory,
