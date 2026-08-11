@@ -946,12 +946,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         guard let terminal = activeTerminal else { return }
         let selection = terminal.getSelection()
         guard let text = selection, !text.isEmpty else {
-            let interrupt = ArraySlice<UInt8>([0x03])
-            if let wrapper = activePane?.wrapper {
-                wrapper.sendInput(bytes: interrupt)
-            } else {
-                ClaudeBackend.shared.send(data: interrupt)
-            }
+            // Cockpit (Lot 3, Task 7 fix round 1): route the empty-selection
+            // interrupt through `deliver(bytes:)` so it becomes a
+            // bulk-interrupt of every pane in the active tab while armed,
+            // instead of silently hitting only this one.
+            deliver(bytes: ArraySlice<UInt8>([0x03]))
             return
         }
         NSPasteboard.general.clearContents()
@@ -974,11 +973,35 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Pasteboard / file-path helpers
 
-    /// Inject text into the active pane's PTY (private wrapper or shared backend).
+    /// Inject text into the active pane's PTY (private wrapper or shared
+    /// backend) — or, while broadcast is armed, into every pane of the
+    /// active tab. Covers both `pasteFromPasteboard` (Cmd+V) and Finder
+    /// drag-drop (`performDragOperation` below), which is exactly what a
+    /// user arming broadcast to paste one prompt into N sessions expects.
     private func sendToActivePane(_ text: String) {
         guard !text.isEmpty else { return }
-        let bytes = ArraySlice(Array(text.utf8))
-        if let wrapper = activePane?.wrapper {
+        deliver(bytes: ArraySlice(Array(text.utf8)))
+    }
+
+    /// Cockpit (Lot 3, Task 7 fix round 1) — the single delivery point for
+    /// input that does NOT arrive as a keystroke: paste, Finder drag-drop,
+    /// and the empty-selection Ctrl-C interrupt. Broadcasts to every pane
+    /// of the active tab when armed, otherwise single-target routes to the
+    /// active pane exactly as before this fix (private wrapper, or the
+    /// shared backend as a fallback when there's no active pane at all).
+    ///
+    /// This is a SEPARATE chokepoint from the keystroke path
+    /// (`send(source:data:)` / `interceptForBroadcast`, driven by
+    /// `TerminalViewDelegate`): paste/drop/interrupt never go through a
+    /// `TerminalViewDelegate` — they call straight into the active pane's
+    /// wrapper/backend — which is exactly why they used to bypass the
+    /// broadcast check entirely (Fix round 1). Three surfaces route through
+    /// here: `sendToActivePane` (paste + drag-drop) and the interrupt call
+    /// in `copySelectionToPasteboard`.
+    private func deliver(bytes: ArraySlice<UInt8>) {
+        if broadcastArmed {
+            broadcast(data: bytes)
+        } else if let wrapper = activePane?.wrapper {
             wrapper.sendInput(bytes: bytes)
         } else {
             ClaudeBackend.shared.send(data: bytes)

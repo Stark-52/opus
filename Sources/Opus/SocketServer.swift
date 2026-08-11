@@ -116,6 +116,10 @@ final class SocketServer {
                 }
                 if i < n {
                     let slice = ArraySlice(buffer[i..<n])
+                    // Cockpit (Lot 3, Task 7): mirror input from opus-attach
+                    // is deliberately OUTSIDE broadcast scope — mirrors are
+                    // not TabPanes, so there's no tab/pane context here to
+                    // check `broadcastArmed` against even if we wanted to.
                     ClaudeBackend.shared.send(data: slice)
                 }
             }
