@@ -51,7 +51,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var activeTabIndex: Int = 0
 
     // Pane ↔ Claude session association (Lot 3, Task 2 — heuristic v1) used
-    // to be tracked HERE, per-container. Fix round 1 moved it into
+    // to be tracked HERE, per-container. Fix round 1 (Task 2) moved it into
     // `ClaudeStateStore` as a single global registry shared by every
     // TerminalContainerView (panel and main window alike) — two independent
     // per-container FIFOs let one container silently steal a SessionStart
@@ -59,8 +59,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // robbed pane permanently `.idle` with no recovery. See the doc comment
     // on `ClaudeStateStore.paneSessionIds`/`pendingSpawns` for the full
     // story (including the still-accepted, much narrower same-second-burst
-    // race). This container now only holds thin glue: register a pane at
-    // spawn time (`recordPendingSpawn`), and look its bound session up via
+    // race).
+    //
+    // Task 6 made binding DIRECT-FIRST: this container knows a private
+    // pane's session id the instant it's minted, and binds it immediately
+    // (`bindKnownSession`, called right after every `pane.start()`, and
+    // again on every private-pane restart inside `FilteredClaudeTab.restart()`
+    // itself — see that method) instead of waiting on a hook. The shared
+    // pane's known id arrives via `sharedBackendDidSpawn`'s notification
+    // userInfo. `recordPendingSpawn` + the SessionStart-hook FIFO
+    // (`ClaudeStateStore.bindOldestPendingSpawn`) is now a FALLBACK,
+    // exercised only when a spawn's id is genuinely unknown up front (a
+    // `.continueMostRecent` shared-backend launch). Either way, this
+    // container only holds thin glue: register/bind a pane at spawn time,
+    // and look its bound session up via
     // `ClaudeStateStore.shared.sessionId(forPaneToken:)` wherever display
     // state or a notification decision needs it.
 
@@ -1021,15 +1033,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         ClaudeStateStore.shared.bindSession(paneToken: ObjectIdentifier(pane.terminal), sessionId: wrapper.sessionId)
     }
 
-    /// The sessionId bound to `pane`, if the spawn-order heuristic has
-    /// matched a SessionStart to it yet.
+    /// The sessionId bound to `pane` — direct-bound at spawn/restart time
+    /// (`bindKnownSession`, `sharedBackendDidSpawn`, `FilteredClaudeTab.restart`)
+    /// for every known-id case, or matched by the spawn-order FIFO heuristic
+    /// as a fallback for the one unknown-id case (`.continueMostRecent`) —
+    /// see `ClaudeStateStore.bindOldestPendingSpawn`'s doc comment.
     private func sessionId(for pane: TabPane) -> String? {
         ClaudeStateStore.shared.sessionId(forPaneToken: ObjectIdentifier(pane.terminal))
     }
 
     /// One PaneActivity per tab, reflecting that tab's ACTIVE pane's bound
-    /// session — an unbound pane (heuristic hasn't matched a SessionStart
-    /// yet) reads as `.idle`, same as a session with no events at all.
+    /// session — an unbound pane (no direct bind yet, and the FIFO fallback
+    /// hasn't matched a SessionStart to it either) reads as `.idle`, same as
+    /// a session with no events at all.
     private func refreshTabBarStates() {
         tabBar.states = tabPanes.indices.map { tabIdx -> PaneActivity in
             let panes = tabPanes[tabIdx]

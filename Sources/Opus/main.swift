@@ -172,6 +172,11 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     func restart() {
         self.process = LocalProcess(delegate: self)
         sessionId = UUID().uuidString.lowercased()
+        // The pane keeps its terminal view across respawns — rebind it to the
+        // fresh conversation immediately (overwrite-on-rebind is bindSession's
+        // documented contract). Covers restartFresh AND the dead-overlay button,
+        // both of which route through restart().
+        ClaudeStateStore.shared.bindSession(paneToken: ObjectIdentifier(terminal), sessionId: sessionId)
         start()
     }
 
