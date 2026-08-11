@@ -739,7 +739,12 @@ final class QuickTerminalPanel: NSObject {
             // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
             // Left intercepted even while the find bar has focus — zooming
             // while searching is harmless (no live-session side effect).
-            // Prompt jump by arrow key: ↑ (126), ↓ (125). Layout-independent keyCode.
+            // Prompt jump by arrow key: ↑ (126), ↓ (125). Layout-independent
+            // keyCode. Unlike zoom, these must fall through to the find
+            // bar's field editor while it has focus — same rationale as
+            // findBarBypassChars: Cmd+↑/↓ there moves the caret, not the
+            // terminal behind it.
+            if container.findBarHasFocus, ev.keyCode == 126 || ev.keyCode == 125 { return ev }
             switch ev.keyCode {
             case 24: OpusPreferences.shared.bumpFontSize(+1); return nil
             case 27: OpusPreferences.shared.bumpFontSize(-1); return nil
