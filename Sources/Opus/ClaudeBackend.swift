@@ -66,7 +66,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
 
     /// Kill the current claude and spawn a fresh one. `resume: true` reopens
     /// the same conversation (dangerous-mode toggle); `false` starts clean
-    /// (menu Restart / project switch).
+    /// (menu Restart / project switch). Derives the mode from the shared
+    /// session's own most-recent transcript, then delegates to
+    /// `restart(mode:)`.
     func restart(resume: Bool) {
         var mode: OpusResumeMode = .none
         if resume {
@@ -77,6 +79,14 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
                 mode = .continueMostRecent
             }
         }
+        restart(mode: mode)
+    }
+
+    /// Kill the current claude and spawn a fresh one with a caller-supplied
+    /// resume mode — used directly by the session switcher (Cmd+K), which
+    /// already knows the exact session ID to resume, and by `restart(resume:)`
+    /// above for the derived-from-cwd cases.
+    func restart(mode: OpusResumeMode) {
         if isRestarting {
             // A restart is already in flight: the SIGTERM/SIGKILL dance is
             // armed and processTerminated will respawn. Just record the most

@@ -72,6 +72,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
                 case ",": SettingsWindowController.shared.show(); return nil
                 case "f": container.toggleFindBar(); return nil
                 case "g": container.findNextInActivePane(); return nil
+                case "k": SessionSwitcherPanel.shared.toggle(); return nil
                 default: break
                 }
             }
