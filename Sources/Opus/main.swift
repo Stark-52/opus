@@ -30,6 +30,11 @@ final class OpusTabBar: NSView {
     var tabCount: Int = 1 { didSet { needsDisplay = true } }
     var activeIndex: Int = 0 { didSet { needsDisplay = true } }
     var titles: [String] = [] { didSet { needsDisplay = true } }
+    /// One PaneActivity per tab, same index space as `titles`/`tabCount`.
+    /// An out-of-range index (array shorter than tabCount, e.g. a brand new
+    /// tab the container hasn't recomputed states for yet) draws no dot,
+    /// same as `.idle` — see draw(_:) below.
+    var states: [PaneActivity] = [] { didSet { needsDisplay = true } }
     var onSwitch: ((Int) -> Void)?
 
     override var isFlipped: Bool { false }
@@ -46,6 +51,27 @@ final class OpusTabBar: NSView {
                 : NSColor(white: 1, alpha: 0.07)
             fill.setFill()
             path.fill()
+
+            // Activity dot, before the label — amber while Claude is working,
+            // red when it's waiting on the user, green once a turn/agent run
+            // has finished. No dot at all for `.idle` (or a not-yet-sized
+            // states array).
+            if i < states.count {
+                let dotColor: NSColor?
+                switch states[i] {
+                case .working: dotColor = NSColor.systemOrange
+                case .needsInput: dotColor = NSColor.systemRed
+                case .done: dotColor = NSColor.systemGreen
+                case .idle: dotColor = nil
+                }
+                if let dotColor {
+                    let dotSize: CGFloat = 6
+                    let dotRect = NSRect(x: r.minX + 6, y: r.midY - dotSize / 2,
+                                         width: dotSize, height: dotSize)
+                    dotColor.setFill()
+                    NSBezierPath(ovalIn: dotRect).fill()
+                }
+            }
 
             let raw = i < titles.count && !titles[i].isEmpty ? titles[i] : "Claude"
             let label = "\(i + 1)  \(raw)"
@@ -914,6 +940,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // preset always points --settings at this path (see HookSettingsWriter).
         // Idempotent: cheap to call unconditionally on every launch.
         HookSettingsWriter.ensureSettingsFile()
+        // Force ClaudeStateStore's singleton (and its .opusClaudeEvent
+        // observer) into existence now, before nativePanel/MainTerminalWindow
+        // below can spawn the first claude process. `static let shared` only
+        // initializes on first access — deferring that until some later
+        // TerminalContainerView happened to touch it would risk missing that
+        // pane's very first hook events if a TerminalContainerView's OWN
+        // .opusClaudeEvent observer (registered in its init, which runs
+        // first in that scenario) fired before the store's did.
+        _ = ClaudeStateStore.shared
         if display.includesNativeTerminal {
             // Phase 3b — focus-following resize for Terminal.app. When Terminal.app
             // becomes the active app, query its front window's cols/rows and resize
