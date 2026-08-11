@@ -34,6 +34,12 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **`opus-attach send`** — push a one-shot prompt into the live shared session from scripts, cron, git hooks, or Raycast, without attaching a terminal.
 - **Font zoom** (`Cmd+=` / `Cmd+-` / `Cmd+0`) — live font size adjustment, plus a configurable scrollback ceiling in Settings.
 - **Permission-mode picker** — right-click the shield button to pick a `--permission-mode` preset (default / plan / auto-accept edits) independent of the dangerous-mode toggle.
+- **Activity dots** — each tab shows an amber (working) / red (needs input) / green (done) dot, driven live by Claude Code's own hooks (`opus-hooks.json` injected into every spawned session, relayed over a Unix socket) — no polling, no scraping the TUI.
+- **Cmd+K conversation switcher** — fuzzy-search every Claude Code conversation on this machine (any project, any working directory), Enter resumes it into the shared session.
+- **Context usage bar** — a thin bar above the tab bar showing how full the shared session's context window is, parsed live from the transcript.
+- **Cmd+click file:line** — click a file path (with optional `:line`) anywhere in the terminal to open it in your editor (`opus.editorCommand` in Settings, defaults to `code -g {target}`).
+- **Broadcast input** (`Cmd+Shift+I`) — type once, land in every pane of the active tab; armed panes get a lit border so you can't forget it's on.
+- **Prompt jump** (`Cmd+Up` / `Cmd+Down`) — jump the scrollback straight to the previous/next submitted prompt.
 
 ## Build
 
@@ -97,8 +103,12 @@ Opus.app
 │     └── splits via NSSplitView (nested, axis-mixed)
 ├── SettingsWindowController (General / Appearance / Display tabs)
 ├── OnboardingWindowController (first-launch TCC prompts)
-└── SocketServer (/tmp/opus.sock, always running regardless of displayMode)
-      └── opus-attach clients — Terminal.app windows
+├── SocketServer (/tmp/opus.sock, always running regardless of displayMode)
+│     └── opus-attach clients — Terminal.app windows
+└── EventSocketServer (/tmp/opus-events.sock) — Claude Code hook bus
+      ├── HookSettingsWriter injects opus-hooks.json into every spawned claude
+      ├── ClaudeStateStore — live per-session activity, feeds tab-bar dots + notifications
+      └── SessionIndex / ContextMeter — Cmd+K switcher + context usage bar read transcripts directly
 ```
 
 The 9-byte control protocol prefix: `ESC O p u s + cols(2 BE) + rows(2 BE)`. Sent client → server on initial connect and every SIGWINCH.
@@ -118,6 +128,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- v1.4 (2026-08-11): the Claude cockpit — hook-driven state bus, activity dots, Cmd+K switcher, context meter, Cmd+click paths, broadcast input, prompt jump, deterministic session ids.
 - v1.3 (2026-08-11): Cmd+F search, attention notifications, panel pin, opus-attach send, font zoom + scrollback setting, permission-mode picker, transcript-marker env fix.
 - v1.2.2 (2026-08-10): 12 bugfixes from the multi-agent review — restart targets the focused pane, SIGPIPE hardening, Caps Lock shortcuts, panel toggle race, and more.
 

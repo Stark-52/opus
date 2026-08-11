@@ -1102,7 +1102,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// (`bindKnownSession`, `sharedBackendDidSpawn`, `FilteredClaudeTab.restart`)
     /// for every known-id case, or matched by the spawn-order FIFO heuristic
     /// as a fallback for the one unknown-id case (`.continueMostRecent`) —
-    /// see `ClaudeStateStore.bindOldestPendingSpawn`'s doc comment.
+    /// see `ClaudeStateStore.bindOldestPendingSpawn`'s doc comment. Entries
+    /// for closed panes are never pruned from that store — see
+    /// `ClaudeStateStore.paneSessionIds`'s doc comment (where the storage
+    /// lives) for why stale entries are accepted as harmless for v1.
     private func sessionId(for pane: TabPane) -> String? {
         ClaudeStateStore.shared.sessionId(forPaneToken: ObjectIdentifier(pane.terminal))
     }

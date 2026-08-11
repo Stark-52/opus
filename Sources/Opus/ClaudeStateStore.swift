@@ -131,9 +131,19 @@ final class ClaudeStateStore {
     //
     // Keyed by the pane's TerminalView identity (ObjectIdentifier), same
     // pattern already used by `TerminalContainerView.deadOverlays`. Entries
-    // for panes that have since closed are never removed — see
-    // TerminalContainerView's own doc comment near its pane-lookup call
-    // sites for why that's accepted as harmless-enough for v1.
+    // for panes that have since closed are never removed. Accepted as
+    // harmless-enough for v1: AppKit is free to hand a closed pane's
+    // deallocated TerminalView address to a brand-new pane's TerminalView
+    // before that new pane's own bind runs, so in principle the new pane
+    // could transiently read a stale entry left behind by the old, closed
+    // one. In practice this self-corrects: every real spawn site
+    // (`bindKnownSession`/`bindSession` for the direct-bind cases,
+    // `registerPendingSpawn` → `bindOldestPendingSpawn` for the one FIFO
+    // fallback case) writes ITS OWN binding for the reused token before
+    // that token's session id is ever read anywhere — so even an address
+    // collision gets overwritten with the correct value before any dot
+    // color or lookup could observe the wrong one. Worth an accepted error
+    // budget line, not a removal-on-close hook, for v1.
     private var paneSessionIds: [ObjectIdentifier: String] = [:]
     private var pendingSpawns: [(paneToken: ObjectIdentifier, at: Date)] = []
 

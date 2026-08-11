@@ -10,6 +10,7 @@ Opus.app
 │     ├── installAppMenu()           — minimal menu bar (Settings…, Quit)
 │     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M / Cmd+Ctrl+R
 │     ├── SocketServer               — Unix domain socket at /tmp/opus.sock, always running regardless of displayMode; also serves `opus-attach send` one-shot prompt injection
+│     ├── EventSocketServer          — Unix domain socket at /tmp/opus-events.sock, the read side of the Claude Code hook bus (Task 1); feeds ClaudeStateStore
 │     ├── QuickTerminalPanel?        — slide-down NSPanel host (panel/both modes)
 │     ├── MainTerminalWindow?        — standalone NSWindow host (main/both modes)
 │     ├── SettingsWindowController   — NSTabView with General / Appearance / Display
@@ -26,15 +27,33 @@ Opus.app
 ├── ClaudeSessionLocator — session-ID lookup for --resume
 │     └── encodes cwd → project-dir name, takes most-recently-modified UUID *.jsonl in ~/.claude/projects/<encoded>/
 │
+├── HookSettingsWriter — generates opus-hooks.json (--settings), injected into every spawned claude
+│     └── six pure-observer hooks (UserPromptSubmit/PreToolUse/PostToolUse/Notification/Stop/SessionStart), each firing `opus-attach event <Name>` → EventSocketServer
+│
+├── ClaudeStateStore (singleton) — live per-session PaneActivity, built from the hook bus
+│     ├── idle/working/needsInput/done, drives the tab-bar dot color and ClaudeAttention's precision
+│     └── owns pane↔session binding (paneSessionIds/pendingSpawns) — see its own doc comments for the direct-bind vs spawn-order-FIFO split
+│
+├── SessionIndex / SessionSwitcherPanel — Cmd+K conversation switcher
+│     ├── SessionIndex scans ~/.claude/projects/*/*.jsonl (bounded 16KB head read per file) across every project on this machine
+│     └── SessionSwitcherPanel fuzzy-filters by title/cwd, resumes the pick into the shared session (tab 0)
+│
+├── ContextMeter / ContextMeterBar — context-window usage bar above the tab bar
+│     └── parses the shared session's live transcript tail for `message.usage` token counts, refreshed on a timer
+│
+├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text
+│     └── TerminalContainerView resolves the result against cwd and opens it via `OpusPreferences.editorCommand`
+│
 ├── TerminalContainerView (NSView)
 │     ├── tabs[] / tabPanes[][] / tabActivePaneIndex[] / tabTitles[]
-│     ├── OpusTabBar at the bottom (hidden when single tab)
+│     ├── OpusTabBar at the bottom (hidden when single tab), dots sourced from ClaudeStateStore
 │     ├── OpusSplitView for nested Cmd+D / Cmd+Shift+D splits
 │     ├── TabPane abstraction
 │     │     ├── shared  → ClaudeBackend subscriber, no own process (mirrors Terminal.app)
 │     │     └── private → own FilteredClaudeTab wrapping LocalProcess
 │     ├── TerminalViewDelegate impl (send/sizeChanged/setTerminalTitle/clipboardCopy/…)
-│     ├── FindBarView — Cmd+F find bar over SwiftTerm's built-in scrollback search (Enter/Shift+Enter/Esc)
+│     ├── FindBarView — Cmd+F find bar over SwiftTerm's built-in scrollback search (Enter/Shift+Enter/Esc); also backs Cmd+Up/Down prompt jump (searches "❯ ")
+│     ├── broadcastArmed — Cmd+Shift+I fans keystrokes out to every pane of the active tab, lit border while armed
 │     └── copySelectionToPasteboard() / pasteFromPasteboard()
 │
 ├── ClaudeAttention (singleton)
@@ -44,12 +63,14 @@ Opus.app
       ├── UserDefaults-backed key/value store
       ├── posts opusPreferencesDidChange on every write
       ├── permissionMode → shield's right-click `--permission-mode` preset (default/plan/acceptEdits)
+      ├── editorCommand → Cmd+click target for PathDetector hits (default `code -g {target}`)
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload
 
-Tests/OpusTests/          — first test target (62 unit tests)
+Tests/OpusTests/          — 165 unit tests
       ├── spawn-command flag assembly
       ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
-      └── MRU recent-projects list
+      ├── MRU recent-projects list
+      └── cockpit: ClaudeStateStore transitions/binding, SessionIndex parsing, ContextMeter parsing, PathDetector token-scan, HookSettingsWriter, EventSocketServer parsing
 ```
 
 ## Hosting model
@@ -115,6 +136,10 @@ Unix domain socket at `/tmp/opus.sock`. Client (`opus-attach`) flow:
 
 Server scans the leading bytes of every chunk for the magic prefix; matched chunks drive a `setPrimarySize` instead of being forwarded to the child PTY.
 
+## Events socket (Claude Code hook bus)
+
+Separate Unix domain socket at `/tmp/opus-events.sock`, one-directional and connection-per-line (not a persistent duplex pipe like the data socket above). `HookSettingsWriter` injects six pure-observer hooks into every spawned `claude` via `--settings opus-hooks.json`; each fires `opus-attach event <Name>`, which forwards claude's own hook stdin JSON (newline-compacted to one line) to the socket and exits. `EventSocketServer` reads each connection to EOF, splits on `0x0A`, and hands each line to `OpusClaudeEvent.parse` — a line that doesn't decode into a known event/shape is dropped silently, never crashes Opus. Parsed events post `.opusClaudeEvent` on the main queue, which `ClaudeStateStore` consumes to drive tab-bar dots and `ClaudeAttention`'s notification precision.
+
 ## Cursor visibility filter
 
 Claude Code's TUI emits `\e[?25l` to hide the cursor while it owns the screen. Inside the SwiftTerm panel that makes the input caret disappear, which the owner hated. We strip both `\e[?25l` and `\e[?25h` from every incoming byte stream (`QuickTerminalPanel.stripCursorVisibilityToggles`). The Terminal.app side gets the raw stream — its native terminal handles cursor visibility correctly.
@@ -164,6 +189,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.notifyOnBell` | Bool | `true` (absent key = on) |
 | `opus.panelPinned` | Bool | `false` |
 | `opus.scrollbackLines` | Int | `10_000` (clamped 1,000–200,000) |
+| `opus.editorCommand` | String | `code -g {target}` (`{target}` → `path` or `path:line`) |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
 
