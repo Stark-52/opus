@@ -17,7 +17,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Main window** (`Cmd+Ctrl+M`) — standard NSWindow, fullscreen-capable, frame auto-saved across launches.
 - **Multi-tab** — `Cmd+T` new private tab (own session), `Cmd+W` close current pane/tab, `Cmd+1..9` switch tab.
 - **Splits** — `Cmd+D` side-by-side, `Cmd+Shift+D` top/bottom. Nested via `NSSplitView` (iTerm2 conventions).
-- **Per-conversation dangerous mode** — a shield button (top-right of the panel and main window) relaunches the shared Claude session with `--dangerously-skip-permissions` and resumes the exact same conversation (`--resume <session-id>`, resolved from `~/.claude/projects/`). Click again to restore permission prompts, same conversation. Orange = armed. Also in the App/Dock menus.
+- **Per-conversation dangerous mode** — a shield button (top-right of the panel and main window) relaunches the shared Claude session with `--dangerously-skip-permissions` and resumes the exact same conversation (`--resume <session-id>`, using the session id Opus already knows it's running; falls back to scanning `~/.claude/projects/` only after a `--continue`-launched session, whose id claude picked, not Opus). Click again to restore permission prompts, same conversation. Orange = armed. Also in the App/Dock menus.
 - **Restart Claude Session** (`Cmd+Ctrl+R`) — kill + respawn the session in the focused pane, without quitting Opus (private tabs restart in place; the shared pane restarts the shared session, and all its surfaces stay attached). Asks for confirmation by default ("Don't ask again" checkbox in the alert, re-enable in Settings → General).
 - **Switch Project** — App/Dock menu of your 8 most recent working directories; picking one restarts the session in that project.
 - **Settings** (`Cmd+,`) — three tabs:
@@ -36,8 +36,8 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Permission-mode picker** — right-click the shield button to pick a `--permission-mode` preset (default / plan / auto-accept edits) independent of the dangerous-mode toggle.
 - **Activity dots** — each tab shows an amber (working) / red (needs input) / green (done) dot, driven live by Claude Code's own hooks (`opus-hooks.json` injected into every spawned session, relayed over a Unix socket) — no polling, no scraping the TUI.
 - **Cmd+K conversation switcher** — fuzzy-search every Claude Code conversation on this machine (any project, any working directory), Enter resumes it into the shared session.
-- **Context usage bar** — a thin bar above the tab bar showing how full the shared session's context window is, parsed live from the transcript.
-- **Cmd+click file:line** — click a file path (with optional `:line`) anywhere in the terminal to open it in your editor (`opus.editorCommand` in Settings, defaults to `code -g {target}`).
+- **Context usage bar** — a thin bar above the tab bar showing how full the active tab's session's context window is, parsed live from the transcript.
+- **Cmd+click file:line** — click a file path (with optional `:line`) anywhere in the terminal to open it in your editor. Defaults to `code -g {target}`; there's no Settings UI for this yet, so change it with `defaults write com.stark52.opus opus.editorCommand "your-editor {target}"`.
 - **Broadcast input** (`Cmd+Shift+I`) — type once, land in every pane of the active tab; armed panes get a lit border so you can't forget it's on.
 - **Prompt jump** (`Cmd+Up` / `Cmd+Down`) — jump the scrollback straight to the previous/next submitted prompt.
 

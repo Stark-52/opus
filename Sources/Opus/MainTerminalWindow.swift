@@ -20,7 +20,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             backing: .buffered,
             defer: false
         )
-        win.title = "Opus — Main"
+        win.title = "Opus - Main"
         win.isReleasedWhenClosed = false
         win.center()
         win.setFrameAutosaveName("OpusMainWindow")  // persists frame across launches
@@ -139,6 +139,10 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        // Parity with QuickTerminalPanel.show(): re-summoning this window
+        // doesn't go through switchTab, so the active tab's dot needs its
+        // own "seen" clear here.
+        container.markActiveTabSeen()
     }
 
     func toggle() {

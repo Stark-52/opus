@@ -6,8 +6,9 @@
 // <Name>`, which forwards claude's own hook stdin JSON — newline-compacted
 // to one line, see Sources/opus-attach/main.swift's `event` subcommand — to
 // /tmp/opus-events.sock and exits. This file is the listener on the other
-// end: structurally a copy of SocketServer's bind/listen/accept (same magic
-// numbers, same errno logging), but one-directional and connection-per-line
+// end: structurally a copy of SocketServer's bind/listen/accept (same
+// errno-logging shape; the listen() backlog and accept-queue QoS differ —
+// see start()/acceptQueue below), but one-directional and connection-per-line
 // instead of a persistent duplex pipe. Each accepted connection is read to
 // EOF, split on 0x0A, and each line is handed to OpusClaudeEvent.parse — a
 // line that doesn't decode into a known event is dropped silently (claude's
@@ -133,6 +134,7 @@ final class EventSocketServer {
         chmod(path, 0o600)
         guard listen(listenFD, 8) == 0 else {
             NSLog("Opus EventSocketServer: listen() failed errno=\(errno)")
+            close(listenFD); listenFD = -1
             return
         }
 

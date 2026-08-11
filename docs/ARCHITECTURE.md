@@ -20,14 +20,15 @@ Opus.app
 ├── ClaudeBackend (singleton)
 │     ├── owns a single LocalProcess (SwiftTerm) running the configured command
 │     ├── broadcasts incoming bytes to all subscribers (panel pane, socket clients)
+│     ├── currentSessionId — the id Opus itself minted (--session-id) or was told (--resume); primary source of "what session is this", nil only after a --continue launch (Task 6)
 │     ├── setPrimarySize(cols, rows) → ioctl(TIOCSWINSZ) on master FD via Mirror reflection on .childfd
 │     ├── send(data:) — forwards stdin bytes from any client into the PTY
 │     └── restart(resume:) — SIGTERM child (SIGKILL after 1.5 s), respawn with optional --resume / --dangerously-skip-permissions
 │
-├── ClaudeSessionLocator — session-ID lookup for --resume
+├── ClaudeSessionLocator — --resume ID fallback for the one case ClaudeBackend.currentSessionId can't cover: a --continue-launched session
 │     └── encodes cwd → project-dir name, takes most-recently-modified UUID *.jsonl in ~/.claude/projects/<encoded>/
 │
-├── HookSettingsWriter — generates opus-hooks.json (--settings), injected into every spawned claude
+├── HookSettingsWriter — generates opus-hooks.json (--settings), injected into every spawned claude; lives at ~/Library/Application Support/Opus/opus-hooks.json
 │     └── six pure-observer hooks (UserPromptSubmit/PreToolUse/PostToolUse/Notification/Stop/SessionStart), each firing `opus-attach event <Name>` → EventSocketServer
 │
 ├── ClaudeStateStore (singleton) — live per-session PaneActivity, built from the hook bus
@@ -35,11 +36,11 @@ Opus.app
 │     └── owns pane↔session binding (paneSessionIds/pendingSpawns) — see its own doc comments for the direct-bind vs spawn-order-FIFO split
 │
 ├── SessionIndex / SessionSwitcherPanel — Cmd+K conversation switcher
-│     ├── SessionIndex scans ~/.claude/projects/*/*.jsonl (bounded 16KB head read per file) across every project on this machine
+│     ├── SessionIndex scans ~/.claude/projects/*/*.jsonl (bounded 16KB head read per file, plus a 40KB tail read to catch a fresher ai-title record) across every project on this machine
 │     └── SessionSwitcherPanel fuzzy-filters by title/cwd, resumes the pick into the shared session (tab 0)
 │
 ├── ContextMeter / ContextMeterBar — context-window usage bar above the tab bar
-│     └── parses the shared session's live transcript tail for `message.usage` token counts, refreshed on a timer
+│     └── parses the ACTIVE tab's session's live transcript tail for `message.usage` token counts, refreshed on a timer
 │
 ├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text
 │     └── TerminalContainerView resolves the result against cwd and opens it via `OpusPreferences.editorCommand`
@@ -64,13 +65,13 @@ Opus.app
       ├── posts opusPreferencesDidChange on every write
       ├── permissionMode → shield's right-click `--permission-mode` preset (default/plan/acceptEdits)
       ├── editorCommand → Cmd+click target for PathDetector hits (default `code -g {target}`)
-      └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload
+      └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload, including `--session-id <id>` (fresh spawns) and `--settings <opus-hooks.json path>` (every `.claude`-preset spawn)
 
-Tests/OpusTests/          — 165 unit tests
+Tests/OpusTests/          — 170 unit tests
       ├── spawn-command flag assembly
       ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
       ├── MRU recent-projects list
-      └── cockpit: ClaudeStateStore transitions/binding, SessionIndex parsing, ContextMeter parsing, PathDetector token-scan, HookSettingsWriter, EventSocketServer parsing
+      └── cockpit: ClaudeStateStore transitions/binding, SessionIndex parsing, ContextMeter parsing, PathDetector token-scan, HookSettingsWriter, EventSocketServer parsing, prompt-marker-selection predicate
 ```
 
 ## Hosting model
@@ -109,10 +110,17 @@ opus-attach clients) never detach.
 the `opus.skipPermissions` default. The shield button in
 `TerminalContainerView` flips it via `toggleSkipPermissions()`, which restarts
 with `--resume <session-id>` so the same conversation reopens with the new
-permission mode. `ClaudeSessionLocator` resolves the ID: encode the cwd into
-Claude Code's project-dir name (every non-alphanumeric → `-`; older
-dot-keeping encoding as fallback), then take the most recently modified
-UUID-named `*.jsonl` in `~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
+permission mode. The id comes primarily from `ClaudeBackend.currentSessionId`
+(Lot 3, Task 6): Opus mints it itself as `--session-id` on a fresh spawn, or
+records it as-is for an explicit `.resume(sessionId:)` — either way Opus
+already KNOWS the id, since it's either the one it chose or the one it was
+told, no disk lookup needed. `ClaudeSessionLocator` only runs as a fallback,
+for the single case where Opus doesn't know the id up front: a
+`--continue`-launched session (`currentSessionId == nil`, since claude, not
+Opus, picked the id). There it encodes the cwd into Claude Code's
+project-dir name (every non-alphanumeric → `-`; older dot-keeping encoding
+as fallback), then takes the most recently modified UUID-named `*.jsonl` in
+`~/.claude/projects/<encoded>/`. No session found → `--continue` fallback →
 worst case the existing "Session ended" overlay.
 
 Right-clicking the shield opens a menu of `OpusPermissionMode` presets (`--permission-mode` values, e.g. `plan`/`acceptEdits`); the shield's own `--dangerously-skip-permissions` toggle always wins when both are active.

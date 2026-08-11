@@ -124,7 +124,7 @@ final class SessionSwitcherPanel: NSObject {
         let field = NSSearchField(frame: NSRect(x: 14, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
         field.placeholderString = "Search conversations…"
-        field.toolTip = "Resumes in the shared session (tab 0) — a private tab, if active, is left untouched."
+        field.toolTip = "Resumes in the shared session (tab 0); a private tab, if active, is left untouched."
         field.font = NSFont.systemFont(ofSize: 14)
         blur.addSubview(field)
         searchField = field
