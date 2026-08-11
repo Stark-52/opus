@@ -1,12 +1,21 @@
 // FindBarView — thin search bar pinned to the top of the container.
-// Enter = next, Shift+Enter = previous, Esc = close (and clearSearch).
+// Enter = search UP through scrollback, Shift+Enter = search down,
+// Esc = close (and clearSearch).
+//
+// Fix 5b (v1.4.1): from a bottom viewport (the terminal's normal resting
+// position), a plain "search forward" default covers almost nothing — there
+// is rarely anything BELOW the current position. Terminal-app convention
+// (and what a user typing a search term from the bottom actually wants) is
+// Enter = search backward/up through history; the callback names below were
+// renamed from onNext/onPrevious to onSearchUp/onSearchDown to say that
+// directly instead of via SwiftTerm's forward/backward-in-buffer framing.
 
 import AppKit
 
 final class FindBarView: NSView, NSSearchFieldDelegate {
     let field = NSSearchField()
-    var onNext: ((String) -> Void)?
-    var onPrevious: ((String) -> Void)?
+    var onSearchUp: ((String) -> Void)?
+    var onSearchDown: ((String) -> Void)?
     var onClose: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
@@ -15,7 +24,9 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
         layer?.cornerRadius = 8
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.placeholderString = "Find in scrollback"
+        // Fix 5b (v1.4.1): tell the user the direction up front instead of
+        // leaving Enter's behavior to guesswork.
+        field.placeholderString = "Find (Enter searches up)"
         field.delegate = self
         field.sendsSearchStringImmediately = false
         addSubview(field)
@@ -31,9 +42,9 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         switch sel {
         case #selector(NSResponder.insertNewline(_:)):
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
-                onPrevious?(field.stringValue)
+                onSearchDown?(field.stringValue)
             } else {
-                onNext?(field.stringValue)
+                onSearchUp?(field.stringValue)
             }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
