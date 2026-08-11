@@ -78,10 +78,13 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             }
             // Font zoom by physical key: = (24), - (27), 0 (29). AZERTY-safe.
             // Left intercepted even while the find bar has focus — harmless.
+            // Prompt jump by arrow key: ↑ (126), ↓ (125). Layout-independent keyCode.
             switch ev.keyCode {
             case 24: OpusPreferences.shared.bumpFontSize(+1); return nil
             case 27: OpusPreferences.shared.bumpFontSize(-1); return nil
             case 29: OpusPreferences.shared.resetFontSize(); return nil
+            case 126: container.jumpToPreviousPrompt(); return nil
+            case 125: container.jumpToNextPrompt(); return nil
             default: break
             }
             // Tab-switch digits: pass through while the find bar has focus —
