@@ -80,4 +80,14 @@ enum PathDetector {
         let joined = (cwd as NSString).appendingPathComponent(expanded)
         return (joined as NSString).standardizingPath
     }
+
+    /// A path candidate with sentence-ending dots removed, nil when unchanged.
+    /// Trailing dots are part of the token charset (dotfiles, relative paths),
+    /// so the caller retries with this variant when the primary path does not
+    /// exist on disk.
+    static func trailingDotStripped(_ path: String) -> String? {
+        var s = path
+        while s.hasSuffix(".") { s.removeLast() }
+        return s == path || s.isEmpty ? nil : s
+    }
 }
