@@ -46,6 +46,19 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     private var isRestarting = false
     private var pendingResumeMode: OpusResumeMode = .none
 
+    /// The session id of the CURRENTLY spawned claude process, when Opus
+    /// knows it up front (Lot 3, Task 6). Three cases, decided in `spawn`:
+    ///   - fresh spawn (`resumeMode == .none`): Opus mints a UUID, passes it
+    ///     as `--session-id`, and stores it here — we KNOW the session
+    ///     because we picked its id.
+    ///   - `.resume(sessionId:)`: the caller (restart(resume:), the Cmd+K
+    ///     session switcher) already knows the exact id — store it as-is.
+    ///   - `.continueMostRecent` (`claude --continue`): the id is claude's
+    ///     choice, not ours — unknown until the SessionStart hook reports
+    ///     it. `nil` here means exactly that; `ClaudeStateStore`'s
+    ///     spawn-order FIFO is the fallback for this one case.
+    private(set) var currentSessionId: String?
+
     /// Spawn claude (idempotent — does nothing if already running).
     func startIfNeeded() {
         guard process == nil else { return }
@@ -66,13 +79,24 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
 
     /// Kill the current claude and spawn a fresh one. `resume: true` reopens
     /// the same conversation (dangerous-mode toggle); `false` starts clean
-    /// (menu Restart / project switch). Derives the mode from the shared
-    /// session's own most-recent transcript, then delegates to
-    /// `restart(mode:)`.
+    /// (menu Restart / project switch). `currentSessionId` (Lot 3, Task 6) is
+    /// the exact id of the conversation this backend is running RIGHT NOW —
+    /// when we know it (every case except a `.continueMostRecent` launch), it
+    /// is strictly better than re-deriving one from disk: `ClaudeSessionLocator`
+    /// picks the most-recently-MODIFIED transcript in the cwd, which with two
+    /// or more sessions written close together (or simply an idle one that
+    /// hasn't had its mtime bumped in a while) can silently resume the WRONG
+    /// conversation. `currentSessionId` can't be wrong — it's literally what
+    /// this process was told to be. The locator is kept purely as the
+    /// fallback for the one case where we don't know it: after a
+    /// `--continue`-launched session (`currentSessionId == nil` — claude, not
+    /// Opus, picked that id), locator lookup is the best remaining option.
     func restart(resume: Bool) {
         var mode: OpusResumeMode = .none
         if resume {
-            if let id = ClaudeSessionLocator.mostRecentSessionId(
+            if let id = currentSessionId {
+                mode = .resume(sessionId: id)
+            } else if let id = ClaudeSessionLocator.mostRecentSessionId(
                 for: OpusPreferences.shared.workingDirectory) {
                 mode = .resume(sessionId: id)
             } else {
@@ -114,6 +138,17 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         guard process == nil else { return }
         let p = LocalProcess(delegate: self)
         process = p
+        // Decide currentSessionId BEFORE building the command — resolvedSpawnCommand
+        // needs it for the .none case, and every other spawn effect (the
+        // claudeBackendDidSpawn notification below) reads it after this point.
+        switch resumeMode {
+        case .none:
+            currentSessionId = UUID().uuidString.lowercased()
+        case .resume(let id):
+            currentSessionId = id
+        case .continueMostRecent:
+            currentSessionId = nil
+        }
         // -l -i runs a login+interactive shell like a real terminal would:
         // /etc/zprofile (path_helper) restores the system PATH baseline and
         // .zshrc adds ~/.local/bin where claude lives.
@@ -130,7 +165,8 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         } else {
             cmd = OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: skipPermissionsActive,
-                resumeMode: resumeMode
+                resumeMode: resumeMode,
+                sessionId: currentSessionId
             )
         }
         p.startProcess(
@@ -147,6 +183,10 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
             NSLog("ClaudeBackend: spawn failed (forkpty returned no pid)")
             process = nil
             isRestarting = false
+            // No process ever actually ran with the id we just minted/knew —
+            // clear it so a later restart(resume:) doesn't "resume" a
+            // conversation that never started.
+            currentSessionId = nil
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .claudeBackendDidTerminate,
@@ -157,7 +197,14 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
             return
         }
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .claudeBackendDidSpawn, object: nil)
+            // Cockpit (Lot 3, Task 6): carry the known session id (nil after a
+            // --continue launch) so the shared-pane container(s) can bind
+            // tab 0's pane token directly instead of waiting on the
+            // spawn-order FIFO heuristic — see ClaudeStateStore.bindSession
+            // and TerminalContainerView.sharedBackendDidSpawn.
+            var userInfo: [String: Any] = [:]
+            if let id = self.currentSessionId { userInfo["sessionId"] = id }
+            NotificationCenter.default.post(name: .claudeBackendDidSpawn, object: nil, userInfo: userInfo)
         }
     }
 

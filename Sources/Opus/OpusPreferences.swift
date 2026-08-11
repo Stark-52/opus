@@ -299,13 +299,26 @@ final class OpusPreferences {
     /// Launch flags (skip-permissions, resume) only apply to the .claude
     /// preset: .shell doesn't run claude and .custom runs the user's verbatim
     /// command (including its empty-string claude fallback).
+    ///
+    /// `sessionId` (Lot 3, Task 6): the UUID Opus itself minted for this spawn
+    /// (see `ClaudeBackend.spawn`/`FilteredClaudeTab.sessionId`), passed
+    /// straight through as `--session-id` so Opus KNOWS the exact session a
+    /// pane belongs to instead of inferring it from a SessionStart hook race
+    /// (ClaudeStateStore's spawn-order heuristic, now a fallback — see its
+    /// doc comment). Only wired up when `resumeMode == .none`: `--resume`
+    /// and `--continue` reattach an EXISTING transcript (its id is already
+    /// fixed by claude, not by us) and are mutually exclusive with
+    /// `--session-id` by construction — resume/continue always win, so
+    /// `sessionId` is silently ignored whenever `resumeMode` isn't `.none`,
+    /// same as any other resumeMode combination test below exercises.
     static func composeSpawnCommand(
         preset: OpusInitialCommandPreset,
         customCommand: String,
         workingDirectory: String,
         skipPermissions: Bool,
         resumeMode: OpusResumeMode,
-        permissionMode: OpusPermissionMode = .standard
+        permissionMode: OpusPermissionMode = .standard,
+        sessionId: String? = nil
     ) -> String {
         // zsh double quotes still expand $VAR, $(...), backticks, and honor
         // backslashes. Escape all four; backslash FIRST or it re-escapes the
@@ -324,7 +337,10 @@ final class OpusPreferences {
                 cmd += " --permission-mode \(permissionMode.rawValue)"
             }
             switch resumeMode {
-            case .none: break
+            case .none:
+                // sessionId is ours (UUID().uuidString.lowercased() — see
+                // ClaudeBackend.spawn/FilteredClaudeTab), never shell-unsafe.
+                if let sessionId { cmd += " --session-id \(sessionId)" }
             case .continueMostRecent: cmd += " --continue"
             case .resume(let id): cmd += " --resume \(id)"  // IDs are UUID filenames from ClaudeSessionLocator — no shell metachars
             }
@@ -346,7 +362,10 @@ final class OpusPreferences {
     /// state explicitly and always `resumeMode: .none` — they inherit the
     /// current dangerous-mode/permission-mode flags but never resume, since
     /// `--continue`/`--resume` there would attach the same transcript tab 0
-    /// is already writing (two claudes on one session file).
+    /// is already writing (two claudes on one session file). Because they're
+    /// always `resumeMode: .none`, private tabs ALWAYS pass their own minted
+    /// `sessionId` (Lot 3, Task 6) too — `--session-id` always applies to
+    /// them, never conditionally.
     ///
     /// Every spawn path (ClaudeBackend.spawn, FilteredClaudeTab.start) goes
     /// through here, so this is also where the hooks settings file gets its
@@ -360,7 +379,8 @@ final class OpusPreferences {
     /// filesystem effects there, only here.
     func resolvedSpawnCommand(
         skipPermissions: Bool = false,
-        resumeMode: OpusResumeMode = .none
+        resumeMode: OpusResumeMode = .none,
+        sessionId: String? = nil
     ) -> String {
         if initialCommandPreset == .claude {
             HookSettingsWriter.ensureSettingsFile()
@@ -371,7 +391,8 @@ final class OpusPreferences {
             workingDirectory: workingDirectory,
             skipPermissions: skipPermissions,
             resumeMode: resumeMode,
-            permissionMode: permissionMode
+            permissionMode: permissionMode,
+            sessionId: sessionId
         )
     }
 

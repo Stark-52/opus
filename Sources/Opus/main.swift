@@ -117,6 +117,14 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     weak var container: TerminalContainerView?
     var title: String = "Claude"
 
+    /// This pane's session id (Lot 3, Task 6) — minted fresh per PROCESS, not
+    /// per pane: the initializer mints the FIRST one, and `restart()` mints a
+    /// new one before every respawn (including the `restartFresh()` path,
+    /// which routes through `restart()` via `processTerminated`) since a
+    /// fresh conversation needs a fresh id. Private tabs never resume (see
+    /// `start()`), so this id always gets passed through as `--session-id`.
+    private(set) var sessionId = UUID().uuidString.lowercased()
+
     init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) {
         self.terminal = TerminalView(frame: frame)
         self.panel = panel
@@ -129,12 +137,15 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     func start() {
         // Private tabs inherit the live dangerous-mode state but NEVER resume:
         // --continue here would attach the same transcript as tab 0 (two
-        // claudes writing one session file).
+        // claudes writing one session file). Because resumeMode is always
+        // .none, sessionId always applies — see resolvedSpawnCommand's doc
+        // comment.
         process.startProcess(
             executable: "/bin/zsh",
             args: ["-l", "-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: ClaudeBackend.shared.skipPermissionsActive,
-                resumeMode: .none)],
+                resumeMode: .none,
+                sessionId: sessionId)],
             environment: SpawnEnvironment.make(),
             execName: nil
         )
@@ -154,9 +165,13 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
 
     /// Recreate the LocalProcess and respawn the configured command. Used by the
     /// dead-pane overlay's "Start new session" button after the previous process
-    /// exited and we left the pane visible instead of closing it.
+    /// exited and we left the pane visible instead of closing it, AND by
+    /// `restartFresh()` below (via `processTerminated`'s isRestarting branch) —
+    /// both are a genuinely NEW conversation for this pane, so a fresh
+    /// sessionId is minted here before `start()` passes it through.
     func restart() {
         self.process = LocalProcess(delegate: self)
+        sessionId = UUID().uuidString.lowercased()
         start()
     }
 

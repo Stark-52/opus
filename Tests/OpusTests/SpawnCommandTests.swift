@@ -163,4 +163,52 @@ final class SpawnCommandTests: XCTestCase {
         )
         XCTAssertFalse(cmd.contains("--settings"))
     }
+
+    // MARK: --session-id (Lot 3, Task 6) — exclusive with --resume/--continue,
+    // resume/continue always win. Full id+resumeMode matrix.
+
+    func testSessionIdFlagWhenResumeModeNoneAndIdProvided() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none,
+            sessionId: "11111111-1111-1111-1111-111111111111"
+        )
+        XCTAssertEqual(
+            cmd,
+            prefix + "command claude --session-id 11111111-1111-1111-1111-111111111111" + settingsFlag
+        )
+    }
+
+    func testSessionIdOmittedWhenResumeModeIsResumeEvenIfProvided() {
+        // resume wins: --resume and --session-id are mutually exclusive, and
+        // a caller passing both (shouldn't happen, but the function must
+        // still be safe) never emits both flags.
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .resume(sessionId: "abc-123"),
+            sessionId: "should-never-appear"
+        )
+        XCTAssertEqual(cmd, prefix + "command claude --resume abc-123" + settingsFlag)
+        XCTAssertFalse(cmd.contains("--session-id"))
+    }
+
+    func testSessionIdOmittedWhenResumeModeIsContinueEvenIfProvided() {
+        // continue wins, same mutual-exclusivity guarantee as resume above.
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .continueMostRecent,
+            sessionId: "should-never-appear"
+        )
+        XCTAssertEqual(cmd, prefix + "command claude --continue" + settingsFlag)
+        XCTAssertFalse(cmd.contains("--session-id"))
+    }
+
+    func testNoSessionIdFlagWhenNilAndResumeModeNone() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, sessionId: nil
+        )
+        XCTAssertEqual(cmd, prefix + "command claude" + settingsFlag)
+        XCTAssertFalse(cmd.contains("--session-id"))
+    }
 }
