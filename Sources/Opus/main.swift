@@ -530,6 +530,16 @@ final class QuickTerminalPanel: NSObject {
         blur.addSubview(cont)
         self.container = cont
 
+        // Fix 3 (v1.4.1): openBtn/pinBtn were added to `blur` BEFORE `cont`
+        // above, so the terminal (which fills the container down to y=14)
+        // drew OVER them below y=14, making the pin button (top constant 6,
+        // height 22 → bottom edge at y=28) mostly hidden behind live
+        // terminal content. Re-adding both here — same views, same
+        // constraints, just moved to the top of the z-order — fixes it with
+        // no behavior change.
+        blur.addSubview(openBtn, positioned: .above, relativeTo: cont)
+        blur.addSubview(pinBtn, positioned: .above, relativeTo: cont)
+
         // Cmd+T / Cmd+W / Cmd+1..9 intercept for tab management.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
             self?.handleKeyEvent(ev) ?? ev
@@ -731,7 +741,7 @@ final class QuickTerminalPanel: NSObject {
                 case "v": container.pasteFromPasteboard(); return nil
                 case ",": SettingsWindowController.shared.show(); return nil
                 case "f": container.toggleFindBar(); return nil
-                case "g": container.findNextInActivePane(); return nil
+                case "g": container.searchUpInActivePane(); return nil   // Fix 5b (v1.4.1): Cmd+G repeats UP
                 case "k": SessionSwitcherPanel.shared.toggle(); return nil
                 default: break
                 }
@@ -769,10 +779,11 @@ final class QuickTerminalPanel: NSObject {
             container.splitActivePane(vertical: false)
             return nil
         }
-        // Cmd+Shift+G — find previous.
+        // Cmd+Shift+G — repeat the find-bar search DOWNWARD (Fix 5b,
+        // v1.4.1: Cmd+G alone now repeats UP — see searchUpInActivePane).
         if mods == [.command, .shift],
            ev.charactersIgnoringModifiers?.lowercased() == "g" {
-            container.findPreviousInActivePane(); return nil
+            container.searchDownInActivePane(); return nil
         }
         // Cmd+Shift+I — toggle broadcast input to every pane of the active
         // tab (Lot 3, Task 7). "I" for Input.

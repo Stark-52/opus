@@ -17,6 +17,41 @@ protocol TerminalContainerHost: AnyObject {
     func openInTerminalRequested()
 }
 
+/// 8pt circular activity indicator mirroring the ACTIVE tab's session state,
+/// pinned in the container's top-right button row, LEFT of the shield button
+/// (Fix 1, v1.4.1 — see TerminalContainerView.buildSubviews' installation
+/// site and refreshTabBarStates for how it's kept current). Exists because
+/// OpusTabBar collapses to 0pt height with a single tab — the app's PRIMARY
+/// usage mode — leaving its own per-tab dots nowhere to render.
+private final class PaneActivityDot: NSView {
+    var activity: PaneActivity = .idle { didSet { refresh() } }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        refresh()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Same color rule as OpusTabBar.draw's per-tab dots: amber while
+    /// working, red waiting on input, green once a turn/agent run finished,
+    /// hidden (no fill) at idle.
+    private func refresh() {
+        let color: NSColor?
+        let tip: String?
+        switch activity {
+        case .working:    color = .systemOrange; tip = "Claude is working"
+        case .needsInput: color = .systemRed;     tip = "Claude needs input"
+        case .done:       color = .systemGreen;   tip = "Claude finished"
+        case .idle:       color = nil;            tip = nil
+        }
+        layer?.backgroundColor = color?.cgColor
+        isHidden = color == nil
+        toolTip = tip
+    }
+}
+
 final class TerminalContainerView: NSView, TerminalViewDelegate {
     weak var host: TerminalContainerHost?
 
@@ -25,6 +60,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
     private var shieldButton: NSButton?
+    /// Fix 1 (v1.4.1) — see the class doc comment on PaneActivityDot above.
+    private var activityDot: PaneActivityDot!
+    /// Fix 2 (v1.4.1) — see buildSubviews' doc comment at the install site.
+    private var contextMeterBottomConstraint: NSLayoutConstraint!
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
@@ -109,6 +148,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         wantsLayer = true
         buildSubviews()
         bootstrapFirstTab()
+        // Fix round 2 (v1.4.1): sync the tab bar / context meter / terminal-
+        // area constants to the real (single-tab) state right away.
+        // updateTabIndicator() is otherwise only ever invoked by
+        // switchTab(to:), which never runs for a session that starts and
+        // stays on tab 0 — the app's PRIMARY usage mode — so without this
+        // call the buildSubviews() defaults below would be the ONLY values
+        // that ever apply for that entire session.
+        updateTabIndicator()
         // Accept files dragged from Finder → insert their full path (like Terminal.app).
         registerForDraggedTypes([.fileURL])
         NotificationCenter.default.addObserver(
@@ -167,7 +214,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let area = NSView()
         area.translatesAutoresizingMaskIntoConstraints = false
         addSubview(area)
-        let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor)
+        // Fix round 2 (v1.4.1): initial constant matches updateTabIndicator's
+        // "hidden" branch (-(14 + 4)) instead of 0 — see the doc comment on
+        // meterBottom below for why the default (single-tab) state has to be
+        // right from construction, not just after the first tab change.
+        let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
         NSLayoutConstraint.activate([
             area.topAnchor.constraint(equalTo: topAnchor),
             area.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -193,23 +244,53 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBar = bar
         tabBarHeightConstraint = heightC
 
-        // Context meter — pinned directly above the tab bar (tracks its
-        // topAnchor, so it sits in the right place whether the bar is
-        // showing at 26pt or collapsed to 0pt with a single tab). Always
-        // present in the view hierarchy (never isHidden) — visibility is
-        // alpha-only, toggled by refreshContextMeter's read result, so a
-        // fade-in/out never needs a relayout pass.
+        // Context meter (Fix round 2, v1.4.1) — OWN bottom constraint to the
+        // container's bottomAnchor, switched in updateTabIndicator alongside
+        // tabBarHeightConstraint/terminalAreaBottomConstraint. The ORIGINAL
+        // `meter.bottomAnchor == bar.topAnchor` tracked the bar automatically,
+        // which sounds safer than a manually-toggled constant, but the bar's
+        // OWN bottomAnchor sits at container-bottom+8 regardless of its
+        // height — so with a single tab (bar height 0, the app's PRIMARY
+        // usage) the meter's 2pt strip rendered at that same +8 point,
+        // outside/below the visible chrome instead of hugging the bottom
+        // edge. Initial constant here already matches the "hidden" branch
+        // (-4) rather than deferring to updateTabIndicator(), because that
+        // function is only ever invoked by switchTab(to:) — a session that
+        // starts and stays on tab 0 would otherwise never correct it (see
+        // init's own updateTabIndicator() call, added for the same reason).
+        // Always present in the view hierarchy (never isHidden) — visibility
+        // is alpha-only, toggled by refreshContextMeter's read result, so a
+        // fade-in/out never needs a relayout pass. Added AFTER terminalArea
+        // above (z-above it already — no reorder needed).
         let meter = ContextMeterBar(frame: .zero)
         meter.translatesAutoresizingMaskIntoConstraints = false
         meter.alphaValue = 0
         addSubview(meter)
+        let meterBottom = meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
         NSLayoutConstraint.activate([
             meter.leadingAnchor.constraint(equalTo: leadingAnchor),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor),
-            meter.bottomAnchor.constraint(equalTo: bar.topAnchor),
+            meterBottom,
             meter.heightAnchor.constraint(equalToConstant: 2)
         ])
         contextMeterBar = meter
+        contextMeterBottomConstraint = meterBottom
+
+        // Activity dot (Fix 1, v1.4.1) — top-right button row, left of the
+        // shield button (installed later in init, only when useSharedTab0 —
+        // see installShieldButton; this dot is unconditional so it also
+        // works for a hypothetical non-shared container). Mirrors the
+        // ACTIVE tab's state regardless of tab count — see refreshTabBarStates.
+        let dot = PaneActivityDot(frame: .zero)
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
+        NSLayoutConstraint.activate([
+            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -56),
+            dot.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8)
+        ])
+        activityDot = dot
 
         layoutSubtreeIfNeeded()
     }
@@ -595,15 +676,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
         let bar = FindBarView(frame: .zero)
         bar.translatesAutoresizingMaskIntoConstraints = false
-        bar.onNext = { [weak self] term in
-            guard !term.isEmpty else { return }
-            self?.lastSearchTerm = term
-            _ = self?.activeTerminal?.findNext(term)
-        }
-        bar.onPrevious = { [weak self] term in
+        // Fix 5b (v1.4.1): Enter (onSearchUp) → SwiftTerm's findPrevious
+        // (backward through the buffer, toward older/earlier lines — "up").
+        // Shift+Enter (onSearchDown) → findNext (toward the bottom).
+        bar.onSearchUp = { [weak self] term in
             guard !term.isEmpty else { return }
             self?.lastSearchTerm = term
             _ = self?.activeTerminal?.findPrevious(term)
+        }
+        bar.onSearchDown = { [weak self] term in
+            guard !term.isEmpty else { return }
+            self?.lastSearchTerm = term
+            _ = self?.activeTerminal?.findNext(term)
         }
         bar.onClose = { [weak self] in self?.toggleFindBar() }
         addSubview(bar)
@@ -617,8 +701,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         findBar = bar
     }
 
-    func findNextInActivePane()     { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
-    func findPreviousInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
+    /// Repeat the last find-bar search UPWARD (older/earlier lines) —
+    /// Cmd+G. Fix 5b (v1.4.1) rename from findNextInActivePane: the method
+    /// now calls SwiftTerm's findPrevious, so the old "next" name would
+    /// have been actively misleading about which direction it searches.
+    func searchUpInActivePane()   { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
+    /// Repeat the last find-bar search DOWNWARD (toward the bottom) —
+    /// Cmd+Shift+G. Renamed from findPreviousInActivePane for the same
+    /// reason as searchUpInActivePane above.
+    func searchDownInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
 
     /// Claude Code renders its prompt line with the "❯" glyph — jumping
     /// between prompts is a search in disguise (SwiftTerm's public findNext/
@@ -1089,7 +1180,22 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBar.isHidden = !showBar
         tabBar.alphaValue = showBar ? 1 : 0
         tabBarHeightConstraint.constant = showBar ? 26 : 0
-        terminalAreaBottomConstraint.constant = showBar ? -(14 + 26 + 4) : -14
+        // Fix round 2 (v1.4.1): +4 more than before in both branches — room
+        // reserved for the context meter's own strip (see
+        // contextMeterBottomConstraint below) so the terminal never draws
+        // over it. Broken into named CGFloat constants — the compiler
+        // choked ("unable to type-check in reasonable time") on the
+        // arithmetic-inside-ternary form.
+        let terminalAreaBottomShown: CGFloat = -48   // -(14 + 26 + 4 + 4)
+        let terminalAreaBottomHidden: CGFloat = -18  // -(14 + 4)
+        terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
+        // Context meter (Fix round 2, v1.4.1): own constant, switched in
+        // lockstep with the two above — see buildSubviews' doc comment on
+        // contextMeterBottomConstraint for why this can't just track
+        // tabBar.topAnchor the way it used to.
+        let contextMeterBottomShown: CGFloat = -36   // -(8 + 26 + 2)
+        let contextMeterBottomHidden: CGFloat = -4
+        contextMeterBottomConstraint.constant = showBar ? contextMeterBottomShown : contextMeterBottomHidden
         tabBar.needsDisplay = true
         layoutSubtreeIfNeeded()
     }
@@ -1143,6 +1249,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             guard let sessionId = sessionId(for: panes[idx]) else { return .idle }
             return ClaudeStateStore.shared.state(forSessionId: sessionId)
         }
+        // Fix 1 (v1.4.1): mirror the ACTIVE tab's state into the always-
+        // visible status dot — same refresh path as tabBar.states itself, so
+        // every existing call site that keeps the tab-bar dots current
+        // (paneActivityChanged, closePane, markActiveTabSeen,
+        // updateTabIndicator) keeps this one current for free too.
+        activityDot.activity = tabBar.states.indices.contains(activeTabIndex) ? tabBar.states[activeTabIndex] : .idle
     }
 
     @objc private func paneActivityChanged() {

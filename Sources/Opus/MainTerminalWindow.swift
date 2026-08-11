@@ -71,7 +71,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
                 case "v": container.pasteFromPasteboard(); return nil
                 case ",": SettingsWindowController.shared.show(); return nil
                 case "f": container.toggleFindBar(); return nil
-                case "g": container.findNextInActivePane(); return nil
+                case "g": container.searchUpInActivePane(); return nil   // Fix 5b (v1.4.1): Cmd+G repeats UP
                 case "k": SessionSwitcherPanel.shared.toggle(); return nil
                 default: break
                 }
@@ -102,8 +102,10 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "d" {
             container.splitActivePane(vertical: false); return nil
         }
+        // Cmd+Shift+G — repeat the find-bar search DOWNWARD (Fix 5b,
+        // v1.4.1: Cmd+G alone now repeats UP — see searchUpInActivePane).
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "g" {
-            container.findPreviousInActivePane(); return nil
+            container.searchDownInActivePane(); return nil
         }
         // Cmd+Shift+I — toggle broadcast input to every pane of the active
         // tab (Lot 3, Task 7). "I" for Input.

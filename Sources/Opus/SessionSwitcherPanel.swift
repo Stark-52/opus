@@ -44,7 +44,10 @@ private final class SessionCellView: NSTableCellView {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 11)
-        subtitleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.5)
+        // Fix 4 (v1.4.1): explicit cream at 60% alpha (was 50%) — see the
+        // panel-level doc comment on why every label here uses an explicit
+        // color instead of an adaptive one.
+        subtitleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.6)
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -110,6 +113,12 @@ final class SessionSwitcherPanel: NSObject {
         panel.animationBehavior = .none
         panel.tabbingMode = .disallowed
         panel.title = ""
+        // Fix 4 (v1.4.1): on a LIGHT desktop, the vibrancy blur below tinted
+        // itself light too, and every label in this panel is a light cream
+        // color — unreadable. Force dark regardless of the system appearance
+        // so the palette is legible no matter what's behind it or what mode
+        // macOS is in.
+        panel.appearance = NSAppearance(named: .darkAqua)
 
         let blur = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         blur.material = .hudWindow
@@ -121,11 +130,27 @@ final class SessionSwitcherPanel: NSObject {
         blur.autoresizingMask = [.width, .height]
         panel.contentView = blur
 
+        // Fix 4 (v1.4.1): an OPAQUE dark layer on top of the vibrancy blur.
+        // `darkAqua` above fixes the material's own tint, but a HUD-material
+        // NSVisualEffectView is still translucent — enough of a light desktop
+        // could still bleed through and wash out the cream text. This solid
+        // fill (97% opaque) removes that dependency entirely.
+        let opaqueBG = NSView(frame: blur.bounds)
+        opaqueBG.wantsLayer = true
+        opaqueBG.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.97).cgColor
+        opaqueBG.layer?.cornerRadius = 14
+        opaqueBG.layer?.masksToBounds = true
+        opaqueBG.autoresizingMask = [.width, .height]
+        blur.addSubview(opaqueBG)
+
         let field = NSSearchField(frame: NSRect(x: 14, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
         field.placeholderString = "Search conversations…"
         field.toolTip = "Resumes in the shared session (tab 0); a private tab, if active, is left untouched."
         field.font = NSFont.systemFont(ofSize: 14)
+        // Fix 4 (v1.4.1): explicit cream, not the adaptive control-text
+        // color — same rationale as titleLabel/subtitleLabel above.
+        field.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.95)
         blur.addSubview(field)
         searchField = field
 
