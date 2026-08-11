@@ -97,6 +97,84 @@ final class SessionIndexTests: XCTestCase {
         XCTAssertEqual(s?.title, "Fix login regression")
     }
 
+    func testTruncatedTrailingLine_headCutoffMidRecord_doesNotCrashOrMisparse() {
+        // Simulates the real 16KB cutoff landing mid-record: two well-formed
+        // lines, then a trailing fragment with no closing brace and no
+        // terminating newline (exactly what handle.readData(ofLength:) hands
+        // parseSummary when the budget runs out mid-line).
+        var head = data([
+            #"{"type":"attachment","cwd":"/Users/dev/proj","gitBranch":"main"}"#,
+            #"{"type":"user","isMeta":false,"message":{"role":"user","content":"first well-formed prompt"}}"#,
+        ])
+        head.append(Data(#"\#n{"type":"user","isMeta":false,"message":{"role":"user","content":"trunc"#.utf8))
+        let s = SessionIndex.parseSummary(jsonlHead: head, sessionId: sid, mtime: now)
+        XCTAssertEqual(s?.cwd, "/Users/dev/proj")
+        XCTAssertEqual(s?.gitBranch, "main")
+        XCTAssertEqual(s?.title, "first well-formed prompt")
+    }
+
+    func testUserRecordWithNoIsMetaKeyAtAll_treatedAsRealUserMessage() {
+        // The common real shape: ordinary user records simply omit "isMeta"
+        // entirely (only the synthetic caveat wrapper sets it to true) — must
+        // NOT be treated as meta just because the key is absent.
+        let head = data([
+            #"{"type":"attachment","cwd":"/Users/dev/proj"}"#,
+            #"{"type":"user","message":{"role":"user","content":"real prompt, no isMeta key at all"}}"#,
+        ])
+        let s = SessionIndex.parseSummary(jsonlHead: head, sessionId: sid, mtime: now)
+        XCTAssertEqual(s?.title, "real prompt, no isMeta key at all")
+    }
+
+    // MARK: latestAiTitle
+
+    func testLatestAiTitle_multipleRecords_lastWins() {
+        let tail = data([
+            "garbage-partial-line-not-json",   // simulated truncated seek-boundary fragment
+            #"{"type":"ai-title","aiTitle":"First Title"}"#,
+            #"{"type":"assistant","text":"unrelated"}"#,
+            #"{"type":"ai-title","aiTitle":"Second Title"}"#,
+        ])
+        XCTAssertEqual(SessionIndex.latestAiTitle(jsonlTail: tail), "Second Title")
+    }
+
+    func testLatestAiTitle_firstLineDroppedUnconditionally_evenWhenWellFormed() {
+        // If the seek offset happens to land exactly on a newline, the
+        // "first line" could itself be a perfectly valid, complete ai-title
+        // record. It must still be dropped unconditionally (the tail parser
+        // can't distinguish a lucky boundary from a truncated one) — so with
+        // no OTHER ai-title record present, the correct result is nil, even
+        // though a naive parse of the whole buffer would have found one.
+        let tail = data([
+            #"{"type":"ai-title","aiTitle":"Should Never Win"}"#,
+            #"{"type":"assistant","text":"unrelated, no ai-title here"}"#,
+        ])
+        XCTAssertNil(SessionIndex.latestAiTitle(jsonlTail: tail))
+    }
+
+    func testLatestAiTitle_noAiTitleRecordsPresent_returnsNil() {
+        let tail = data([
+            "garbage-partial-first-line",
+            #"{"type":"assistant","text":"hello"}"#,
+            #"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+        ])
+        XCTAssertNil(SessionIndex.latestAiTitle(jsonlTail: tail))
+    }
+
+    func testLatestAiTitle_noNewlineAtAllInTail_returnsNil() {
+        XCTAssertNil(SessionIndex.latestAiTitle(jsonlTail: Data("no newline anywhere in here".utf8)))
+    }
+
+    func testLatestAiTitle_truncatedTo80Chars() {
+        let long = String(repeating: "y", count: 200)
+        let tail = data([
+            "garbage-first-line",
+            #"{"type":"ai-title","aiTitle":"\#(long)"}"#,
+        ])
+        let title = SessionIndex.latestAiTitle(jsonlTail: tail)
+        XCTAssertEqual(title?.count, 80)
+        XCTAssertEqual(title, String(long.prefix(80)))
+    }
+
     // MARK: scan
 
     private var root: URL!
@@ -162,5 +240,34 @@ final class SessionIndexTests: XCTestCase {
 
     func testScan_emptyProjectsDir_returnsEmpty() {
         XCTAssertEqual(SessionIndex.scan(projectsDir: root, limit: 40), [])
+    }
+
+    func testScan_largeFile_tailReadSurfacesLateAiTitle() throws {
+        // End-to-end wiring check for the tail read added in Fix round 1:
+        // an ai-title record placed past the 16KB head budget (but inside
+        // the 40KB tail budget) must still surface as the summary's title.
+        let dir = root.appendingPathComponent("-Users-dev-bigproj")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let id = "66666666-6666-6666-6666-666666666666"
+        let f = dir.appendingPathComponent("\(id).jsonl")
+
+        var lines = [#"{"type":"attachment","cwd":"/Users/dev/bigproj","gitBranch":"main"}"#]
+        let filler = String(repeating: "z", count: 200)
+        for _ in 0..<150 {
+            lines.append(#"{"type":"assistant","text":"\#(filler)"}"#)
+        }
+        lines.append(#"{"type":"ai-title","aiTitle":"Late title from the tail"}"#)
+        let content = lines.joined(separator: "\n") + "\n"
+        try content.write(to: f, atomically: true, encoding: .utf8)
+
+        // Precondition: big enough to trigger the tail read, small enough
+        // that the whole file fits in one 40KB tail read (keeps the test's
+        // math simple/robust rather than pinning an exact byte offset).
+        XCTAssertGreaterThan(content.utf8.count, SessionIndex.headBudgetBytes)
+        XCTAssertLessThan(content.utf8.count, SessionIndex.tailBudgetBytes)
+
+        let results = SessionIndex.scan(projectsDir: root, limit: 40)
+        XCTAssertEqual(results.first?.sessionId, id)
+        XCTAssertEqual(results.first?.title, "Late title from the tail")
     }
 }

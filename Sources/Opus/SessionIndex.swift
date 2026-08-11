@@ -14,12 +14,18 @@
 //     within 16KB.
 //   - `gitBranch` rides along on the same early records.
 //   - A dedicated `{"type":"ai-title","aiTitle":"...","sessionId":"..."}`
-//     record DOES exist and IS Claude's auto-generated conversation title —
-//     but it lands late: across 2,853 occurrences sampled on this machine,
-//     the EARLIEST byte offset was 82,817 — never inside a 16KB head. The
-//     branch below is implemented and tested (a future larger budget or a
-//     short transcript could reach it) but in practice today it will not
-//     fire; the first-user-message / folder-name fallback carries the title.
+//     record DOES exist and IS Claude's auto-generated conversation title,
+//     regenerated (appended again, not rewritten in place) as the session
+//     continues — but the FIRST one lands late: across 2,853 occurrences
+//     sampled on this machine, the earliest byte offset was 82,817 — never
+//     inside a 16KB head. A plain 16KB head-only read therefore surfaces an
+//     ai-title for only ~43% of sessions (Fix round 1 measurement). What
+//     DOES work at bounded cost: reading the file's TAIL too — across the
+//     same sample, the distance from EOF back to the LAST ai-title record
+//     ranged 321B..32,917B (median ~18.8KB), so a 40KB tail (see
+//     `tailBudgetBytes`) catches 100% of them. `scan()` reads both ends;
+//     `latestAiTitle` parses the tail with last-match-wins semantics (the
+//     freshest regenerated title is the one worth showing).
 import Foundation
 
 struct SessionSummary: Equatable {
@@ -34,6 +40,14 @@ enum SessionIndex {
     /// Bytes read per transcript — enough to reach the first several records
     /// (cwd/gitBranch/first user turn) without ever reading a whole file.
     static let headBudgetBytes = 16 * 1024
+
+    /// Bytes read from the END of a transcript (only when the file is bigger
+    /// than `headBudgetBytes`) to catch a fresher ai-title record. Sized from
+    /// a real measurement, not a guess: across 2,853 ai-title occurrences on
+    /// this machine, the distance from EOF back to the LAST one per file
+    /// ranged 321B..32,917B (median ~18.8KB) — 40KB comfortably covers 100%
+    /// of the sample with headroom, at a bounded, cheap-per-file cost.
+    static let tailBudgetBytes = 40 * 1024
 
     /// Parse a session summary out of the first ~16KB of a transcript.
     /// Pure — no filesystem access. Safe on a head buffer whose last line is
@@ -95,6 +109,34 @@ enum SessionIndex {
         )
     }
 
+    /// Scan a transcript's TAIL (see `tailBudgetBytes`) for `{"type":
+    /// "ai-title","aiTitle":"..."}` records, keeping the LAST match — Claude
+    /// appends a fresh one as the session continues, so the newest is the
+    /// title worth showing. Pure — no filesystem access.
+    ///
+    /// The tail buffer starts at an arbitrary seek offset into the file, so
+    /// its first "line" is almost always a partial record cut off mid-way
+    /// through. That partial fragment is dropped unconditionally (bytes up
+    /// to and including the first 0x0A) before line-splitting, rather than
+    /// relying on it merely failing to parse as JSON — a truncated fragment
+    /// that happens to look like valid-but-wrong JSON is a real (if remote)
+    /// risk this guards against outright.
+    static func latestAiTitle(jsonlTail: Data) -> String? {
+        guard let firstNewline = jsonlTail.firstIndex(of: 0x0A) else { return nil }
+        let body = jsonlTail[jsonlTail.index(after: firstNewline)...]
+
+        var latest: String?
+        for lineData in body.split(separator: 0x0A, omittingEmptySubsequences: true) {
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(lineData)) as? [String: Any],
+                  (obj["type"] as? String) == "ai-title",
+                  let t = obj["aiTitle"] as? String, !t.isEmpty
+            else { continue }
+            latest = t
+        }
+        guard let latest else { return nil }
+        return latest.count > 80 ? String(latest.prefix(80)) : latest
+    }
+
     /// Enumerate every transcript under `projectsDir` (one level of project
     /// subdirectories, `.jsonl` files with UUID-shaped names — same shape
     /// check as ClaudeSessionLocator, since these IDs are interpolated
@@ -111,7 +153,7 @@ enum SessionIndex {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        struct Candidate { let url: URL; let sessionId: String; let mtime: Date }
+        struct Candidate { let url: URL; let sessionId: String; let mtime: Date; let size: UInt64 }
         var candidates: [Candidate] = []
 
         for dir in projectDirs {
@@ -120,7 +162,7 @@ enum SessionIndex {
             else { continue }
             guard let files = try? fileManager.contentsOfDirectory(
                 at: dir,
-                includingPropertiesForKeys: [.contentModificationDateKey],
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else { continue }
             for f in files {
@@ -130,9 +172,10 @@ enum SessionIndex {
                 // this straight into ClaudeBackend.restart(mode: .resume(_)),
                 // which lands in a shell command.
                 guard UUID(uuidString: sessionId) != nil else { continue }
-                let mtime = (try? f.resourceValues(forKeys: [.contentModificationDateKey])
-                    .contentModificationDate) ?? .distantPast
-                candidates.append(Candidate(url: f, sessionId: sessionId, mtime: mtime))
+                let values = try? f.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+                let mtime = values?.contentModificationDate ?? .distantPast
+                let size = UInt64(values?.fileSize ?? 0)
+                candidates.append(Candidate(url: f, sessionId: sessionId, mtime: mtime, size: size))
             }
         }
 
@@ -145,9 +188,27 @@ enum SessionIndex {
             guard let handle = try? FileHandle(forReadingFrom: c.url) else { continue }
             defer { try? handle.close() }
             let head = handle.readData(ofLength: headBudgetBytes)
-            if let summary = parseSummary(jsonlHead: head, sessionId: c.sessionId, mtime: c.mtime) {
-                results.append(summary)
+            guard var summary = parseSummary(jsonlHead: head, sessionId: c.sessionId, mtime: c.mtime)
+            else { continue }
+
+            // Only worth the extra seek+read when the file didn't already
+            // fit entirely inside the head we just read — otherwise
+            // parseSummary already saw every byte the tail scan would see.
+            if c.size > UInt64(headBudgetBytes) {
+                let tailStart = c.size > UInt64(tailBudgetBytes) ? c.size - UInt64(tailBudgetBytes) : 0
+                if (try? handle.seek(toOffset: tailStart)) != nil,
+                   let tail = try? handle.readToEnd(),
+                   let freshTitle = latestAiTitle(jsonlTail: tail) {
+                    summary = SessionSummary(
+                        sessionId: summary.sessionId,
+                        cwd: summary.cwd,
+                        title: freshTitle,
+                        mtime: summary.mtime,
+                        gitBranch: summary.gitBranch
+                    )
+                }
             }
+            results.append(summary)
         }
         return results
     }
