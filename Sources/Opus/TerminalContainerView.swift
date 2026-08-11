@@ -615,6 +615,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func findNextInActivePane()     { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
     func findPreviousInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
 
+    /// Claude Code renders its prompt line with the "❯" glyph — jumping
+    /// between prompts is a search in disguise (SwiftTerm's public findNext/
+    /// findPrevious scroll to the result; scrollTo(row:) is internal, so the
+    /// search engine is the only public scrolling road).
+    func jumpToPreviousPrompt() { _ = activeTerminal?.findPrevious("❯ ") }
+    func jumpToNextPrompt()     { _ = activeTerminal?.findNext("❯ ") }
+
     /// True while the find bar's field (or its field editor) owns focus.
     /// The key monitors must not act on the live panes in that state.
     ///
