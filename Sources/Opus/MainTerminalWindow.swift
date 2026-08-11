@@ -98,6 +98,11 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "g" {
             container.findPreviousInActivePane(); return nil
         }
+        // Cmd+Shift+I — toggle broadcast input to every pane of the active
+        // tab (Lot 3, Task 7). "I" for Input.
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "i" {
+            container.toggleBroadcast(); return nil
+        }
         return ev
     }
 
