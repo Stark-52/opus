@@ -32,6 +32,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // section near the bottom of this file for the timer/read/parse pipeline.
     private var contextMeterBar: ContextMeterBar!
     private var contextMeterTimer: Timer?
+    /// Bumped on every `refreshContextMeter()` call — see that function's
+    /// doc comment for the staleness guard this enables.
+    private var contextMeterGeneration = 0
 
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
@@ -208,23 +211,31 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     /// The session id whose transcript the meter should read for the
-    /// CURRENTLY ACTIVE tab: the spawn-order-bound id when the active
-    /// pane's SessionStart has already matched (`sessionId(for:)`), else —
-    /// only for the shared pane (`pane.wrapper == nil`, tab 0) — the most
-    /// recently modified transcript in the configured working directory's
-    /// project dir. A private pane that's still unbound has no such
-    /// fallback: it never resumes an existing transcript (see
-    /// `FilteredClaudeTab.start`'s `resumeMode: .none`), so there's no
-    /// "most recent session" that could possibly be ITS session.
+    /// CURRENTLY ACTIVE tab: only the spawn-order-bound id
+    /// (`sessionId(for:)`) once the active pane's `SessionStart` hook has
+    /// actually matched it. `nil` otherwise — including for a not-yet-bound
+    /// SHARED pane.
+    ///
+    /// Fix round 1: this used to fall back to
+    /// `ClaudeSessionLocator.mostRecentSessionId(for:)` for an unbound
+    /// shared pane. Removed — that locator answers "what's the newest
+    /// transcript in this cwd's project dir," which is NOT the same
+    /// question as "what's THIS pane's session." The owner's real working
+    /// directory routinely has a dozen-plus concurrently live transcripts
+    /// (subagents, other Opus surfaces, sessions resumed elsewhere) all
+    /// writing into the same project dir, so at cold start (the exact
+    /// moment this fallback fired — before the first `SessionStart` hook
+    /// lands) "most recently modified" can easily be someone else's
+    /// unrelated, still-running session. Showing that session's usage next
+    /// to a completely different pane is actively misleading — worse than
+    /// showing nothing. No fallback: the bar just stays at alpha 0 for the
+    /// few seconds until `ClaudeStateStore` binds the real id.
     private func activeSessionIdForContextMeter() -> String? {
         guard tabPanes.indices.contains(activeTabIndex) else { return nil }
         let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
         let panes = tabPanes[activeTabIndex]
         guard panes.indices.contains(idx) else { return nil }
-        let pane = panes[idx]
-        if let bound = sessionId(for: pane) { return bound }
-        guard pane.wrapper == nil else { return nil }
-        return ClaudeSessionLocator.mostRecentSessionId(for: OpusPreferences.shared.workingDirectory)
+        return sessionId(for: panes[idx])
     }
 
     /// Locate `<sessionId>.jsonl` under `~/.claude/projects/<encoded cwd>/`,
@@ -260,7 +271,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Timer tick (and the one immediate call from `startContextMeterTimer`)
     /// — resolves the active session, reads+parses off the main queue, then
     /// hops back to apply the result to the bar.
+    ///
+    /// Fix round 1: bumps `contextMeterGeneration` and captures it BEFORE
+    /// dispatching, so a result that comes back after a NEWER refresh has
+    /// already started gets dropped instead of clobbering fresher (or
+    /// intentionally-blanked) state — a fast tab switch can otherwise have
+    /// two background reads in flight at once, and GCD gives no ordering
+    /// guarantee between them. Same generation-token pattern as
+    /// `SessionSwitcherPanel.scanGeneration` (see its doc comment).
     private func refreshContextMeter() {
+        contextMeterGeneration += 1
+        let generation = contextMeterGeneration
+
         guard let sessionId = activeSessionIdForContextMeter() else {
             contextMeterBar.alphaValue = 0
             return
@@ -270,7 +292,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let result = Self.readTranscriptTail(sessionId: sessionId, cwd: cwd)
                 .flatMap { ContextMeter.usage(fromTranscriptTail: $0) }
             DispatchQueue.main.async {
-                self?.applyContextMeterResult(result)
+                guard let self, self.contextMeterGeneration == generation else { return }
+                self.applyContextMeterResult(result)
             }
         }
     }
@@ -289,6 +312,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         contextMeterBar.alphaValue = 1
         let kTokens = Int((Double(result.tokens) / 1000).rounded())
         let kLimit = Int((Double(result.limit) / 1000).rounded())
+        // Deliberately computed from the UNCLAMPED rawFraction, unlike the
+        // bar's own `.fraction` above — a session that's blown past its
+        // limit should say so ("173%"), even though the bar itself visually
+        // caps at a full-width fill.
         let percent = Int((rawFraction * 100).rounded())
         contextMeterBar.toolTip = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
     }
