@@ -14,13 +14,79 @@
 //           opus-attach <path>              (custom socket path)
 //           opus-attach send [-n] <text...> (one-shot prompt injection, then exit;
 //                                             -n = don't submit, just type it)
+//           opus-attach event <EventName>   (Claude Code hook command, see
+//                                             HookSettingsWriter — relays hook
+//                                             stdin to /tmp/opus-events.sock)
 
 import Foundation
 import Darwin
 
+/// `opus-attach event <EventName>` — invoked as a Claude Code hook command
+/// (registered by HookSettingsWriter). Forwards the hook's own stdin JSON —
+/// newline-compacted to a single line — to /tmp/opus-events.sock, then
+/// returns. `<EventName>` is accepted only for operator visibility (`ps`,
+/// debugging); it is never parsed here — `hook_event_name` already rides
+/// inside the JSON payload itself, and that's what EventSocketServer.parse
+/// reads on the other end.
+///
+/// MUST be a pure, silent observer: on UserPromptSubmit, claude parses this
+/// process's STDOUT as context-injection JSON when it exits 0 — writing
+/// anything there would inject garbage into every prompt the user submits.
+/// stderr also stays silent in normal operation (a missing/refused Opus
+/// socket is not an error worth surfacing to claude's transcript). The
+/// caller (event subcommand's caller below) always exits 0 unconditionally
+/// afterward — claude must never be slowed or blocked by Opus being absent,
+/// broken, or slow to accept the connection.
+func runEventSubcommand() {
+    let stdinData = FileHandle.standardInput.readDataToEndOfFile()
+
+    // Raw newlines only ever occur BETWEEN JSON tokens (pretty-printed hook
+    // stdin); in-string newlines are already escaped `\n` two-char
+    // sequences, so blanking 0x0A/0x0D is safe and guarantees the socket
+    // protocol's one-line-per-event framing regardless of how claude
+    // formatted the payload.
+    var compacted = stdinData
+    for i in compacted.indices where compacted[i] == 0x0A || compacted[i] == 0x0D {
+        compacted[i] = 0x20
+    }
+    compacted.append(0x0A)
+
+    let eventSock = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard eventSock >= 0 else { return }
+    defer { close(eventSock) }
+
+    var eaddr = sockaddr_un()
+    eaddr.sun_family = sa_family_t(AF_UNIX)
+    "/tmp/opus-events.sock".withCString { cstr in
+        withUnsafeMutableBytes(of: &eaddr.sun_path) { dest in
+            _ = strncpy(dest.baseAddress!.assumingMemoryBound(to: CChar.self), cstr, dest.count - 1)
+        }
+    }
+    let connected = withUnsafePointer(to: &eaddr) { ptr -> Bool in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+            connect(eventSock, sa, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+        }
+    }
+    guard connected else { return }   // Opus not running — silent no-op, never fail the hook
+
+    compacted.withUnsafeBytes { buf in
+        _ = write(eventSock, buf.baseAddress, buf.count)
+    }
+}
+
 // Subcommand: `opus-attach send [-n] <text...>` — one-shot prompt injection
 // into the live shared session, then exit. No TTY dance, no mirror.
 var args = Array(CommandLine.arguments.dropFirst())
+
+if args.first == "event" {
+    // A write into a half-closed Opus socket must never signal-kill this
+    // hook process — that would surface as a non-zero/signal exit status
+    // instead of the guaranteed exit(0) below.
+    signal(SIGPIPE, SIG_IGN)
+    runEventSubcommand()
+    exit(0)
+}
+
 var sendMode = false
 var sendNoNewline = false
 if args.first == "send" {

@@ -890,6 +890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var nativePanel: QuickTerminalPanel?
     private let socketServer = SocketServer()
+    private let eventSocketServer = EventSocketServer()
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // A vanished socket client must never SIGPIPE-kill the app.
@@ -905,6 +906,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The socket server now always runs: opus-attach send (one-shot prompt
         // injection) must work in every display mode, not just the mirror one.
         socketServer.start()
+        // Claude cockpit event bus (Lot 3, Task 1) — always runs, same as
+        // socketServer: hooks fire regardless of display mode, and
+        // composeSpawnCommand injects --settings unconditionally for .claude.
+        eventSocketServer.start()
+        // Must exist BEFORE any claude spawns — composeSpawnCommand's .claude
+        // preset always points --settings at this path (see HookSettingsWriter).
+        // Idempotent: cheap to call unconditionally on every launch.
+        HookSettingsWriter.ensureSettingsFile()
         if display.includesNativeTerminal {
             // Phase 3b — focus-following resize for Terminal.app. When Terminal.app
             // becomes the active app, query its front window's cols/rows and resize
@@ -1110,6 +1119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ note: Notification) {
         socketServer.stop()
+        eventSocketServer.stop()
         if let ref = hotKeyRef        { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefMain    { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }

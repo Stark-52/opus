@@ -314,6 +314,10 @@ final class OpusPreferences {
             case .continueMostRecent: cmd += " --continue"
             case .resume(let id): cmd += " --resume \(id)"  // IDs are UUID filenames from ClaudeSessionLocator — no shell metachars
             }
+            // Claude cockpit event bus (Lot 3, Task 1): inject the pure-observer
+            // hooks that report session state over /tmp/opus-events.sock. Only
+            // the .claude preset runs claude at all, so only it gets this flag.
+            cmd += " --settings \(HookSettingsWriter.escapedSettingsPathForShell)"
             return cdPrefix + cmd
         case .shell:
             return cdPrefix + "exec /bin/zsh -i"
