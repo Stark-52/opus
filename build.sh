@@ -50,7 +50,16 @@ if [ -f "Opus.icns" ]; then
     cp Opus.icns Opus.app/Contents/Resources/Opus.icns
 fi
 
-echo "→ ad-hoc signing"
-codesign --force --sign - --deep Opus.app
+# A stable signing identity keeps TCC grants (Documents access etc.) across
+# rebuilds. Ad-hoc re-signing minted a NEW identity every build, so macOS
+# re-prompted for permissions after each install. Fall back to ad-hoc when
+# the certificate is unavailable.
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "[redacted]"; then
+    echo "→ signing with Apple Development identity"
+    codesign --force --sign an Apple Development certificate --deep Opus.app
+else
+    echo "→ ad-hoc signing (no stable identity found)"
+    codesign --force --sign - --deep Opus.app
+fi
 
 echo "✔ Opus.app ready ($(du -sh Opus.app | cut -f1))"
