@@ -216,11 +216,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Cockpit — context-window burn meter (Lot 3, Task 4)
     //
-    // A 10s Timer, running only while this container is actually in a
-    // window (started/stopped from viewDidMoveToWindow — see below), reads
-    // the ACTIVE tab's transcript tail and updates `contextMeterBar`. The
-    // read + JSON scan happens on a background queue; only the final
-    // NSView property writes happen on main.
+    // A 10s Timer, started once this container's view first enters a window
+    // (viewDidMoveToWindow — see below) and reads the ACTIVE tab's transcript
+    // tail on every fire to update `contextMeterBar`. In practice it then
+    // runs for the app's lifetime: both hosts hide via orderOut/alpha
+    // (QuickTerminalPanel's slide-out, MainTerminalWindow's orderOut), never
+    // by detaching the view from its window, so `window != nil` stays true
+    // and the timer is never stopped again after that first start. Accepted
+    // cost — a 10s no-op timer tick isn't worth tracking visibility for. The
+    // read + JSON scan happens on a background queue; only the final NSView
+    // property writes happen on main.
     //
     // Both TerminalContainerView instances (QuickTerminalPanel's and
     // MainTerminalWindow's) run this independently when both are visible —
@@ -419,8 +424,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             ? NSColor.systemOrange
             : NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.45)
         btn.toolTip = active
-            ? "Skip permissions: ON — Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
-            : "Skip permissions: OFF — click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
+            ? "Skip permissions: ON. Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
+            : "Skip permissions: OFF. Click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
 
         // Re-state the permission-mode menu's checkmark to match the current
         // pref — this runs on every skipPermissions flip too, since the
@@ -949,10 +954,26 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         refreshContextMeter()
     }
 
+    /// True when `text`, once whitespace-trimmed, is nothing but the "❯ "
+    /// prompt marker `jumpToPreviousPrompt`/`jumpToNextPrompt` search for
+    /// (Cmd+Up/Down). Static + pure so it's unit-testable without a live
+    /// TerminalView/selection.
+    static func isPromptMarkerSelection(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines) == "❯"
+    }
+
     func copySelectionToPasteboard() {
         guard let terminal = activeTerminal else { return }
         let selection = terminal.getSelection()
-        guard let text = selection, !text.isEmpty else {
+        // Cockpit (Lot 3, sticky-selection fix): Cmd+Up/Down prompt jump
+        // does a findPrevious/findNext("❯ ") under the hood, which leaves
+        // that match selected — SwiftTerm never auto-clears a selection on
+        // streaming output, so it sticks until the user clicks the
+        // terminal. Without the isPromptMarkerSelection check, every Cmd+C
+        // after a jump would copy the prompt glyph instead of sending the
+        // Ctrl-C interrupt. A real user selection never trims down to
+        // exactly "❯", so this can't shadow an intentional copy.
+        guard let text = selection, !text.isEmpty, !Self.isPromptMarkerSelection(text) else {
             // Cockpit (Lot 3, Task 7 fix round 1): route the empty-selection
             // interrupt through `deliver(bytes:)` so it becomes a
             // bulk-interrupt of every pane in the active tab while armed,

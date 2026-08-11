@@ -141,6 +141,12 @@ enum HookSettingsWriter {
         if let existing = try? Data(contentsOf: url), existing == newData {
             return url.path
         }
+        // settingsJSONData only returns empty Data on a JSONSerialization
+        // failure (its `?? Data()` fallback) — never write that out: a
+        // zero-byte --settings file makes claude hard-fail on every
+        // subsequent spawn (see the doc comment above), so a bad build is
+        // strictly better than a bricked one.
+        guard !newData.isEmpty else { return url.path }
         try? newData.write(to: url, options: .atomic)
         return url.path
     }

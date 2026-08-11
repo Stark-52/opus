@@ -119,7 +119,7 @@ let connectOK = withUnsafePointer(to: &addr) { ptr -> Bool in
     }
 }
 guard connectOK else {
-    FileHandle.standardError.write("opus-attach: cannot connect to \(socketPath) — is Opus running?\n".data(using: .utf8)!)
+    FileHandle.standardError.write("opus-attach: cannot connect to \(socketPath); is Opus running?\n".data(using: .utf8)!)
     exit(1)
 }
 
