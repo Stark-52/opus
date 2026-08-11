@@ -705,6 +705,7 @@ final class QuickTerminalPanel: NSObject {
                 case ",": SettingsWindowController.shared.show(); return nil
                 case "f": container.toggleFindBar(); return nil
                 case "g": container.findNextInActivePane(); return nil
+                case "k": SessionSwitcherPanel.shared.toggle(); return nil
                 default: break
                 }
             }
