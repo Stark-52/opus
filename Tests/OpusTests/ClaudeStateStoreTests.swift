@@ -249,4 +249,50 @@ final class ClaudeStateStoreTests: XCTestCase {
     func testSessionIdForPaneTokenIsNilForAnUnregisteredToken() {
         XCTAssertNil(ClaudeStateStore.shared.sessionId(forPaneToken: makeToken()))
     }
+
+    // MARK: bindSession — direct, immediate binding (Lot 3, Task 6)
+
+    func testBindSessionBindsDirectlyWithoutAnEvent() {
+        let token = makeToken()
+        let sessionId = makeSessionId()
+        ClaudeStateStore.shared.bindSession(paneToken: token, sessionId: sessionId)
+        XCTAssertEqual(ClaudeStateStore.shared.sessionId(forPaneToken: token), sessionId)
+    }
+
+    func testBindSessionOverwritesOnRebindWithADifferentId() {
+        // restartFresh() mints a NEW id for the same pane token — rebinding
+        // must overwrite, not merge or ignore.
+        let token = makeToken()
+        let first = makeSessionId()
+        let second = makeSessionId()
+        ClaudeStateStore.shared.bindSession(paneToken: token, sessionId: first)
+        ClaudeStateStore.shared.bindSession(paneToken: token, sessionId: second)
+        XCTAssertEqual(ClaudeStateStore.shared.sessionId(forPaneToken: token), second)
+    }
+
+    func testPendingSpawnSkipsAlreadyBoundTokenAndBindsTheNextOne() {
+        // tokenA is bound directly (e.g. a private tab's minted id) but ALSO
+        // still has a pending FIFO entry (belt-and-braces registration).
+        // tokenB is a genuinely unknown spawn behind it in the queue.
+        let tokenA = makeToken()
+        let tokenB = makeToken()
+        let sessionX = makeSessionId()
+        ClaudeStateStore.shared.bindSession(paneToken: tokenA, sessionId: sessionX)
+        ClaudeStateStore.shared.registerPendingSpawn(paneToken: tokenA)
+        ClaudeStateStore.shared.registerPendingSpawn(paneToken: tokenB)
+
+        // tokenA's own real SessionStart hook arrives, reporting the SAME id
+        // it was already bound to directly — must be a no-op for the FIFO:
+        // tokenB stays unbound, tokenA's binding is untouched.
+        post(OpusClaudeEvent(sessionId: sessionX, cwd: "/tmp", kind: .sessionStarted(source: "startup")))
+        XCTAssertNil(ClaudeStateStore.shared.sessionId(forPaneToken: tokenB))
+        XCTAssertEqual(ClaudeStateStore.shared.sessionId(forPaneToken: tokenA), sessionX)
+
+        // A genuinely new SessionStart must skip over tokenA's now-stale FIFO
+        // entry (already bound) and bind tokenB instead of clobbering tokenA.
+        let sessionY = makeSessionId()
+        post(OpusClaudeEvent(sessionId: sessionY, cwd: "/tmp", kind: .sessionStarted(source: "startup")))
+        XCTAssertEqual(ClaudeStateStore.shared.sessionId(forPaneToken: tokenA), sessionX)
+        XCTAssertEqual(ClaudeStateStore.shared.sessionId(forPaneToken: tokenB), sessionY)
+    }
 }

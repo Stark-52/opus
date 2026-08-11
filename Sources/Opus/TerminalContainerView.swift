@@ -643,6 +643,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             tabActivePaneIndex.append(0)
             tabTitles.append("Claude")
             recordPendingSpawn(pane0)
+            // Lot 3, Task 6: startIfNeeded() no-ops when ANOTHER container
+            // already triggered the spawn (ClaudeBackend.shared is a
+            // singleton — MainTerminalWindow's container is built lazily,
+            // often well after the panel's own bootstrap already spawned and
+            // its .claudeBackendDidSpawn notification already fired and is
+            // long gone). This container's own `sharedBackendDidSpawn`
+            // observer (registered further down in init, after
+            // bootstrapFirstTab runs) only catches FUTURE spawns — it can't
+            // retroactively see one that already happened. Reading
+            // currentSessionId directly here, synchronously, closes that gap
+            // for every container regardless of construction order.
+            if let sessionId = ClaudeBackend.shared.currentSessionId {
+                ClaudeStateStore.shared.bindSession(paneToken: ObjectIdentifier(pane0.terminal), sessionId: sessionId)
+            }
         } else {
             let pane0 = TabPane.makePrivate(frame: terminalArea.bounds, panel: nil, container: self)
             styleTerminal(pane0.terminal)
@@ -653,6 +667,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             tabActivePaneIndex.append(0)
             tabTitles.append("Claude")
             recordPendingSpawn(pane0)
+            bindKnownSession(pane0)
         }
     }
 
@@ -681,6 +696,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabActivePaneIndex.append(0)
         tabTitles.append("Claude")
         recordPendingSpawn(pane)
+        bindKnownSession(pane)
         switchTab(to: tabs.count - 1)
     }
 
@@ -788,6 +804,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         styleTerminal(newPane.terminal)
         newPane.start()
         recordPendingSpawn(newPane)
+        bindKnownSession(newPane)
 
         if let parentSplit = parent as? NSSplitView, parentSplit.isVertical == vertical {
             // Same axis — extend the existing split.
@@ -990,6 +1007,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         ClaudeStateStore.shared.registerPendingSpawn(paneToken: ObjectIdentifier(pane.terminal))
     }
 
+    /// Direct-bind (Lot 3, Task 6): a private pane's session id is known the
+    /// instant it's minted (`FilteredClaudeTab.sessionId`) — no need to wait
+    /// on a SessionStart hook. Called right after `pane.start()` at every
+    /// private-pane spawn site. No-ops for the shared pane (`pane.wrapper ==
+    /// nil`) — that one's id comes from `ClaudeBackend` itself, bound via
+    /// `sharedBackendDidSpawn` below instead, since the container doesn't
+    /// own that spawn. `recordPendingSpawn` is still called too at every
+    /// site (belt and braces) — see `ClaudeStateStore`'s doc comment on why
+    /// a redundant pending entry for an already-bound pane is harmless.
+    private func bindKnownSession(_ pane: TabPane) {
+        guard let wrapper = pane.wrapper else { return }
+        ClaudeStateStore.shared.bindSession(paneToken: ObjectIdentifier(pane.terminal), sessionId: wrapper.sessionId)
+    }
+
     /// The sessionId bound to `pane`, if the spawn-order heuristic has
     /// matched a SessionStart to it yet.
     private func sessionId(for pane: TabPane) -> String? {
@@ -1133,11 +1164,26 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// A deliberate respawn (restart hotkey/menu, shield toggle, overlay
     /// button) makes any visible dead-session overlay stale — dismiss it.
+    /// Also the direct-bind point (Lot 3, Task 6) for tab 0's shared pane:
+    /// `ClaudeBackend` posts this notification on every spawn (bootstrap AND
+    /// every restart) carrying `currentSessionId` in `userInfo["sessionId"]`
+    /// whenever it knows it up front (fresh mint or an exact `.resume`) —
+    /// bind that id straight to this container's tab-0 pane token instead of
+    /// waiting on the SessionStart-hook FIFO. `userInfo["sessionId"]` is
+    /// absent exactly when `resumeMode == .continueMostRecent` (claude picks
+    /// the id, not us) — in that one case, fall through to `recordPendingSpawn`'s
+    /// FIFO entry as before. On a RESTART with a known id, this OVERWRITES
+    /// tab 0's existing binding (same token, new id) — see
+    /// `ClaudeStateStore.bindSession`'s doc comment for why that's correct:
+    /// the old binding pointed at a session that no longer exists.
     @objc private func sharedBackendDidSpawn(_ note: Notification) {
         guard useSharedTab0,
               tabPanes.indices.contains(0),
               let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }
         hideDeadOverlay(forPane: pane)
+        if let sessionId = note.userInfo?["sessionId"] as? String {
+            ClaudeStateStore.shared.bindSession(paneToken: ObjectIdentifier(pane.terminal), sessionId: sessionId)
+        }
     }
 
     /// True if any pane other than `excluded` exists in this container and
