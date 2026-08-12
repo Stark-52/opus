@@ -76,9 +76,22 @@ enum PromptHistory {
     /// A raw 0x0A byte only ever appears BETWEEN records here, never inside
     /// one: `display`/`pastedContents` are JSON string values, so any
     /// newline a user actually typed or pasted is escaped as the two
-    /// characters `\n`, not a literal line-feed byte. So a 512KB cut can
-    /// only ever land between two whole records (or split the very first
-    /// one in the window, handled above) — never mid-record.
+    /// characters `\n`, not a literal line-feed byte. So a 512KB cut always
+    /// lands cleanly between two whole records, EXCEPT for whichever record
+    /// straddles the cut itself — the "leading partial line" dropped above.
+    ///
+    /// That dropped record is NOT necessarily a small fragment: a single
+    /// record LARGER than `tailBudgetBytes` (a prompt with enough pasted
+    /// content) is real, and it is silently dropped in full, not "impossible"
+    /// — the cut lands inside it, `firstIndex(of: 0x0A)` finds (at best) the
+    /// newline that ends it, and everything up to and including that
+    /// newline — i.e. the entire oversized record — is discarded as the
+    /// "leading partial line," the same as a genuinely tiny fragment would
+    /// be. If that oversized record is also the newest one in the file (no
+    /// later newline exists in the tail at all), `body` falls through to the
+    /// raw, still-truncated tail instead, which fails `parse(line:)` as
+    /// malformed JSON and is dropped in the loop below instead — same net
+    /// result, one prompt silently missing from the returned list.
     static func load(url: URL, limit: Int = 300, fileManager: FileManager = .default) -> [PromptEntry] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }

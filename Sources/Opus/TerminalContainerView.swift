@@ -1452,6 +1452,55 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         text.trimmingCharacters(in: .whitespacesAndNewlines) == "❯"
     }
 
+    /// FINDING (a), v1.6 backlog task-1 fix round: `deliver(bytes:)` writes
+    /// raw UTF-8 straight to the PTY, so every `\n` inside pasted (or
+    /// palette-inserted, or Cmd+Ctrl+S-sent) multi-line text lands exactly
+    /// like the user pressing Return between each line — claude submits at
+    /// the first newline instead of receiving the whole block. Real
+    /// terminals avoid this with the "bracketed paste" protocol (xterm mode
+    /// 2004): wrap the pasted text in `ESC[200~` / `ESC[201~` so a
+    /// bracketed-paste-aware reader (claude's TUI) knows the newlines inside
+    /// are DATA, not keystrokes, and doesn't submit until the user actually
+    /// presses Return themselves afterward.
+    ///
+    /// `enabled` must be the TARGET terminal's own, currently-negotiated
+    /// `SwiftTerm.Terminal.bracketedPasteMode` (set true/false by the CSI
+    /// `?2004h`/`?2004l` sequences the target program sends when it wants
+    /// paste mode) — never a hardcoded `true`. Inventing the markers when
+    /// the target never asked for them would land `ESC[200~`/`ESC[201~` as
+    /// literal garbage characters in that pane instead of being interpreted
+    /// as paste boundaries. `enabled == false` therefore returns the plain
+    /// UTF-8 bytes, unwrapped — byte-for-byte what `deliver(bytes:)` always
+    /// sent, so disabled targets see no behavior change from this fix.
+    ///
+    /// Sanitizes exactly one thing out of `text` before wrapping: a literal
+    /// `ESC[201~` (the END-paste marker) embedded IN the payload. The
+    /// bracketed-paste wire protocol has no way to escape that exact byte
+    /// sequence — ANY bracketed-paste-aware reader ends the paste at the
+    /// FIRST `ESC[201~` it sees, whether that's our real closing marker or
+    /// one that happens to already be sitting inside the text (e.g. a
+    /// terminal transcript the user previously copied, or a stray history
+    /// entry). Left in, it would prematurely close our wrapper and dump
+    /// everything after it — INCLUDING the real trailing `ESC[201~` and any
+    /// following keystrokes — as live, unwrapped input, which can include a
+    /// literal Return: exactly the auto-submit bug this function exists to
+    /// close, just relocated mid-paste instead of at the first `\n`. No
+    /// other byte is touched — a bare, unpaired ESC is left exactly as
+    /// typed/pasted, matching how real terminals don't otherwise sanitize
+    /// pasted content; only this one 6-byte terminator is special-cased,
+    /// and only because it's indistinguishable, on the wire, from our own
+    /// closing marker.
+    static func bracketedPaste(_ text: String, enabled: Bool) -> [UInt8] {
+        guard enabled else { return Array(text.utf8) }
+        let endMarker = "\u{1B}[201~"
+        let payload = text.contains(endMarker)
+            ? text.replacingOccurrences(of: endMarker, with: "")
+            : text
+        let start: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]  // ESC [ 2 0 0 ~
+        let end: [UInt8]   = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]  // ESC [ 2 0 1 ~
+        return start + Array(payload.utf8) + end
+    }
+
     func copySelectionToPasteboard() {
         guard let terminal = activeTerminal else { return }
         let selection = terminal.getSelection()
@@ -1496,28 +1545,42 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// active tab. Covers both `pasteFromPasteboard` (Cmd+V) and Finder
     /// drag-drop (`performDragOperation` below), which is exactly what a
     /// user arming broadcast to paste one prompt into N sessions expects.
+    ///
+    /// FINDING (a) fix round: routes through `deliverAsPaste`, NOT
+    /// `deliver(bytes:)` — text landing here always arrived as one paste-like
+    /// operation (Cmd+V, a Finder drop, a palette pick, Cmd+Ctrl+S), never as
+    /// individual keystrokes, so it always deserves bracketed-paste wrapping
+    /// when the target has asked for it. See `deliverAsPaste`'s doc comment
+    /// for why this can't just call `deliver(bytes:)` with precomputed bytes.
     private func sendToActivePane(_ text: String) {
-        guard !text.isEmpty else { return }
-        deliver(bytes: ArraySlice(Array(text.utf8)))
+        deliverAsPaste(text)
     }
 
     /// Public entry point for PromptPalettePanel (Cmd+Shift+P, task-1 of the
     /// v1.6 backlog): insert a picked prompt into the active pane WITHOUT a
     /// trailing return — the user reviews and submits it themselves, same as
     /// a plain paste. Reuses `sendToActivePane` verbatim rather than
-    /// duplicating its `deliver(bytes:)` call, so this gets the exact same
-    /// broadcast-arming behavior as Cmd+V/Finder-drop for free: while
-    /// broadcast is armed, the prompt lands in every pane of the active tab,
-    /// not just the one on screen.
+    /// duplicating its `deliverAsPaste` call, so this gets the exact same
+    /// broadcast-arming AND bracketed-paste behavior as Cmd+V/Finder-drop for
+    /// free: while broadcast is armed, the prompt lands in every pane of the
+    /// active tab, not just the one on screen, and each pane decides for
+    /// itself (via its own `bracketedPasteMode`) whether to wrap.
     func insertIntoActivePane(_ text: String) {
         sendToActivePane(text)
     }
 
-    /// Cockpit (Lot 3, Task 7 fix round 1) — the single delivery point for
-    /// input that does NOT arrive as a keystroke: paste, Finder drag-drop,
-    /// and the empty-selection Ctrl-C interrupt. Broadcasts to every pane
-    /// of the active tab when armed, otherwise single-target routes to the
-    /// active pane exactly as before this fix (private wrapper, or the
+    /// Cockpit (Lot 3, Task 7 fix round 1) — the delivery point for input
+    /// that does NOT arrive as a keystroke and must NEVER be interpreted as
+    /// pasted text: the empty-selection Ctrl-C interrupt in
+    /// `copySelectionToPasteboard` is the ONLY caller left after the FINDING
+    /// (a) fix round (below) split paste/drop/palette/Cmd+Ctrl+S off into
+    /// `deliverAsPaste`. An interrupt is a single control byte (0x03), not a
+    /// paste — bracketed-paste-wrapping it would be nonsensical (and could
+    /// even suppress the interrupt if the reader treated it as paste
+    /// content instead of a signal-generating key), so this stays exactly as
+    /// it was: raw bytes, straight to the target(s), no wrapping decision at
+    /// all. Broadcasts to every pane of the active tab when armed, otherwise
+    /// single-target routes to the active pane (private wrapper, or the
     /// shared backend as a fallback when there's no active pane at all).
     ///
     /// This is a SEPARATE chokepoint from the keystroke path
@@ -1525,9 +1588,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `TerminalViewDelegate`): paste/drop/interrupt never go through a
     /// `TerminalViewDelegate` — they call straight into the active pane's
     /// wrapper/backend — which is exactly why they used to bypass the
-    /// broadcast check entirely (Fix round 1). Three surfaces route through
-    /// here: `sendToActivePane` (paste + drag-drop) and the interrupt call
-    /// in `copySelectionToPasteboard`.
+    /// broadcast check entirely (Fix round 1).
     private func deliver(bytes: ArraySlice<UInt8>) {
         if broadcastArmed {
             broadcast(data: bytes)
@@ -1535,6 +1596,67 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             wrapper.sendInput(bytes: bytes)
         } else {
             ClaudeBackend.shared.send(data: bytes)
+        }
+    }
+
+    /// FINDING (a), v1.6 backlog task-1 fix round — the paste-specific
+    /// counterpart to `deliver(bytes:)` above, and the delivery point for
+    /// EVERYTHING that lands text as one paste-like operation: routed here
+    /// via `sendToActivePane` from `pasteFromPasteboard` (Cmd+V),
+    /// `performDragOperation` (Finder drop), and `insertIntoActivePane`
+    /// (the Cmd+Shift+P palette and the Cmd+Ctrl+S "send clipboard" hotkey).
+    /// Deliberately does NOT touch the empty-selection Ctrl-C interrupt in
+    /// `copySelectionToPasteboard` — see `deliver(bytes:)`'s doc comment for
+    /// why an interrupt must never be wrapped.
+    ///
+    /// Can't just compute wrapped bytes once and hand them to
+    /// `deliver(bytes:)`/`broadcast(data:)`: `deliver(bytes:)` takes bytes
+    /// that are already final, but bracketed-paste wrapping depends on the
+    /// TARGET's `bracketedPasteMode` — which, while broadcast is armed, is a
+    /// property of EACH pane individually (point 5 of the fix brief). Every
+    /// pane owns its own SwiftTerm `Terminal`, so every pane negotiates mode
+    /// 2004 independently: one pane's claude can be sitting at a prompt with
+    /// paste mode on while a sibling pane is mid-transition (spawning,
+    /// restarting, or simply a claude build that hasn't sent `CSI ?2004h`
+    /// yet) with the mode still off. Computing `enabled` once from
+    /// `activeTerminal`/`activePane` and reusing that one decision for every
+    /// pane would silently mis-wrap any pane whose mode disagrees with the
+    /// active one:
+    ///   - wrapping bytes meant for a mode-off pane makes `ESC[200~`/
+    ///     `ESC[201~` show up as literal garbage characters in that pane;
+    ///   - NOT wrapping bytes meant for a mode-on pane reintroduces the
+    ///     exact submit-at-first-newline bug this fix exists to close, just
+    ///     for that one pane.
+    /// So this re-derives the same "broadcast when armed, else single
+    /// active-pane target, else the shared backend with no terminal to
+    /// query" shape `deliver(bytes:)` uses, but asks each TARGET pane's own
+    /// `terminal.getTerminal().bracketedPasteMode` — via the per-pane
+    /// `broadcast(bytesForPane:)` overload below for the armed case, and
+    /// directly against `pane` for the single-target case — instead of
+    /// asking once up front.
+    private func deliverAsPaste(_ text: String) {
+        guard !text.isEmpty else { return }
+        if broadcastArmed {
+            broadcast { pane in
+                let enabled = pane.terminal.getTerminal().bracketedPasteMode
+                return ArraySlice(Self.bracketedPaste(text, enabled: enabled))
+            }
+        } else if let pane = activePane {
+            let enabled = pane.terminal.getTerminal().bracketedPasteMode
+            let bytes = ArraySlice(Self.bracketedPaste(text, enabled: enabled))
+            if let wrapper = pane.wrapper {
+                wrapper.sendInput(bytes: bytes)
+            } else {
+                ClaudeBackend.shared.send(data: bytes)
+            }
+        } else {
+            // No resolvable pane means no terminal to query — same edge
+            // case `deliver(bytes:)` hits when `activePane` is nil (e.g. no
+            // tab has finished bootstrapping yet). With no target to ask,
+            // there's no way to know whether wrapping is safe, so this
+            // matches `deliver(bytes:)`'s always-unwrapped fallback exactly:
+            // plain UTF-8 bytes, straight to the shared backend.
+            ClaudeBackend.shared.send(data: ArraySlice(Array(text.utf8)))
         }
     }
 
@@ -2071,16 +2193,34 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `ClaudeBackend` directly. NEVER `terminal.feed()` on any of them —
     /// that would forge a duplicate echo; the PTYs already echo their own
     /// input back through the normal read loop, so feeding here on top of
-    /// that would double every character on screen. `sharedSent` caps the
-    /// shared-backend write at exactly one call even if the active tab
-    /// somehow held two shared panes (it never does today — `TabPane.
-    /// makeShared` is only ever called once, for tab 0 — but the guard is
-    /// free insurance against a future regression that lets two slip into
-    /// the same tab's pane list).
+    /// that would double every character on screen.
+    ///
+    /// Thin wrapper over the per-pane overload below, for the common case
+    /// (keystroke broadcast) where every pane gets the SAME bytes.
     private func broadcast(data: ArraySlice<UInt8>) {
+        broadcast { _ in data }
+    }
+
+    /// Per-pane variant (FINDING (a), v1.6 backlog task-1 fix round):
+    /// `bytesForPane` is invoked once per pane of the active tab so each
+    /// pane can determine its OWN delivery bytes independently — e.g.
+    /// `deliverAsPaste` uses this to decide bracketed-paste wrapping from
+    /// THAT pane's own `bracketedPasteMode`, not the active pane's. Keystroke
+    /// broadcast (`broadcast(data:)` above) is just this with a
+    /// constant-returning closure, so both share the exact same
+    /// `sharedSent`-guarded fan-out — no duplicated iteration/guard logic
+    /// between the two.
+    ///
+    /// `sharedSent` caps the shared-backend write at exactly one call even
+    /// if the active tab somehow held two shared panes (it never does today
+    /// — `TabPane.makeShared` is only ever called once, for tab 0 — but the
+    /// guard is free insurance against a future regression that lets two
+    /// slip into the same tab's pane list).
+    private func broadcast(bytesForPane: (TabPane) -> ArraySlice<UInt8>) {
         guard tabPanes.indices.contains(activeTabIndex) else { return }
         var sharedSent = false
         for pane in tabPanes[activeTabIndex] {
+            let data = bytesForPane(pane)
             if let wrapper = pane.wrapper {
                 wrapper.sendInput(bytes: data)
             } else if !sharedSent {
