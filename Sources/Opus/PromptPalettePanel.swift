@@ -100,6 +100,14 @@ final class PromptPalettePanel: NSObject {
     /// one. Same caveat as SessionSwitcherPanel.keyMonitor /
     /// TerminalContainerView.commandClickMonitor.
     private var keyMonitor: Any?
+    /// Whatever held key status when the palette opened (normally the Quick
+    /// Terminal panel) — restored on close so that surface is immediately
+    /// typable again. Necessary now that the panel no longer autohides when
+    /// an Opus window takes key (see QuickTerminalPanel.panelDidResignKey):
+    /// without handing key back, the panel would sit there visible but
+    /// keyless and the next keystrokes would go to the frontmost
+    /// application instead of Claude.
+    private weak var previousKeyWindow: NSWindow?
 
     private override init() {
         let width: CGFloat = 620
@@ -250,6 +258,7 @@ final class PromptPalettePanel: NSObject {
         filtered = []
         tableView.reloadData()
 
+        previousKeyWindow = NSApp.keyWindow
         panel.orderFrontRegardless()
         panel.makeKey()
         panel.makeFirstResponder(searchField)
@@ -268,6 +277,13 @@ final class PromptPalettePanel: NSObject {
     private func close() {
         visible = false
         panel.orderOut(nil)
+        // Hand key status back explicitly — ordering a non-activating panel
+        // out does not do it on its own while Opus is a background app.
+        // `openSelection` depends on this: it resolves its insertion target
+        // right after calling close(), and the panel being key is what makes
+        // that resolution take its first branch.
+        if let previous = previousKeyWindow, previous.isVisible { previous.makeKey() }
+        previousKeyWindow = nil
     }
 
     // The "mouse" screen — same rationale/technique as SessionSwitcherPanel/
@@ -315,20 +331,25 @@ final class PromptPalettePanel: NSObject {
         openSelection()
     }
 
-    /// Return/double-click: close the palette, then insert the picked
-    /// prompt's FULL text (not the truncated display string) into whichever
-    /// container currently owns the active pane. Container resolution
-    /// mirrors AppDelegate.activeRestartContainer() exactly (key panel >
-    /// visible main window > visible panel) — reused rather than
-    /// re-derived, so "which surface gets the prompt" can never drift from
-    /// "which surface gets a restart."
+    /// Return/double-click: close the palette (which hands key status back to
+    /// whatever had it, normally the Quick Terminal panel), then insert the
+    /// picked prompt's FULL text — not the truncated display string — into
+    /// whichever Claude surface the user is looking at.
+    ///
+    /// Fix round: this used to call `AppDelegate.activeRestartContainer()`
+    /// itself and `return` silently when it resolved nil — which is what
+    /// happened on EVERY pick under `.panelOnly`, because opening the palette
+    /// stole key status from the panel and the panel autohid itself, leaving
+    /// no visible surface for any branch of that resolution to find. The pick
+    /// then vanished with no feedback at all. `insertIntoActiveClaude` is the
+    /// shared resolve-and-insert path (same one Cmd+Ctrl+S uses) and falls
+    /// back to a hidden surface, revealing it, instead of dropping the text.
     private func openSelection() {
         let row = tableView.selectedRow
         guard filtered.indices.contains(row) else { return }
         let entry = filtered[row]
         close()
-        guard let container = AppDelegate.shared?.activeRestartContainer() else { return }
-        container.insertIntoActivePane(entry.text)
+        AppDelegate.shared?.insertIntoActiveClaude(entry.text)
     }
 
     private func moveSelection(by delta: Int) {

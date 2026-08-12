@@ -95,6 +95,56 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var todoDrawerRefreshInFlight = false
     private static let tasksDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/tasks")
 
+    /// Trailing offsets — all measured from `terminalArea.trailingAnchor` —
+    /// of the buttons that share the panel's top-right row: the shield
+    /// (installed by this container) plus, in the Quick Terminal panel, the
+    /// pin and "open in Terminal" (↗) buttons, which are subviews of the
+    /// panel's blur view one level up and get pinned into the row via
+    /// `pinToTopRightRow`.
+    ///
+    /// The row has to slide left with the terminal area when the todo drawer
+    /// opens. Fix round finding F2 did that for the shield alone by moving
+    /// its anchor from the container's trailing edge to `terminalArea`'s —
+    /// which left its row siblings behind, still pinned to the container,
+    /// visibly floating inside the drawer's own top-right corner as if they
+    /// belonged to the drawer (observed on screen in v1.6). Pinning every
+    /// button in the row to that SAME moving anchor is what makes the row
+    /// travel as one unit.
+    ///
+    /// `drawerOpenShift` covers the one button that does not fit that rule
+    /// on its own: the row's rightmost (↗) sits 4pt PAST the terminal area's
+    /// trailing edge, inside the panel's 14pt blur padding, where there is
+    /// nothing to collide with. With the drawer open that same +4 would land
+    /// on the drawer's leading edge (the drawer begins exactly where
+    /// `terminalArea` now ends — see buildSubviews). So while the drawer is
+    /// open the whole row shifts a further 8pt left, which puts the
+    /// rightmost button 4pt INSIDE the shrunken terminal area and preserves
+    /// every gap between buttons. Closed, the shift is 0 and every button
+    /// sits at exactly the pixel it always did.
+    enum TopRightButtonRow {
+        /// "Open in Terminal" (↗) — the row's rightmost button. +4 reproduces
+        /// its historical `blur.trailingAnchor - 10` pin: the container's
+        /// trailing edge is `blur.trailing - 14`.
+        static let openBase: CGFloat = 4
+        /// Dangerous-mode shield — unchanged from finding F2.
+        static let shieldBase: CGFloat = -28
+        /// Pin (autohide toggle) — the row's leftmost button. -58 reproduces
+        /// its historical `blur.trailingAnchor - 72` pin.
+        static let pinBase: CGFloat = -58
+        /// Extra leftward travel applied to the WHOLE row while the drawer is
+        /// open, so the rightmost button clears the drawer's leading edge.
+        static let drawerOpenShift: CGFloat = -8
+
+        static func trailingConstant(base: CGFloat, drawerOpen: Bool) -> CGFloat {
+            base + (drawerOpen ? drawerOpenShift : 0)
+        }
+    }
+
+    /// (constraint, base offset) for every button pinned into the top-right
+    /// row. Recomputed as a SET on every drawer toggle — the v1.6 bug was
+    /// exactly a row whose members moved independently.
+    private var topRightRowConstraints: [(constraint: NSLayoutConstraint, base: CGFloat)] = []
+
     // Cockpit (Lot 3, Task 5) — Cmd+click file[:line] references. The
     // returned monitor token must be retained (AppKit invalidates/drops an
     // unretained one), same as MainTerminalWindow.keyMonitor. Never removed
@@ -598,6 +648,30 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // disk I/O + JSON parse) that only ever touches the drawer's `tasks`
     // property back on main.
 
+    /// Pin `button`'s trailing edge into the top-right row (see
+    /// `TopRightButtonRow`) at `base` points from the terminal area's
+    /// trailing edge, and keep it in step with the row across drawer
+    /// toggles. `button` does NOT have to be a subview of this container —
+    /// the Quick Terminal panel's pin/↗ buttons live in the panel's blur
+    /// view, one level above it — it only has to already share an ancestor
+    /// with the container, which is all Auto Layout needs to resolve the
+    /// constraint at their nearest common ancestor.
+    func pinToTopRightRow(_ button: NSView, base: CGFloat) {
+        let constraint = button.trailingAnchor.constraint(
+            equalTo: terminalArea.trailingAnchor,
+            constant: TopRightButtonRow.trailingConstant(
+                base: base, drawerOpen: !todoDrawer.isHidden))
+        topRightRowConstraints.append((constraint, base))
+        constraint.isActive = true
+    }
+
+    private func updateTopRightRow(drawerOpen: Bool) {
+        for entry in topRightRowConstraints {
+            entry.constraint.constant = TopRightButtonRow.trailingConstant(
+                base: entry.base, drawerOpen: drawerOpen)
+        }
+    }
+
     func toggleTodoDrawer() {
         if todoDrawer.isHidden {
             todoDrawer.isHidden = false
@@ -617,13 +691,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             // `refreshShieldButton()` still governs the button's visibility
             // on its own, unrelated axis (skip-permissions state, not drawer
             // state).
+            //
+            // Palette fix round: the shield was the ONLY button that moved.
+            // Its row siblings (the panel's pin and ↗ buttons) were still
+            // pinned to the panel's own trailing edge and stayed put, ending
+            // up inside the drawer's top-right corner — see
+            // `TopRightButtonRow`. They are now pinned to the same moving
+            // anchor via `pinToTopRightRow`, and `updateTopRightRow` applies
+            // the row-wide shift that keeps the rightmost one clear of the
+            // drawer's leading edge.
             terminalAreaTrailingConstraint.constant = -TodoDrawerView.width
+            updateTopRightRow(drawerOpen: true)
             layoutSubtreeIfNeeded()
             refreshTodoDrawer()
             startTodoDrawerTimer()
         } else {
             todoDrawer.isHidden = true
             terminalAreaTrailingConstraint.constant = 0
+            updateTopRightRow(drawerOpen: false)
             layoutSubtreeIfNeeded()
             stopTodoDrawerTimer()
         }
@@ -729,12 +814,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // fixed under the drawer's top-right corner. Offset preserved
         // (-28) relative to that anchor, same as it was relative to the
         // container's when the drawer never moved anything.
+        //
+        // Palette fix round: that pin now goes through `pinToTopRightRow`,
+        // the same call the panel's pin/↗ buttons use, so all three move as
+        // one row instead of the shield alone (see `TopRightButtonRow`).
         NSLayoutConstraint.activate([
             btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            btn.trailingAnchor.constraint(equalTo: terminalArea.trailingAnchor, constant: -28),
             btn.widthAnchor.constraint(equalToConstant: 24),
             btn.heightAnchor.constraint(equalToConstant: 22)
         ])
+        pinToTopRightRow(btn, base: TopRightButtonRow.shieldBase)
         shieldButton = btn
 
         // Right-click / ctrl-click: choose a --permission-mode preset. Skip
@@ -908,7 +997,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private func openInEditor(path: String, line: Int?) {
         let target = line.map { "\(path):\($0)" } ?? path
         let command = OpusPreferences.shared.editorCommand
-            .replacingOccurrences(of: "{target}", with: shellQuote(target))
+            .replacingOccurrences(of: "{target}", with: Self.shellQuote(target))
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -1766,7 +1855,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // Files copied/dragged from Finder carry their POSIX path under the
         // file-URL type, while `.string` is only the display name (e.g. "Reports").
         // Insert the full shell-quoted path(s), matching Terminal.app.
-        if let paths = filePathsString(from: pb) {
+        if let paths = Self.filePathsString(from: pb) {
             sendToActivePane(paths)
             return
         }
@@ -1898,7 +1987,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// Single-quote a POSIX path so it survives the shell verbatim (spaces,
     /// parentheses, etc.). Embedded single quotes become the `'\''` idiom.
-    private func shellQuote(_ path: String) -> String {
+    private static func shellQuote(_ path: String) -> String {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
@@ -1909,7 +1998,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// reuses this verbatim to read `NSPasteboard.general` in the same order as
     /// `pasteFromPasteboard` (file URLs first, then plain string) rather than
     /// re-deriving the same file-URL-detection + shell-quoting logic a second time.
-    func filePathsString(from pasteboard: NSPasteboard) -> String? {
+    ///
+    /// `static` (palette fix round): reading a pasteboard never depended on a
+    /// container instance, and `sendClipboardToClaude()` had to resolve one
+    /// JUST to call this — which is exactly the resolution now living in
+    /// `AppDelegate.insertIntoActiveClaude`. Static lets that caller read the
+    /// clipboard first and hand the payload to the single shared
+    /// resolve-and-insert helper, instead of keeping a second copy of the
+    /// resolution rules alive next to it.
+    static func filePathsString(from pasteboard: NSPasteboard) -> String? {
         guard let urls = pasteboard.readObjects(
                 forClasses: [NSURL.self],
                 options: [.urlReadingFileURLsOnly: true]) as? [URL],
@@ -1920,15 +2017,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // MARK: Drag & drop (Finder files → path in the terminal)
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        filePathsString(from: sender.draggingPasteboard) != nil ? .copy : []
+        Self.filePathsString(from: sender.draggingPasteboard) != nil ? .copy : []
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        filePathsString(from: sender.draggingPasteboard) != nil
+        Self.filePathsString(from: sender.draggingPasteboard) != nil
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let paths = filePathsString(from: sender.draggingPasteboard) else { return false }
+        guard let paths = Self.filePathsString(from: sender.draggingPasteboard) else { return false }
         // Trailing space so the next typed argument doesn't glue onto the path.
         sendToActivePane(paths + " ")
         return true

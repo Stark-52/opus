@@ -480,9 +480,12 @@ final class QuickTerminalPanel: NSObject {
         openBtn.toolTip = "Open a Terminal.app window mirroring the shared session"
         openBtn.translatesAutoresizingMaskIntoConstraints = false
         blur.addSubview(openBtn)
+        // No trailing constraint here — this button belongs to the container's
+        // top-right row (with the pin button and the shield) and is pinned
+        // into it further down, once `cont` exists. See the
+        // `pinToTopRightRow` calls after the z-order fix below.
         NSLayoutConstraint.activate([
             openBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
-            openBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -10),
             openBtn.widthAnchor.constraint(equalToConstant: 24),
             openBtn.heightAnchor.constraint(equalToConstant: 22)
         ])
@@ -497,9 +500,9 @@ final class QuickTerminalPanel: NSObject {
         pinBtn.translatesAutoresizingMaskIntoConstraints = false
         pinBtn.setAccessibilityLabel("Pin panel toggle")
         blur.addSubview(pinBtn)
+        // Trailing pin deferred to `pinToTopRightRow` below, same as openBtn.
         NSLayoutConstraint.activate([
             pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
-            pinBtn.trailingAnchor.constraint(equalTo: blur.trailingAnchor, constant: -72),
             pinBtn.widthAnchor.constraint(equalToConstant: 24),
             pinBtn.heightAnchor.constraint(equalToConstant: 22)
         ])
@@ -531,6 +534,26 @@ final class QuickTerminalPanel: NSObject {
         // no behavior change.
         blur.addSubview(openBtn, positioned: .above, relativeTo: cont)
         blur.addSubview(pinBtn, positioned: .above, relativeTo: cont)
+
+        // Palette fix round: these two share the top-right row with the
+        // container's shield button, but were pinned to `blur`'s own trailing
+        // edge — so when the Cmd+Shift+T drawer shrank the terminal area, only
+        // the shield slid left (finding F2) and these stayed put, ending up
+        // floating inside the drawer's top-right corner as if they were part
+        // of it (seen on screen in v1.6). Pinning them to the container's
+        // terminal-area edge, through the same helper the shield uses, makes
+        // the whole row travel together. Bases reproduce the old blur-relative
+        // geometry EXACTLY while the drawer is closed (the container's
+        // trailing edge is blur's minus the 14pt inset: -10 = -14 + 4,
+        // -72 = -14 - 58) — see TerminalContainerView.TopRightButtonRow.
+        //
+        // Activated only now, AFTER the z-order re-add above: re-adding a view
+        // that is already a subview can tear down constraints that reference
+        // it, and these are the only ones that cross out of `blur` into the
+        // container's subtree.
+        cont.pinToTopRightRow(openBtn, base: TerminalContainerView.TopRightButtonRow.openBase)
+        cont.pinToTopRightRow(pinBtn, base: TerminalContainerView.TopRightButtonRow.pinBase)
+        blur.layoutSubtreeIfNeeded()
 
         // Cmd+T / Cmd+W / Cmd+1..9 intercept for tab management.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
@@ -935,12 +958,66 @@ final class QuickTerminalPanel: NSObject {
         })
     }
 
+    /// Pure decision behind `panelDidResignKey` — see that method for how each
+    /// input is measured. Kept separate so the four-way rule is unit-tested
+    /// without a live panel, a window server or a key-status dance.
+    ///
+    /// `keyStillWithinOpus` is the new term (palette fix round): if ANY window
+    /// of this app still holds key status once the dust settles — the
+    /// Cmd+Shift+P palette, the Cmd+K switcher, Settings, an NSAlert, or the
+    /// panel itself having taken key straight back — then keyboard focus never
+    /// left Opus. That is an in-app focus move, not the user going to another
+    /// application, and it must NOT collapse the panel. Everything else keeps
+    /// behaving exactly as it did.
+    static func shouldAutohideOnResign(visible: Bool,
+                                       pinned: Bool,
+                                       spaceSwitchInFlight: Bool,
+                                       keyStillWithinOpus: Bool) -> Bool {
+        guard visible else { return false }
+        if spaceSwitchInFlight { return false }   // Space transition, not a focus change
+        if pinned { return false }                // pinned = never autohide
+        return !keyStillWithinOpus
+    }
+
     @objc private func panelDidResignKey() {
-        if let until = ignoreResignKeyUntil, until > Date() {
-            return  // resign caused by Space switch — don't autohide
+        // Deferred by one runloop turn on purpose. AppKit delivers
+        // didResignKey to the OLD key window BEFORE the new one takes key, so
+        // NSApp.keyWindow is not authoritative yet at this point — measured
+        // with a standalone probe replicating this exact window configuration
+        // (accessory app, borderless .nonactivatingPanel, Terminal.app still
+        // frontmost): nil inside the notification, and the palette one turn
+        // later. The same probe confirms the two facts this fix rests on:
+        //
+        //   * NSApp.keyWindow IS populated while Opus is a background app —
+        //     it named the panel while `NSWorkspace.frontmostApplication` was
+        //     Terminal.app, which is the configuration that matters here.
+        //   * When key status leaves for another APPLICATION, NSApp.keyWindow
+        //     is nil one turn later — measured both by ordering our windows
+        //     out and by NSApp.deactivate() with a SECOND own window still
+        //     ordered in on screen. An ordered-in window that is not key does
+        //     not populate it. So "click a different app" still autohides,
+        //     unchanged, and `!= nil` is a sound "keyboard focus is still
+        //     ours" test rather than "some window of ours exists".
+        //
+        // Why it matters that the panel stays up: the palette's commit handler
+        // resolves its target through AppDelegate.activeRestartContainer(),
+        // every branch of which requires a VISIBLE surface. Hiding here on
+        // Cmd+Shift+P is what made a picked prompt vanish into nothing.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard Self.shouldAutohideOnResign(
+                visible: self.visible,
+                pinned: OpusPreferences.shared.panelPinned,
+                spaceSwitchInFlight: (self.ignoreResignKeyUntil ?? .distantPast) > Date(),
+                // Any Opus window, INCLUDING the panel itself: a resign
+                // immediately followed by the panel taking key back (it is
+                // still the focused surface one turn later) must not hide it
+                // either — deferring the decision is what makes that case
+                // visible at all.
+                keyStillWithinOpus: NSApp.keyWindow != nil
+            ) else { return }
+            self.hide()
         }
-        if OpusPreferences.shared.panelPinned { return }   // pinned = never autohide
-        if visible { hide() }
     }
 }
 
@@ -1322,47 +1399,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    /// Which surface a piece of text should be inserted into, and whether that
+    /// surface has to be revealed first. Pure — "did anything resolve" and
+    /// "does a panel exist at all" are the only things the rule ever looked at
+    /// — so the resolution order is unit-tested without windows. See
+    /// `insertIntoActiveClaude` for the effects.
+    enum ClaudeInsertionTarget: Equatable {
+        /// Something visible (or key) resolved — insert there, reveal nothing.
+        case resolvedSurface
+        /// Nothing was visible: use the panel EVEN WHILE HIDDEN, then reveal it.
+        case hiddenPanel
+        /// `.mainOnly` — there is no panel object at all (see
+        /// `OpusDisplayMode.includesPanel`), so the main window is the only
+        /// surface that exists; use it hidden, then reveal it. Finding F8.
+        case hiddenMainWindow
+    }
+
+    static func insertionTarget(resolved: Bool, hasPanel: Bool) -> ClaudeInsertionTarget {
+        if resolved { return .resolvedSurface }
+        return hasPanel ? .hiddenPanel : .hiddenMainWindow
+    }
+
+    /// Insert text into whichever Claude surface the user is looking at,
+    /// falling back to a hidden surface (and then revealing it) rather than
+    /// dropping the text. THE single resolve-and-insert path: Cmd+Ctrl+S
+    /// (`sendClipboardToClaude`) and the Cmd+Shift+P palette both go through
+    /// it, so "which surface gets the text" cannot drift between them.
+    ///
+    /// The palette used to call `activeRestartContainer()` directly and
+    /// silently `return` on nil — and nil is exactly what it got, because
+    /// opening the palette took key status away from the panel, which
+    /// autohid it (fixed separately in `panelDidResignKey`), which made every
+    /// branch of that resolution fail. The pick then went nowhere at all, with
+    /// no feedback. Even with the autohide fixed, routing through this helper
+    /// means a pick can never be dropped just because nothing happened to be
+    /// visible at commit time.
+    ///
+    /// Targeting reuses `activeRestartContainer()` (same rule as the restart
+    /// hotkey) rather than always targeting the panel, so a focused Main
+    /// Window gets the text where the user is actually looking. Only when
+    /// NOTHING is visible (the "zero windows on the current Space" case) does
+    /// this fall back to the panel specifically — even hidden — and then
+    /// reveal it, because that's the only surface guaranteed to exist across
+    /// every display mode that includes a panel at all. If the resolved
+    /// container was already visible, nothing extra is revealed (a background
+    /// panel object staying hidden while the visible Main Window receives the
+    /// text is correct — popping open a second, unrelated surface would not
+    /// be).
+    ///
+    /// Fix round finding F8: `nativePanel` is `nil` under `.mainOnly` (see
+    /// `OpusDisplayMode.includesPanel` — false only for that mode), so with
+    /// the main window ordered out AND nothing key, BOTH the resolved
+    /// container and the panel fallback are `nil` and the whole call used to
+    /// be a silent no-op — no text sent, no surface revealed, no feedback at
+    /// all. `.hiddenMainWindow` gives that combination the same "fall back to
+    /// a surface even if hidden, then reveal it" treatment the panel already
+    /// got: `MainTerminalWindow.shared` is guaranteed to exist there
+    /// (`.mainOnly` implies `includesMain`, which is what got it instantiated
+    /// at launch — see `applicationDidFinishLaunching`), so its
+    /// `terminalContainer` is a safe, real fallback target, and `.show()` is
+    /// the exact same reveal API `showMainWindowAction`/
+    /// `applicationShouldHandleReopen` already use elsewhere in this file.
+    func insertIntoActiveClaude(_ text: String) {
+        guard !text.isEmpty else { return }
+        let resolved = activeRestartContainer()
+        switch Self.insertionTarget(resolved: resolved != nil, hasPanel: nativePanel != nil) {
+        case .resolvedSurface:
+            resolved?.insertIntoActivePane(text)
+        case .hiddenPanel:
+            guard let panel = nativePanel else { return }
+            panel.terminalContainer.insertIntoActivePane(text)
+            // `toggleNativePanel()` is the same reveal API the hotkey uses;
+            // gated on !isVisible so an already-visible panel is never
+            // toggled shut.
+            if !panel.isVisible { toggleNativePanel() }
+        case .hiddenMainWindow:
+            MainTerminalWindow.shared.terminalContainer.insertIntoActivePane(text)
+            if MainTerminalWindow.shared.window?.isVisible != true {
+                MainTerminalWindow.shared.show()
+            }
+        }
+    }
+
     /// Cmd+Ctrl+S (v1.6 backlog, Task 2): send the clipboard to the active
     /// Claude session. Clipboard read order mirrors `pasteFromPasteboard`
     /// (file URLs first, then plain string) via the same
     /// `filePathsString(from:)` helper — Finder-copied files land as
     /// shell-quoted paths, exactly like Cmd+V.
     ///
-    /// Targeting reuses `activeRestartContainer()` (same rule as the restart
-    /// hotkey and the Cmd+Shift+P palette — Task 1) rather than always
-    /// targeting the panel, so a focused Main Window gets the text where the
-    /// user is actually looking. Only when NOTHING is visible (the "zero
-    /// windows on the current Space" case) does this fall back to the panel
-    /// specifically — even hidden — and then reveal it, because that's the
-    /// only surface guaranteed to exist across every display mode that
-    /// includes a panel at all. If the resolved container was already
-    /// visible, nothing extra is revealed (a background panel object staying
-    /// hidden while the visible Main Window receives the text is correct —
-    /// popping open a second, unrelated surface would not be).
-    ///
-    /// Fix round finding F8: `nativePanel` is `nil` under `.mainOnly` (see
-    /// `OpusDisplayMode.includesPanel` — false only for that mode), so with
-    /// the main window ordered out AND nothing key, BOTH `resolved` and
-    /// `nativePanel?.terminalContainer` used to be `nil` and the whole call
-    /// was a silent no-op — no text sent, no surface revealed, no feedback
-    /// at all. `mainWindowFallback` gives that combination the same "fall
-    /// back to a surface even if hidden, then reveal it" treatment the panel
-    /// already got: `MainTerminalWindow.shared` is guaranteed to exist here
-    /// (`.mainOnly` implies `includesMain`, which is what got it instantiated
-    /// at launch — see `applicationDidFinishLaunching`), so its
-    /// `terminalContainer` is a safe, real fallback target, and `.show()` is
-    /// the exact same reveal API `showMainWindowAction`/
-    /// `applicationShouldHandleReopen` already use elsewhere in this file.
+    /// Targeting (and the hidden-surface fallbacks that go with it) lives in
+    /// `insertIntoActiveClaude` — read that doc comment for the rules.
     func sendClipboardToClaude() {
-        let resolved = activeRestartContainer()
-        let mainWindowFallback = resolved == nil && nativePanel == nil
-        guard let container = resolved
-            ?? nativePanel?.terminalContainer
-            ?? (mainWindowFallback ? MainTerminalWindow.shared.terminalContainer : nil)
-        else { return }
-
         let pb = NSPasteboard.general
-        let clipboard = container.filePathsString(from: pb) ?? pb.string(forType: .string) ?? ""
+        let clipboard = TerminalContainerView.filePathsString(from: pb)
+            ?? pb.string(forType: .string) ?? ""
         guard !clipboard.isEmpty else { return }   // nothing to send — no beep, no panel
 
         let payload = Self.composeSendPayload(
@@ -1377,19 +1507,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a normal Cmd+V paste, so multi-line clipboard content (embedded
         // newlines) is handled identically to a plain paste — Task 1's report
         // found no separate auto-submit issue to mitigate beyond that.
-        container.insertIntoActivePane(payload)
-
-        // Only reveal a surface when it was the fallback target (nothing was
-        // visible to resolve). `toggleNativePanel()` is gated on `!isVisible`
-        // so an already-visible panel is never toggled closed; the
-        // main-window twin below (F8) applies that same "only when it wasn't
-        // already up" rule for `.mainOnly`, where there's no panel to fall
-        // back to at all.
-        if resolved == nil, let panel = nativePanel, !panel.isVisible {
-            toggleNativePanel()
-        } else if mainWindowFallback, MainTerminalWindow.shared.window?.isVisible != true {
-            MainTerminalWindow.shared.show()
-        }
+        //
+        // Resolution + reveal (including the F8 hidden-surface fallbacks
+        // described above) now live in `insertIntoActiveClaude`, shared with
+        // the Cmd+Shift+P palette instead of being spelled out twice. The
+        // clipboard read no longer needs a resolved container at all —
+        // `filePathsString(from:)` is static.
+        insertIntoActiveClaude(payload)
     }
 
     /// Pure template substitution — static so tests exercise it without
