@@ -32,7 +32,7 @@ final class ContextMeterTests: XCTestCase {
         ])
         let result = ContextMeter.usage(fromTranscriptTail: tail)
         XCTAssertEqual(result?.tokens, 2 + 2752 + 689241)
-        XCTAssertEqual(result?.limit, ContextMeter.defaultLimit)
+        XCTAssertEqual(result?.modelId, "claude-opus-4-8")
     }
 
     func testMultipleUsageRecords_lastMatchWins() {
@@ -91,22 +91,22 @@ final class ContextMeterTests: XCTestCase {
         XCTAssertEqual(result?.tokens, 50)
     }
 
-    func testOneMillionModelSuffix_usesOneMillionLimit() {
+    func testOneMillionModelSuffix_modelIdPassedThrough() {
         let tail = data([
             #"{"type":"system","cwd":"/x"}"#,
             assistantLine(model: "claude-sonnet-4-20250514[1m]", input: 10, cacheCreation: 0, cacheRead: 0),
         ])
         let result = ContextMeter.usage(fromTranscriptTail: tail)
-        XCTAssertEqual(result?.limit, 1_000_000)
+        XCTAssertEqual(result?.modelId, "claude-sonnet-4-20250514[1m]")
     }
 
-    func testMissingModel_defaultsTo200k() {
+    func testMissingModel_modelIdIsNil() {
         let tail = data([
             #"{"type":"system","cwd":"/x"}"#,
             assistantLine(model: nil, input: 10, cacheCreation: 0, cacheRead: 0),
         ])
         let result = ContextMeter.usage(fromTranscriptTail: tail)
-        XCTAssertEqual(result?.limit, 200_000)
+        XCTAssertNil(result?.modelId)
     }
 
     /// The tail buffer's first "line" is dropped UNCONDITIONALLY, even when
@@ -131,5 +131,63 @@ final class ContextMeterTests: XCTestCase {
 
     func testEmptyTail_noNewlineAtAll_returnsNil() {
         XCTAssertNil(ContextMeter.usage(fromTranscriptTail: Data("no newline here".utf8)))
+    }
+
+    // MARK: resolveLimit(modelId:observedTokens:configuredLimit:)
+
+    /// The "[1m]" marker always wins, even when it disagrees with the
+    /// configured pref (a session's real window is derivable in this one
+    /// case — see resolveLimit's doc comment).
+    func testResolveLimit_oneMillionMarker_winsOverConfig() {
+        let limit = ContextMeter.resolveLimit(
+            modelId: "claude-sonnet-4-20250514[1m]",
+            observedTokens: 500,
+            configuredLimit: 200_000
+        )
+        XCTAssertEqual(limit, 1_000_000)
+    }
+
+    /// No "[1m]" marker, observed usage comfortably under the configured
+    /// limit: the configured pref is used as-is.
+    func testResolveLimit_noMarker_usesConfiguredLimit() {
+        let limit = ContextMeter.resolveLimit(
+            modelId: "claude-opus-5",
+            observedTokens: 100_000,
+            configuredLimit: 500_000
+        )
+        XCTAssertEqual(limit, 500_000)
+    }
+
+    /// Safety auto-bump: observed usage exceeds a sub-1M configured limit —
+    /// bump to the 1M tier so the bar never sits pinned at a false 100%.
+    func testResolveLimit_observedExceedsSub1MConfig_autoBumpsToOneMillion() {
+        let limit = ContextMeter.resolveLimit(
+            modelId: "claude-opus-5",
+            observedTokens: 250_000,
+            configuredLimit: 200_000
+        )
+        XCTAssertEqual(limit, 1_000_000)
+    }
+
+    /// Observed usage under the configured limit leaves it untouched — no
+    /// marker, no bump.
+    func testResolveLimit_observedUnderConfig_leavesLimitUnchanged() {
+        let limit = ContextMeter.resolveLimit(
+            modelId: nil,
+            observedTokens: 50_000,
+            configuredLimit: 1_000_000
+        )
+        XCTAssertEqual(limit, 1_000_000)
+    }
+
+    /// 2M ceiling case: configured limit is already at the 1M tier, but
+    /// observed usage exceeds even that — bump to the 2M ceiling.
+    func testResolveLimit_observedExceedsOneMillionConfig_autoBumpsToTwoMillion() {
+        let limit = ContextMeter.resolveLimit(
+            modelId: nil,
+            observedTokens: 1_200_000,
+            configuredLimit: 1_000_000
+        )
+        XCTAssertEqual(limit, 2_000_000)
     }
 }

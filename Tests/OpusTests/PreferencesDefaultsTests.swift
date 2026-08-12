@@ -22,6 +22,16 @@ final class PreferencesDefaultsTests: XCTestCase {
         OpusPreferences.shared.scrollbackLines = 10_000   // restore
     }
 
+    func testContextLimitTokensDefaultAndClamp() {
+        UserDefaults.standard.removeObject(forKey: "opus.contextLimitTokens")
+        XCTAssertEqual(OpusPreferences.shared.contextLimitTokens, 1_000_000)
+        OpusPreferences.shared.contextLimitTokens = 5_000
+        XCTAssertEqual(OpusPreferences.shared.contextLimitTokens, 10_000)
+        OpusPreferences.shared.contextLimitTokens = 5_000_000
+        XCTAssertEqual(OpusPreferences.shared.contextLimitTokens, 2_000_000)
+        OpusPreferences.shared.contextLimitTokens = 1_000_000   // restore
+    }
+
     func testEditorCommandDefault() {
         UserDefaults.standard.removeObject(forKey: "opus.editorCommand")
         XCTAssertEqual(OpusPreferences.shared.editorCommand, "code -g {target}")

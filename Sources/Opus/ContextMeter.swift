@@ -56,20 +56,51 @@ enum ContextMeter {
     /// The 1M-context beta's ceiling — see the file header re: "[1m]".
     static let oneMillionLimit = 1_000_000
 
-    /// Static model-id → context-limit table. Substring match, not exact —
-    /// real model ids carry dates/build suffixes ("claude-opus-4-8",
-    /// "claude-sonnet-4-20250514[1m]") that a fixed lookup table would miss.
-    private static func limit(forModel model: String?) -> Int {
-        guard let model, model.contains("[1m]") else { return defaultLimit }
-        return oneMillionLimit
+    /// Hard ceiling for the safety auto-bump in `resolveLimit` when even the
+    /// 1M tier isn't enough headroom.
+    static let twoMillionLimit = 2_000_000
+
+    /// Resolves the context-window ceiling for a turn. This is a PURE
+    /// function — no UserDefaults reads — so callers own the decision of
+    /// which configured limit to feed in (in practice always
+    /// `OpusPreferences.shared.contextLimitTokens`).
+    ///
+    /// The live model id (e.g. plain `claude-opus-5`) does NOT tell us which
+    /// context window a session is running with — the same id can run with
+    /// either a 200k or a 1M window depending on the session, and Claude
+    /// Code's transcript carries no context-window metadata anywhere
+    /// (verified: every record field grepped for context/window/limit/beta/
+    /// max_tok — nothing). So the window is genuinely underivable from the
+    /// transcript; a user-set preference is the only source of truth we have,
+    /// with one exception and one safety net:
+    ///
+    /// (a) `modelId` containing the documented "[1m]" 1M-context-beta suffix
+    ///     (see the file header) always wins — that IS derivable.
+    /// (b) Otherwise start from `configuredLimit` (the user's pref).
+    /// (c) SAFETY AUTO-BUMP: if `observedTokens` (the turn's actual summed
+    ///     usage) exceeds that limit, the configured value is provably wrong
+    ///     for this session — bump to the next tier above it (1M if the
+    ///     configured limit was under 1M, else 2M) so the bar can never sit
+    ///     pinned at a false 100% for a session whose real window is larger
+    ///     than what's configured.
+    static func resolveLimit(modelId: String?, observedTokens: Int, configuredLimit: Int) -> Int {
+        if let modelId, modelId.contains("[1m]") { return oneMillionLimit }
+        var limit = configuredLimit
+        if observedTokens > limit {
+            limit = limit < oneMillionLimit ? oneMillionLimit : twoMillionLimit
+        }
+        return limit
     }
 
     /// Scans `data` (a transcript TAIL, not the whole file) for the LAST
     /// `{"type":"assistant", "message":{"model":..., "usage":{...}}}` record
-    /// and returns the summed context tokens plus that record's resolved
-    /// limit. `nil` when no such record is found anywhere in the buffer
+    /// and returns the summed context tokens plus that record's raw model id
+    /// (nil when the record carried no `model` field). `nil` (the whole
+    /// return value) when no such record is found anywhere in the buffer
     /// (empty transcript, tail landed entirely inside non-assistant records,
-    /// or a session with no usage-bearing turns yet).
+    /// or a session with no usage-bearing turns yet). Limit resolution is
+    /// NOT this function's job — see `resolveLimit` above; the caller
+    /// combines the returned tokens/modelId with its configured limit.
     ///
     /// Token sum is `input_tokens + cache_read_input_tokens +
     /// cache_creation_input_tokens` — deliberately EXCLUDES `output_tokens`.
@@ -100,11 +131,11 @@ enum ContextMeter {
     /// through. Dropping it outright (rather than relying on it merely
     /// failing to parse) also guards against a truncated fragment that
     /// happens to parse as valid-but-wrong JSON.
-    static func usage(fromTranscriptTail data: Data) -> (tokens: Int, limit: Int)? {
+    static func usage(fromTranscriptTail data: Data) -> (tokens: Int, modelId: String?)? {
         guard let firstNewline = data.firstIndex(of: 0x0A) else { return nil }
         let body = data[data.index(after: firstNewline)...]
 
-        var result: (tokens: Int, limit: Int)?
+        var result: (tokens: Int, modelId: String?)?
         for lineData in body.split(separator: 0x0A, omittingEmptySubsequences: true) {
             guard let obj = try? JSONSerialization.jsonObject(with: Data(lineData)) as? [String: Any],
                   (obj["type"] as? String) == "assistant",
@@ -123,7 +154,7 @@ enum ContextMeter {
             guard tokens > 0 else { continue }
             result = (
                 tokens: tokens,
-                limit: limit(forModel: message["model"] as? String)
+                modelId: message["model"] as? String
             )
         }
         return result

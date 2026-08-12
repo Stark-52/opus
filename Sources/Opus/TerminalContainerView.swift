@@ -489,9 +489,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             return
         }
         let cwd = OpusPreferences.shared.workingDirectory
+        let configuredLimit = OpusPreferences.shared.contextLimitTokens
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let result = Self.readTranscriptTail(sessionId: sessionId, cwd: cwd)
+            let usage = Self.readTranscriptTail(sessionId: sessionId, cwd: cwd)
                 .flatMap { ContextMeter.usage(fromTranscriptTail: $0) }
+            let result = usage.map { u in
+                (tokens: u.tokens, limit: ContextMeter.resolveLimit(
+                    modelId: u.modelId,
+                    observedTokens: u.tokens,
+                    configuredLimit: configuredLimit
+                ))
+            }
             DispatchQueue.main.async {
                 guard let self, self.contextMeterGeneration == generation else { return }
                 self.applyContextMeterResult(result)
