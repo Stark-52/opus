@@ -955,6 +955,7 @@ private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
         case 1: AppDelegate.shared?.toggleNativePanel()
         case 2: MainTerminalWindow.shared.toggle()
         case 3: AppDelegate.shared?.restartSessionRequested()
+        case 4: AppDelegate.shared?.sendClipboardToClaude()
         default: break
         }
     }
@@ -969,6 +970,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyRef: EventHotKeyRef?
     private var hotKeyRefMain: EventHotKeyRef?
     private var hotKeyRefRestart: EventHotKeyRef?
+    private var hotKeyRefSend: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     private var nativePanel: QuickTerminalPanel?
@@ -1215,6 +1217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let ref = hotKeyRef        { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefMain    { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefSend    { UnregisterEventHotKey(ref) }
         if let ref = handlerRef       { RemoveEventHandler(ref) }
     }
 
@@ -1307,6 +1310,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return panel.terminalContainer
         }
         return nil
+    }
+
+    /// Cmd+Ctrl+S (v1.6 backlog, Task 2): send the clipboard to the active
+    /// Claude session. Clipboard read order mirrors `pasteFromPasteboard`
+    /// (file URLs first, then plain string) via the same
+    /// `filePathsString(from:)` helper — Finder-copied files land as
+    /// shell-quoted paths, exactly like Cmd+V.
+    ///
+    /// Targeting reuses `activeRestartContainer()` (same rule as the restart
+    /// hotkey and the Cmd+Shift+P palette — Task 1) rather than always
+    /// targeting the panel, so a focused Main Window gets the text where the
+    /// user is actually looking. Only when NOTHING is visible (the "zero
+    /// windows on the current Space" case) does this fall back to the panel
+    /// specifically — even hidden — and then reveal it, because that's the
+    /// only surface guaranteed to exist across every display mode that
+    /// includes a panel at all. If the resolved container was already
+    /// visible, nothing extra is revealed (a background panel object staying
+    /// hidden while the visible Main Window receives the text is correct —
+    /// popping open a second, unrelated surface would not be).
+    func sendClipboardToClaude() {
+        let resolved = activeRestartContainer()
+        guard let container = resolved ?? nativePanel?.terminalContainer else { return }
+
+        let pb = NSPasteboard.general
+        let clipboard = container.filePathsString(from: pb) ?? pb.string(forType: .string) ?? ""
+        guard !clipboard.isEmpty else { return }   // nothing to send — no beep, no panel
+
+        let payload = Self.composeSendPayload(
+            template: OpusPreferences.shared.sendToClaudeTemplate,
+            clipboard: clipboard
+        )
+        guard !payload.isEmpty else { return }
+
+        // No trailing carriage return — same rule as the Task 1 palette: the
+        // user reviews and submits themselves. `insertIntoActivePane` routes
+        // through the exact same `sendToActivePane`/`deliver(bytes:)` path as
+        // a normal Cmd+V paste, so multi-line clipboard content (embedded
+        // newlines) is handled identically to a plain paste — Task 1's report
+        // found no separate auto-submit issue to mitigate beyond that.
+        container.insertIntoActivePane(payload)
+
+        // Only reveal the panel when it was the fallback target (nothing was
+        // visible to resolve). `toggleNativePanel()` is gated on `!isVisible`
+        // so an already-visible panel is never toggled closed.
+        if resolved == nil, let panel = nativePanel, !panel.isVisible {
+            toggleNativePanel()
+        }
+    }
+
+    /// Pure template substitution — static so tests exercise it without
+    /// UserDefaults or a live AppDelegate. `{clipboard}` is replaced verbatim;
+    /// a template missing the placeholder gets the clipboard appended on its
+    /// own line rather than silently dropped. An empty clipboard always
+    /// yields an empty payload (checked first, so a template with stray
+    /// content around a missing/empty clipboard never produces a
+    /// send-nothing-but-the-template payload).
+    static func composeSendPayload(template: String, clipboard: String) -> String {
+        guard !clipboard.isEmpty else { return "" }
+        if template.contains("{clipboard}") {
+            return template.replacingOccurrences(of: "{clipboard}", with: clipboard)
+        }
+        return template + "\n" + clipboard
     }
 
     @objc private func toggleSkipPermissionsAction() {
@@ -1465,6 +1530,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             idR, GetApplicationEventTarget(), 0, &hotKeyRefRestart
         )
         NSLog("Opus hotkey Cmd+Ctrl+R registered (status=\(statusR))")
+
+        // Cmd+Ctrl+S → send the clipboard to the active Claude session
+        // (v1.6 backlog, Task 2). kVK_ANSI_S = 1 — unconditional, like T/R,
+        // not gated behind displayMode.includesMain the way id 2 (M) is:
+        // sendClipboardToClaude() falls back to the panel even when it's
+        // hidden, so the hotkey is meaningful regardless of display mode.
+        let idS = EventHotKeyID(signature: OSType(0x4F505553), id: 4)
+        let statusS = RegisterEventHotKey(
+            1,                                     // kVK_ANSI_S
+            UInt32(cmdKey | controlKey),
+            idS, GetApplicationEventTarget(), 0, &hotKeyRefSend
+        )
+        NSLog("Opus hotkey Cmd+Ctrl+S registered (status=\(statusS))")
     }
 }
 

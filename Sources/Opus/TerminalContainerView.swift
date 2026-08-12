@@ -1546,7 +1546,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// If the pasteboard holds file URLs (Finder copy/drag), return their
     /// shell-quoted POSIX paths joined by spaces. `nil` when no file URLs.
-    private func filePathsString(from pasteboard: NSPasteboard) -> String? {
+    ///
+    /// Not `private` (Send to Claude, v1.6 backlog Task 2) — `sendClipboardToClaude()`
+    /// reuses this verbatim to read `NSPasteboard.general` in the same order as
+    /// `pasteFromPasteboard` (file URLs first, then plain string) rather than
+    /// re-deriving the same file-URL-detection + shell-quoting logic a second time.
+    func filePathsString(from pasteboard: NSPasteboard) -> String? {
         guard let urls = pasteboard.readObjects(
                 forClasses: [NSURL.self],
                 options: [.urlReadingFileURLsOnly: true]) as? [URL],

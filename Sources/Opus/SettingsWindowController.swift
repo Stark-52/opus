@@ -28,6 +28,7 @@ final class SettingsWindowController: NSWindowController {
     private var fontSizeStepper: NSStepper?
     private var scrollbackLinesField: NSTextField?
     private var contextLimitField: NSTextField?
+    private var sendToClaudeTemplateField: NSTextField?
     private var fontFamilies: [String] = []
 
     private convenience init() {
@@ -153,9 +154,19 @@ final class SettingsWindowController: NSWindowController {
         notifyCheckbox.state = OpusPreferences.shared.notifyOnBell ? .on : .off
         self.notifyOnBellCheckbox = notifyCheckbox
 
+        // — Send to Claude template (Cmd+Ctrl+S, v1.6 backlog Task 2) —
+        let sendTemplateLabel = makeFieldLabel("Send to Claude template")
+        let sendTemplateField = NSTextField(string: OpusPreferences.shared.sendToClaudeTemplate)
+        sendTemplateField.target = self
+        sendTemplateField.action = #selector(onSendToClaudeTemplateSubmitted(_:))
+        let sendTemplateTooltip = "Use {clipboard} where the copied text should go."
+        sendTemplateLabel.toolTip = sendTemplateTooltip
+        sendTemplateField.toolTip = sendTemplateTooltip
+        self.sendToClaudeTemplateField = sendTemplateField
+
         for v in [cmdLabel, cmdPopup, customField, skipCheckbox, skipHint, resumeCheckbox,
                   cwdLabel, cwdField, cwdPickBtn, confirmCheckbox, loginCheckbox, loginError,
-                  notifyCheckbox] {
+                  notifyCheckbox, sendTemplateLabel, sendTemplateField] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -207,7 +218,14 @@ final class SettingsWindowController: NSWindowController {
 
             notifyCheckbox.topAnchor.constraint(equalTo: loginError.bottomAnchor, constant: 10),
             notifyCheckbox.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
-            notifyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20)
+            notifyCheckbox.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+
+            sendTemplateLabel.topAnchor.constraint(equalTo: notifyCheckbox.bottomAnchor, constant: 24),
+            sendTemplateLabel.leadingAnchor.constraint(equalTo: cmdLabel.leadingAnchor),
+            sendTemplateLabel.widthAnchor.constraint(equalToConstant: 180),
+            sendTemplateField.centerYAnchor.constraint(equalTo: sendTemplateLabel.centerYAnchor),
+            sendTemplateField.leadingAnchor.constraint(equalTo: cmdPopup.leadingAnchor),
+            sendTemplateField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
         ])
 
         item.view = view
@@ -508,6 +526,10 @@ final class SettingsWindowController: NSWindowController {
         OpusPreferences.shared.notifyOnBell = (sender.state == .on)
     }
 
+    @objc private func onSendToClaudeTemplateSubmitted(_ sender: NSTextField) {
+        OpusPreferences.shared.sendToClaudeTemplate = sender.stringValue
+    }
+
     @objc private func onLaunchAtLoginToggled(_ sender: NSButton) {
         // Note: SMAppService needs the app at its final install location
         // (e.g. ~/Applications/). If launched translocated (e.g. straight
@@ -604,6 +626,7 @@ final class SettingsWindowController: NSWindowController {
         // The restart alert's "Don't ask again" can flip this behind our back.
         confirmRestartCheckbox?.state = OpusPreferences.shared.confirmRestart ? .on : .off
         notifyOnBellCheckbox?.state = OpusPreferences.shared.notifyOnBell ? .on : .off
+        sendToClaudeTemplateField?.stringValue = OpusPreferences.shared.sendToClaudeTemplate
         fontSizeField?.stringValue = String(Int(OpusPreferences.shared.fontSize))
         fontSizeStepper?.integerValue = Int(OpusPreferences.shared.fontSize)
         scrollbackLinesField?.stringValue = String(OpusPreferences.shared.scrollbackLines)
