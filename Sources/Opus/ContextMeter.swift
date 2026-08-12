@@ -1,6 +1,9 @@
 // ContextMeter — parses a Claude Code transcript tail into a context-window
-// usage fraction, for the thin burn-rate bar TerminalContainerView paints
-// above its tab bar (Lot 3, Task 4).
+// usage fraction, for the bottom status rail (StatusRailView) TerminalContainerView
+// paints above its tab bar (Lot 3, Task 4; the rail itself is the
+// visual-harmonization batch's Task 2/3 — this parsing layer is unchanged
+// by that migration, only its consumer moved from ContextMeterBar to
+// StatusRailView).
 //
 // Real transcript shape (confirmed by inspecting this machine's OWN live
 // session transcript while writing this file —
@@ -158,37 +161,5 @@ enum ContextMeter {
             )
         }
         return result
-    }
-}
-
-/// 2pt-tall horizontal bar showing context-window burn: green up to 70% of
-/// the limit, amber to 85%, red beyond. Track (the unfilled portion) draws
-/// nothing — the bar reads as a floating sliver, not a visible rail, when
-/// `fraction` is 0 or the container has hidden it via `alphaValue`.
-final class ContextMeterBar: NSView {
-    /// 0...1 — the caller (TerminalContainerView) is responsible for
-    /// computing and clamping tokens/limit before assigning; clamped again
-    /// here defensively so a stray out-of-range value never draws outside
-    /// the view's own bounds.
-    var fraction: CGFloat = 0 {
-        didSet { needsDisplay = true }
-    }
-
-    override var isFlipped: Bool { true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let clamped = min(max(fraction, 0), 1)
-        guard clamped > 0 else { return }
-
-        let fillColor: NSColor
-        if clamped <= 0.70 {
-            fillColor = .systemGreen
-        } else if clamped <= 0.85 {
-            fillColor = .systemOrange
-        } else {
-            fillColor = .systemRed
-        }
-        fillColor.setFill()
-        NSRect(x: 0, y: 0, width: bounds.width * clamped, height: bounds.height).fill()
     }
 }
