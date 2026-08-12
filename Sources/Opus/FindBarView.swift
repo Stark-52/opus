@@ -23,6 +23,14 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
     /// trailing end. Empty string (its initial/idle value) takes ~0 width,
     /// so `field` gets the bar's full space until there's something to show.
     private let counterLabel = NSTextField(labelWithString: "")
+    /// Fix (v1.5.1, Cmd+F readability) — the search field's own background,
+    /// deliberately a shade LIGHTER than the bar's `panelBackground` (0.08)
+    /// so the field still reads as a distinct control set into the bar
+    /// rather than fusing into one flat block. Local to this file, not
+    /// promoted to `OpusTheme`: this is the one place in the app a control
+    /// needs a background distinct from its container's, so it isn't a
+    /// token anything else would reuse.
+    private static let fieldBackground = NSColor(calibratedWhite: 0.16, alpha: 1.0)
     var onSearchUp: ((String) -> Void)?
     var onSearchDown: ((String) -> Void)?
     var onClose: (() -> Void)?
@@ -32,14 +40,47 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         wantsLayer = true
         layer?.backgroundColor = OpusTheme.panelBackground.cgColor
         layer?.cornerRadius = OpusTheme.radiusControl
+
+        // Fix (v1.5.1, Cmd+F readability): owner smoke-test — "le texte
+        // s'adapte bien au darkmode... là c'est gris sur blanc". Root cause:
+        // this view never forced an appearance, so in macOS Light mode the
+        // embedded NSSearchField drew its bezel using the SYSTEM appearance
+        // — a white rounded bezel painted INSIDE this dark bar — and the
+        // cream(0.95) text set below on that white bezel is the "grey on
+        // white" the owner saw. Same one-line pattern and rationale as
+        // SessionSwitcherPanel.swift:144 (force darkAqua regardless of the
+        // system appearance so OUR dark palette below draws correctly no
+        // matter what mode macOS is in). NOT sufficient alone — see the
+        // isBezeled/drawsBackground block below, which stops the field from
+        // drawing a system bezel at all.
+        self.appearance = NSAppearance(named: .darkAqua)
+
         field.translatesAutoresizingMaskIntoConstraints = false
         // Fix 2 (v1.4.2): mention both arrow directions now that they work,
         // not just Enter.
+        //
+        // Fix (v1.5.1) — verified against the new `fieldBackground`
+        // (calibratedWhite 0.16): cream(0.45)/cream(0.95) are a light warm
+        // off-white at 45%/95% opacity over a dark grey, i.e. still a light-
+        // on-dark pairing, not the light-on-light bezel bug this fix
+        // removes — legible same as before.
         field.placeholderAttributedString = NSAttributedString(
             string: "Find (↑ older, ↓ newer)",
             attributes: [.foregroundColor: OpusTheme.cream(0.45)]
         )
         field.textColor = OpusTheme.cream(0.95)
+        // Fix (v1.5.1, Cmd+F readability): forcing darkAqua above fixes the
+        // system bezel's TINT, but NSSearchField still synthesizes its own
+        // bezel — a rounded control background AppKit draws itself, not
+        // something `layer?.backgroundColor` above ever touched. Killing
+        // that bezel and painting the field's own background ourselves
+        // (`fieldBackground`, lighter than the bar so it stays visually
+        // distinct — see that property's doc comment) is what actually
+        // removes the white rect the owner saw. `focusRingType` is
+        // deliberately left untouched: the focus ring must stay visible.
+        field.isBezeled = false
+        field.drawsBackground = true
+        field.backgroundColor = Self.fieldBackground
         field.delegate = self
         field.sendsSearchStringImmediately = false
         addSubview(field)

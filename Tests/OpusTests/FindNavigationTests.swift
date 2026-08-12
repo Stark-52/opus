@@ -46,45 +46,74 @@ final class FindNavigationTests: XCTestCase {
         XCTAssertEqual(down.text, "…")
     }
 
-    // MARK: resolveMatchDisplay — ordinary index advancement (unchanged semantics)
+    // MARK: resolveMatchDisplay — index advancement (v1.5.1: position in the
+    // conversation, 1 = oldest/topmost, total = newest/bottom-most — see
+    // resolveMatchDisplay's own doc comment for the full rationale/caveats)
 
-    func testFreshSearchUpLandsOnFirstMatch() {
-        // previousIndex 0 (fresh term) + .up: 0 >= total is false → +1.
+    func testFreshSearchUpLandsOnNewestMatch() {
+        // previousIndex 0 (fresh term) + .up: 0 <= 1 is true → total. A
+        // fresh backward search starts from the bottom of the buffer, so
+        // its first hit is the NEWEST match — the highest position number.
         let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 0, direction: .up)
+        XCTAssertEqual(result.text, "5 / 5")
+        XCTAssertEqual(result.index, 5)
+        XCTAssertEqual(result.total, 5)
+    }
+
+    func testFreshSearchDownLandsOnOldestMatch() {
+        // previousIndex 0 (fresh term) + .down: 0 >= total is false (total
+        // >= 1) → +1. A fresh forward search from the bottom wraps
+        // immediately to the OLDEST match — position 1.
+        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 0, direction: .down)
         XCTAssertEqual(result.text, "1 / 5")
         XCTAssertEqual(result.index, 1)
         XCTAssertEqual(result.total, 5)
     }
 
-    func testFreshSearchDownLandsOnLastMatch() {
-        // previousIndex 0 (fresh term) + .down: 0 <= 1 is true → total.
-        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 0, direction: .down)
-        XCTAssertEqual(result.text, "5 / 5")
-        XCTAssertEqual(result.index, 5)
-    }
-
-    func testUpWrapsFromLastToFirst() {
-        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 3, previousIndex: 3, direction: .up)
-        XCTAssertEqual(result.index, 1)
-        XCTAssertEqual(result.text, "1 / 3")
-    }
-
-    func testDownWrapsFromFirstToLast() {
-        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 3, previousIndex: 1, direction: .down)
+    func testUpFromFirstWrapsToLast() {
+        // .up walks toward older matches (decreasing position); from
+        // position 1 (the oldest) it wraps around to `total` (the newest).
+        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 3, previousIndex: 1, direction: .up)
         XCTAssertEqual(result.index, 3)
         XCTAssertEqual(result.text, "3 / 3")
     }
 
-    func testUpAdvancesByOne() {
-        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 2, direction: .up)
-        XCTAssertEqual(result.index, 3)
-        XCTAssertEqual(result.text, "3 / 5")
+    func testDownFromLastWrapsToFirst() {
+        // .down walks toward newer matches (increasing position); from
+        // `total` (the newest) it wraps around to 1 (the oldest).
+        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 3, previousIndex: 3, direction: .down)
+        XCTAssertEqual(result.index, 1)
+        XCTAssertEqual(result.text, "1 / 3")
     }
 
-    func testDownRetreatsByOne() {
-        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 3, direction: .down)
+    func testUpDecreasesTowardOlderMatches() {
+        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 3, direction: .up)
         XCTAssertEqual(result.index, 2)
         XCTAssertEqual(result.text, "2 / 5")
+    }
+
+    func testDownIncreasesTowardNewerMatches() {
+        let result = TerminalContainerView.resolveMatchDisplay(found: true, total: 5, previousIndex: 3, direction: .down)
+        XCTAssertEqual(result.index, 4)
+        XCTAssertEqual(result.text, "4 / 5")
+    }
+
+    func testFullUpCycleWalksDownToOneThenWrapsToTotal() {
+        // A fresh .up lands on `total` (newest); repeated .up calls should
+        // walk DOWN through every position in order — total, total-1, …, 1
+        // — then wrap back to `total`. This is the "always moves in the
+        // same direction as the travel" property the v1.5.1 fix exists for:
+        // the displayed number must never jump around mid-cycle the way the
+        // old order-of-visit numbering did.
+        let total = 4
+        var previousIndex = 0
+        var seen: [Int] = []
+        for _ in 0..<(total + 1) {
+            let result = TerminalContainerView.resolveMatchDisplay(found: true, total: total, previousIndex: previousIndex, direction: .up)
+            seen.append(result.index)
+            previousIndex = result.index
+        }
+        XCTAssertEqual(seen, [4, 3, 2, 1, 4])
     }
 
     // MARK: scheduledCountPlaceholder — v1.5 re-review of 43853ca

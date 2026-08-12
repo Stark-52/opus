@@ -911,6 +911,33 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// func so the SAFETY GUARD below is unit-testable without a live
     /// TerminalView/SwiftTerm buffer.
     ///
+    /// v1.5.1 (owner smoke-test fix) — INDEX MEANING: `nextIndex` is the
+    /// match's POSITION IN THE CONVERSATION, 1 = oldest/topmost match,
+    /// `total` = newest/bottom-most. It is still our own approximation, not
+    /// SwiftTerm's real search cursor — SwiftTerm's cursor is entirely
+    /// internal (SearchService/SearchEngine are not `public`), so there is
+    /// no way to read "which match, positionally" back out of SwiftTerm
+    /// itself; this is advanced in lockstep with each successful navigation
+    /// via `navigateFind`, same as before. It is ALSO built on the
+    /// assumption that the FIRST navigation of a fresh search starts from
+    /// the bottom of the buffer (the terminal's normal resting position —
+    /// see FindBarView's Fix 5b doc comment): a fresh `.up` (searching
+    /// backward from the bottom) is defined to land on `total`, the newest
+    /// match, and a fresh `.down` on `1`, the oldest. If the user had
+    /// scrolled up before opening the find bar, SwiftTerm's actual first
+    /// jump may not match that assumption and the displayed number can be
+    /// off — the same honest caveat as before this fix, now restated for
+    /// the new meaning.
+    ///
+    /// Before this fix the index counted ORDER OF VISIT instead (`.up`
+    /// incremented 1, 2, 3… as the user walked backward through history,
+    /// wrapping to 1 at the top; `.down` decremented, wrapping to `total`
+    /// at the bottom) — a number that told the user how many jumps they'd
+    /// made, never WHERE they were, and that moved in a DIFFERENT direction
+    /// each time the search wrapped. That mismatch is what the owner
+    /// reported ("la numérotation est bizarre, elle commence au dernier
+    /// message de claude, puis descend et ensuite remonte tout en haut").
+    ///
     /// SAFETY GUARD: SwiftTerm's own search
     /// (`SearchService.findAll`/`SearchLineCache.translateBufferLineToStringWithWrap`)
     /// stitches soft-wrapped rows into one logical line before matching.
@@ -933,8 +960,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
         let nextIndex: Int
         switch direction {
-        case .up:   nextIndex = previousIndex >= total ? 1 : previousIndex + 1
-        case .down: nextIndex = previousIndex <= 1 ? total : previousIndex - 1
+        // .up walks toward OLDER matches — position decreases, wrapping
+        // from 1 (oldest) back to `total` (newest). A fresh search
+        // (previousIndex == 0) satisfies `<= 1` and lands on `total`, the
+        // newest match — what a backward search from the bottom finds first.
+        case .up:   nextIndex = previousIndex <= 1 ? total : previousIndex - 1
+        // .down walks toward NEWER matches — position increases, wrapping
+        // from `total` (newest) back to 1 (oldest). A fresh search
+        // (previousIndex == 0) never satisfies `>= total` (total >= 1) and
+        // lands on 1, the oldest match — what a forward search from the
+        // bottom wraps immediately to.
+        case .down: nextIndex = previousIndex >= total ? 1 : previousIndex + 1
         }
         return ("\(nextIndex) / \(total)", nextIndex, total)
     }
