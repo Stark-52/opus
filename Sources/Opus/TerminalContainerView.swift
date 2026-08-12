@@ -767,7 +767,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Fix 2 (v1.4.2) — which way a find navigation moves: `.up` = older/
     /// earlier lines (SwiftTerm's findPrevious), `.down` = newer/toward the
     /// bottom (findNext). Same up/down framing as onSearchUp/onSearchDown.
-    private enum FindDirection { case up, down }
+    /// Internal (not `private`), not `public` — v1.4.2 task-review Finding 2:
+    /// `resolveMatchDisplay` below takes it as a parameter so tests can
+    /// exercise the safety guard via `@testable import Opus`.
+    enum FindDirection { case up, down }
 
     /// Fix 2 (v1.4.2) — our own 1-based "n / total" bookkeeping for the
     /// find-bar match counter. SwiftTerm's find cursor is entirely internal
@@ -782,15 +785,93 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var matchIndex = 0
     private var matchTotal = 0
 
+    /// v1.4.2 task-review Finding 1 — bumped every time `navigateFind`
+    /// kicks off a background harvest+count, and captured by that
+    /// dispatch's completion closure. A completion whose captured
+    /// generation no longer matches `matchCountGeneration` (a NEWER
+    /// navigation started, or the term/bar was cleared in the meantime) is
+    /// dropped instead of clobbering fresher state — same pattern as
+    /// `contextMeterGeneration` (see `refreshContextMeter`'s doc comment
+    /// above) and `SessionSwitcherPanel.scanGeneration`.
+    private var matchCountGeneration = 0
+
+    /// v1.4.2 task-review Finding 1 — short-lived cache of a harvest+count
+    /// result, keyed by search term. Rapid arrow-key repeats (measured
+    /// faster than the ~100ms+ a fresh scan can cost — see
+    /// `harvestBufferLines`'s doc comment) hit this instead of
+    /// re-harvesting/re-counting on every keystroke: the FIRST navigation
+    /// for a term still pays the cost (harvest synchronously, count on a
+    /// background queue — see `scheduleMatchCount`), but every repeat
+    /// within `ttl` of the SAME term reuses the cached total synchronously,
+    /// with no background hop at all.
+    ///
+    /// Invalidated by (a) a different search term, or (b) more than `ttl`
+    /// elapsed — `isValid(for:terminalIdentity:)` checks both, plus a third
+    /// structural guard this class needed regardless of the brief's (a)/(b)/
+    /// (c) list: the harvested TERMINAL must also match. Without that, tab-
+    /// switching (which leaves `lastSearchTerm` etc. alone — see
+    /// `navigateFind`) and re-searching the SAME term in a DIFFERENT tab
+    /// within `ttl` would apply the old tab's total to the new tab's
+    /// buffer, since the jump itself always re-resolves `activeTerminal`
+    /// fresh on every call regardless of caching. There is deliberately no
+    /// (c) "buffer changed" invalidation: nothing PUBLIC on SwiftTerm's
+    /// Terminal/Buffer offers a cheap dirty signal to hang that on.
+    /// Checked (reading `.build/checkouts/SwiftTerm`): `BufferLine.isWrapped`
+    /// and `Buffer.lines`/`linesTop` are all non-`public` (module-internal);
+    /// the one PUBLIC candidate, `Terminal.getScrollInvariantUpdateRange()`,
+    /// is continuously drained by `AppleTerminalView`'s own render pass via
+    /// `terminal.clearUpdateRange()` (Apple/AppleTerminalView.swift:1572-1584)
+    /// — by the time this cache would consult it, it no longer reflects
+    /// "changed since I last looked," it reflects "changed since the view
+    /// last redrew," which can be milliseconds ago regardless of whether
+    /// OUR last harvest was 0.1s or 1.9s back. So this cache relies on
+    /// (a)+(b) only, same as the brief authorized as a fallback.
+    private struct HarvestCache {
+        let term: String
+        /// Which TerminalView was harvested — switching tabs (or splitting/
+        /// closing panes) changes `activeTerminal` without necessarily
+        /// closing the find bar's underlying state (`lastSearchTerm` etc.
+        /// intentionally survive a tab switch, same as before this fix).
+        /// Without pinning the cache to the terminal it came from, searching
+        /// the SAME term again in a DIFFERENT tab within `ttl` would apply
+        /// the old tab's total to the new tab's buffer — a real
+        /// contradiction, not just staleness, since the jump itself always
+        /// re-resolves `activeTerminal` fresh on every call.
+        let terminalIdentity: ObjectIdentifier
+        /// Stored alongside `total` per the brief, even though the current
+        /// cache-hit path (`navigateFind`) only reads `total` back out —
+        /// kept for any future feature that wants the actual harvested
+        /// lines (e.g. a match-preview) without paying for a re-harvest.
+        let lines: [String]
+        let total: Int
+        let timestamp: Date
+
+        static let ttl: TimeInterval = 2.0
+
+        func isValid(for term: String, terminalIdentity: ObjectIdentifier) -> Bool {
+            self.term == term
+                && self.terminalIdentity == terminalIdentity
+                && Date().timeIntervalSince(timestamp) < Self.ttl
+        }
+    }
+    private var harvestCache: HarvestCache?
+
     /// Single entry point for every find navigation: the bar's Enter/
     /// Shift+Enter/arrow keys (wired in toggleFindBar below) AND the
     /// Cmd+G/Cmd+Shift+G repeat hotkeys (searchUpInActivePane/
     /// searchDownInActivePane) all route through here, so the "n / total"
     /// counter stays correct no matter which path triggered the search.
-    /// Recomputes `matchTotal` from the live buffer on EVERY call — never
-    /// cached — so it stays fresh as output streams in (see
-    /// `harvestBufferLines`'s doc comment for the cost/frequency tradeoff
-    /// that makes a full rescan per navigation acceptable).
+    ///
+    /// v1.4.2 task-review Finding 1 — the actual jump (`findPrevious`/
+    /// `findNext`) is ALWAYS synchronous and immediate: it never waits on
+    /// match counting, which is the part that was measured expensive (21ms
+    /// harvest + 84ms count at the default 10k scrollback, 535ms at the
+    /// old 50k cap — see `harvestBufferLines`'s doc comment). The counter
+    /// text is then either updated immediately (cache hit —
+    /// `HarvestCache.isValid(for:)`) or left exactly as it was until a
+    /// background count lands (`scheduleMatchCount`) — never blanked
+    /// mid-flight, and never shown for a stale term (a fresh term's
+    /// position is only shown once ITS count lands).
     private func navigateFind(term: String, direction: FindDirection) {
         guard !term.isEmpty else {
             // Fix 2 (v1.4.2): "empty when the search term is empty." This
@@ -799,6 +880,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             // fires while the field is momentarily empty.
             matchIndex = 0
             matchTotal = 0
+            matchCountGeneration += 1   // drop any in-flight count
             findBar?.updateMatchCounter("")
             return
         }
@@ -806,7 +888,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             matchIndex = 0   // fresh term — the old index no longer means anything
         }
         lastSearchTerm = term
-        matchTotal = MatchCounter.count(term: term, in: harvestBufferLines())
 
         let found: Bool
         switch direction {
@@ -814,16 +895,107 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         case .down: found = activeTerminal?.findNext(term) ?? false
         }
 
-        guard found, matchTotal > 0 else {
-            matchIndex = 0
-            findBar?.updateMatchCounter("no match")
+        // `terminal` (needed below to key the cache) is resolved fresh here
+        // rather than reusing whatever `activeTerminal?.findPrevious`/
+        // `findNext` above saw — `found == true` guarantees it was non-nil
+        // at that call, and nothing else runs on this single thread in
+        // between, so re-reading it is exactly the same value.
+        guard found, let terminal = activeTerminal else {
+            // SwiftTerm itself found nothing (or there's no active terminal
+            // at all) — unambiguous, no need to harvest/count.
+            matchCountGeneration += 1   // drop any in-flight count from a previous nav
+            applyMatchDisplay(found: false, total: 0, direction: direction)
             return
         }
-        switch direction {
-        case .up:   matchIndex = matchIndex >= matchTotal ? 1 : matchIndex + 1
-        case .down: matchIndex = matchIndex <= 1 ? matchTotal : matchIndex - 1
+        let terminalIdentity = ObjectIdentifier(terminal)
+
+        if let cache = harvestCache, cache.isValid(for: term, terminalIdentity: terminalIdentity) {
+            applyMatchDisplay(found: true, total: cache.total, direction: direction)
+            return
         }
-        findBar?.updateMatchCounter("\(matchIndex) / \(matchTotal)")
+        scheduleMatchCount(term: term, direction: direction, terminalIdentity: terminalIdentity)
+    }
+
+    /// v1.4.2 task-review Finding 1 — the actual side-effecting half of a
+    /// match-count result: runs `Self.resolveMatchDisplay` (pure, unit-
+    /// tested) and applies it to `matchIndex`/`matchTotal`/the bar. Called
+    /// either synchronously from `navigateFind` (cache hit / not-found) or
+    /// from `scheduleMatchCount`'s background-count completion.
+    private func applyMatchDisplay(found: Bool, total: Int, direction: FindDirection) {
+        let result = Self.resolveMatchDisplay(found: found, total: total, previousIndex: matchIndex, direction: direction)
+        matchIndex = result.index
+        matchTotal = result.total
+        findBar?.updateMatchCounter(result.text)
+    }
+
+    /// v1.4.2 task-review Finding 2 — pure computation of the find-bar's
+    /// next display text + matchIndex, given a jump's `found` result, the
+    /// (possibly cached, possibly async-arrived) `total`, the PREVIOUS
+    /// matchIndex, and which way the jump moved. Extracted as a pure static
+    /// func so the SAFETY GUARD below is unit-testable without a live
+    /// TerminalView/SwiftTerm buffer.
+    ///
+    /// SAFETY GUARD: SwiftTerm's own search
+    /// (`SearchService.findAll`/`SearchLineCache.translateBufferLineToStringWithWrap`)
+    /// stitches soft-wrapped rows into one logical line before matching.
+    /// Our own harvest (`harvestBufferLines`) reads each row independently
+    /// — verified `BufferLine.isWrapped` is NOT `public` in the vendored
+    /// SwiftTerm (`.build/checkouts/SwiftTerm/Sources/SwiftTerm/BufferLine.swift:24`,
+    /// declared `var isWrapped: Bool` with no access modifier, i.e.
+    /// module-internal), so there is no way to reproduce that stitching
+    /// from outside the module. Worst case: a match straddling a wrap is
+    /// findable/highlighted by SwiftTerm (`found == true`) but invisible to
+    /// our own count (`total == 0`). Showing "no match" in that case would
+    /// directly contradict what the user can see highlighted on screen — so
+    /// this shows the position as unknown ("…") instead of lying about it.
+    static func resolveMatchDisplay(found: Bool, total: Int, previousIndex: Int, direction: FindDirection) -> (text: String, index: Int, total: Int) {
+        guard found else {
+            return ("no match", 0, 0)
+        }
+        guard total > 0 else {
+            return ("…", 0, 0)
+        }
+        let nextIndex: Int
+        switch direction {
+        case .up:   nextIndex = previousIndex >= total ? 1 : previousIndex + 1
+        case .down: nextIndex = previousIndex <= 1 ? total : previousIndex - 1
+        }
+        return ("\(nextIndex) / \(total)", nextIndex, total)
+    }
+
+    /// v1.4.2 task-review Finding 1 — harvest (synchronously, on main — see
+    /// `harvestBufferLines`'s doc comment for why) then count (on a
+    /// background queue) for a cache-miss navigation. `generation` guards
+    /// the eventual `DispatchQueue.main.async` apply against a newer
+    /// navigation (or a term/bar clear) having started in the meantime —
+    /// same discard-stale-result shape as `refreshContextMeter`.
+    private func scheduleMatchCount(term: String, direction: FindDirection, terminalIdentity: ObjectIdentifier) {
+        matchCountGeneration += 1
+        let generation = matchCountGeneration
+        let lines = harvestBufferLines()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let total = MatchCounter.count(term: term, in: lines)
+            DispatchQueue.main.async {
+                guard let self, self.matchCountGeneration == generation else { return }
+                self.harvestCache = HarvestCache(term: term, terminalIdentity: terminalIdentity, lines: lines, total: total, timestamp: Date())
+                self.applyMatchDisplay(found: true, total: total, direction: direction)
+            }
+        }
+    }
+
+    /// v1.4.2 task-review Finding 3 — pure derivation of the harvest cap
+    /// from the user's configured scrollback (`OpusPreferences.scrollbackLines`,
+    /// up to 200_000) instead of the old hardcoded 50_000, which silently
+    /// undercounted matches beyond row 50k while SwiftTerm could still
+    /// navigate to them. `+1_000` headroom covers the terminal's own
+    /// on-screen rows sitting atop the scrollback proper; the 200_000
+    /// ceiling bounds worst-case work regardless of the preference value
+    /// (matches `OpusPreferences.scrollbackLines`'s own clamp ceiling, so
+    /// this can never exceed what the buffer itself retains anyway). Pure +
+    /// static so it's unit-testable without a live terminal/preferences
+    /// singleton.
+    static func harvestCap(scrollbackLines: Int) -> Int {
+        min(200_000, scrollbackLines + 1_000)
     }
 
     /// Fix 2 (v1.4.2) — harvest the ACTIVE terminal's buffer as plain-text
@@ -832,15 +1004,37 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// counting (`SearchService.findAll`) is `internal` — not usable from
     /// here — so this reads the same buffer through the public surface
     /// instead: starting at row 0, walking forward until
-    /// `getScrollInvariantLine` returns nil. Capped at 50_000 rows as a
-    /// runaway guard against a pathologically long scrollback. Called ONLY
-    /// from `navigateFind` (a search navigation), never per keystroke —
-    /// this is a full buffer walk + string-translate per line.
+    /// `getScrollInvariantLine` returns nil. v1.4.2 task-review Finding 3:
+    /// capped via `harvestCap(scrollbackLines:)` (was a hardcoded 50_000)
+    /// so the cap tracks the user's actual configured scrollback instead of
+    /// silently under-counting past it.
+    ///
+    /// DELIBERATELY STAYS ON MAIN (task-review Finding 1 deviation): the
+    /// literal brief asked for "harvest+count" to both move to a background
+    /// queue, but `getScrollInvariantLine`/`translateToString` read live
+    /// `BufferLine` objects — `class` instances backed by a raw
+    /// `UnsafeMutableBufferPointer<CharData>` with NO locking anywhere in
+    /// SwiftTerm (checked: no `NSLock`/`os_unfair_lock`/actor isolation on
+    /// `Terminal`/`Buffer`/`BufferLine`). Every `.feed()` call in this
+    /// codebase is funneled through `DispatchQueue.main.async` specifically
+    /// because of this (see `main.swift`'s `dataReceived`/`TabPane.makeShared`'s
+    /// subscription) — Claude Code's own TUI repaints regions above the
+    /// cursor via ANSI cursor movement, i.e. existing `BufferLine`s DO get
+    /// mutated in place, not just appended to. Reading that same storage
+    /// from a background thread while `.feed()` concurrently mutates it on
+    /// main would be a real memory-safety hazard, not a style nitpick. So
+    /// only THIS function (the cheap, ~21ms-at-10k-rows part) stays
+    /// synchronous on main; `MatchCounter.count()` — a pure function over
+    /// the already-copied `[String]` this returns, safe to hand to another
+    /// thread — is what actually moves to background (`scheduleMatchCount`),
+    /// which is also where the worse-scaling cost lives (84ms of the 105ms
+    /// total at 10k rows, ~420ms of the 535ms total at the old 50k cap).
     private func harvestBufferLines() -> [String] {
         guard let term = activeTerminal?.getTerminal() else { return [] }
+        let cap = Self.harvestCap(scrollbackLines: OpusPreferences.shared.scrollbackLines)
         var lines: [String] = []
         var row = 0
-        while row < 50_000, let line = term.getScrollInvariantLine(row: row) {
+        while row < cap, let line = term.getScrollInvariantLine(row: row) {
             lines.append(line.translateToString(trimRight: true))
             row += 1
         }
