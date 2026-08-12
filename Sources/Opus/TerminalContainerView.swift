@@ -57,6 +57,31 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// doc comment for the staleness guard this enables.
     private var contextMeterGeneration = 0
 
+    // v1.6 backlog Task 3 — Cmd+Shift+T todo drawer. See the MARK section
+    // near `toggleTodoDrawer()` below for the full timer/refresh pipeline —
+    // deliberately the SAME shape as the context meter directly above
+    // (background read, generation-guarded main-thread apply, timer that
+    // only runs while the surface is actually visible), not a new pattern.
+    private var todoDrawer: TodoDrawerView!
+    /// Own trailing constraint on `terminalArea` — `0` when the drawer is
+    /// closed, `-TodoDrawerView.width` when open, so the terminal never
+    /// draws underneath the drawer. See `toggleTodoDrawer()`.
+    private var terminalAreaTrailingConstraint: NSLayoutConstraint!
+    /// Own bottom constraint on the drawer, switched in `updateTabIndicator`
+    /// alongside `terminalAreaBottomConstraint`/`railBottomConstraint` — the
+    /// drawer's bottom edge tracks EXACTLY the same y-position as
+    /// `terminalArea`'s own bottom edge (same constants, same lockstep
+    /// switch), so it always ends strictly above the status rail / tab bar
+    /// band without any drawer-specific magic numbers. See
+    /// `buildSubviews()`'s installation site and task-3-report.md for the
+    /// arithmetic this guarantees.
+    private var todoDrawerBottomConstraint: NSLayoutConstraint!
+    private var todoDrawerTimer: Timer?
+    /// Bumped on every `refreshTodoDrawer()` call — same staleness guard as
+    /// `contextMeterGeneration` above; see `refreshTodoDrawer`'s doc comment.
+    private var todoDrawerGeneration = 0
+    private static let tasksDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/tasks")
+
     // Cockpit (Lot 3, Task 5) — Cmd+click file[:line] references. The
     // returned monitor token must be retained (AppKit invalidates/drops an
     // unretained one), same as MainTerminalWindow.keyMonitor. Never removed
@@ -201,14 +226,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // meterBottom below for why the default (single-tab) state has to be
         // right from construction, not just after the first tab change.
         let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
+        // v1.6 backlog Task 3: trailing constraint is now a variable, not a
+        // fixed pin — `0` (closed) by default, `-TodoDrawerView.width` while
+        // the todo drawer is open (toggleTodoDrawer), so the terminal area
+        // shrinks to make room instead of drawing underneath the drawer.
+        let trailing = area.trailingAnchor.constraint(equalTo: trailingAnchor)
         NSLayoutConstraint.activate([
             area.topAnchor.constraint(equalTo: topAnchor),
             area.leadingAnchor.constraint(equalTo: leadingAnchor),
-            area.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trailing,
             bottom
         ])
         terminalArea = area
         terminalAreaBottomConstraint = bottom
+        terminalAreaTrailingConstraint = trailing
 
         let bar = OpusTabBar(frame: .zero)
         bar.isHidden = true
@@ -268,6 +299,38 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         statusRail = rail
         railBottomConstraint = railBottom
 
+        // Todo drawer (v1.6 backlog Task 3) — right-side, fixed 260pt width,
+        // hidden by default. Top pinned flush to the container's own top
+        // (same as terminalArea); trailing flush to the container's own
+        // trailing (the drawer IS the container's rightmost edge while
+        // open — there's nothing further right for it to leave room for).
+        // Bottom is the one non-obvious anchor: it does NOT go all the way
+        // to the container's bottomAnchor (that would draw underneath/
+        // behind the status rail and, when 2+ tabs exist, the tab bar too —
+        // both are painted AFTER the drawer in z-order below, so an
+        // overlapping drawer would visually clip them). Instead its own
+        // bottom constraint is switched in lockstep with
+        // terminalAreaBottomConstraint inside updateTabIndicator, using the
+        // literal SAME constants (terminalAreaBottomShown/Hidden) — so the
+        // drawer's bottom edge always sits at EXACTLY the same y-position
+        // as terminalArea's own bottom edge, which is already guaranteed
+        // (by that existing arithmetic) to clear both the rail and the tab
+        // bar in either tab-count state. See task-3-report.md for the
+        // worked-out numbers.
+        let drawer = TodoDrawerView(frame: .zero)
+        drawer.translatesAutoresizingMaskIntoConstraints = false
+        drawer.isHidden = true
+        addSubview(drawer)
+        let drawerBottom = drawer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
+        NSLayoutConstraint.activate([
+            drawer.topAnchor.constraint(equalTo: topAnchor),
+            drawer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            drawer.widthAnchor.constraint(equalToConstant: TodoDrawerView.width),
+            drawerBottom
+        ])
+        todoDrawer = drawer
+        todoDrawerBottomConstraint = drawerBottom
+
         layoutSubtreeIfNeeded()
     }
 
@@ -322,11 +385,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         contextMeterTimer = nil
     }
 
-    /// The session id whose transcript the meter should read for the
-    /// CURRENTLY ACTIVE tab: only the spawn-order-bound id
-    /// (`sessionId(for:)`) once the active pane's `SessionStart` hook has
-    /// actually matched it. `nil` otherwise — including for a not-yet-bound
-    /// SHARED pane.
+    /// The session id bound to the CURRENTLY ACTIVE tab's active pane: only
+    /// the spawn-order-bound id (`sessionId(for:)`) once that pane's
+    /// `SessionStart` hook has actually matched it. `nil` otherwise —
+    /// including for a not-yet-bound SHARED pane.
+    ///
+    /// Two consumers as of v1.6 backlog Task 3: the context meter
+    /// (`refreshContextMeter`, reading the session's transcript) and the
+    /// todo drawer (`refreshTodoDrawer`, reading the session's task list) —
+    /// both need exactly the same "which session is the user looking at
+    /// right now" answer, so this is the one place that answers it rather
+    /// than two independent copies of the tab/pane-index bookkeeping below.
     ///
     /// Fix round 1: this used to fall back to
     /// `ClaudeSessionLocator.mostRecentSessionId(for:)` for an unbound
@@ -340,9 +409,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// lands) "most recently modified" can easily be someone else's
     /// unrelated, still-running session. Showing that session's usage next
     /// to a completely different pane is actively misleading — worse than
-    /// showing nothing. No fallback: the bar just stays at alpha 0 for the
-    /// few seconds until `ClaudeStateStore` binds the real id.
-    private func activeSessionIdForContextMeter() -> String? {
+    /// showing nothing. No fallback: the bar (and, since Task 3, the
+    /// drawer) just stays blank/empty for the few seconds until
+    /// `ClaudeStateStore` binds the real id. The todo drawer's empty state
+    /// ("No tasks in this session") is this exact same rule applied to a
+    /// second surface — see `refreshTodoDrawer`'s doc comment.
+    private func activeSessionId() -> String? {
         guard tabPanes.indices.contains(activeTabIndex) else { return nil }
         let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
         let panes = tabPanes[activeTabIndex]
@@ -395,7 +467,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         contextMeterGeneration += 1
         let generation = contextMeterGeneration
 
-        guard let sessionId = activeSessionIdForContextMeter() else {
+        guard let sessionId = activeSessionId() else {
             statusRail.fraction = nil
             statusRail.readout = nil
             contextTooltipSentence = nil
@@ -497,6 +569,116 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             statusRail.tooltipText = activity
         case (nil, nil):
             statusRail.tooltipText = nil
+        }
+    }
+
+    // MARK: Cockpit — todo drawer (v1.6 backlog Task 3, Cmd+Shift+T)
+    //
+    // Same shape as the context meter block above: a Timer that only runs
+    // while the drawer is actually visible (unlike the context meter's,
+    // which — per that block's own doc comment — runs for the app's
+    // lifetime once started; the drawer's is explicitly narrower per the
+    // brief: "timer 5s uniquement quand le tiroir est visible"), a
+    // generation counter guarding the background→main handoff exactly like
+    // `contextMeterGeneration`, and a background read (TaskListReader.load,
+    // disk I/O + JSON parse) that only ever touches the drawer's `tasks`
+    // property back on main.
+
+    func toggleTodoDrawer() {
+        if todoDrawer.isHidden {
+            todoDrawer.isHidden = false
+            // The dangerous-mode shield button (installShieldButton, above)
+            // floats at topAnchor+2 / trailingAnchor-28, 24×22 — entirely
+            // inside the drawer's top-right corner (drawer is 260pt wide,
+            // flush to the same trailing edge, topAnchor-pinned too). It's
+            // added to the view hierarchy AFTER the drawer (installShieldButton
+            // runs later in init than buildSubviews), so without this it
+            // would draw ON TOP of the drawer's header text instead of
+            // being covered by it — either way, the two fight for the same
+            // corner. Hidden for the drawer's duration rather than
+            // reflowing either one's geometry; restored the moment the
+            // drawer closes. No-ops on a container with no shield button at
+            // all (a non-`useSharedTab0` container never installs one).
+            shieldButton?.isHidden = true
+            terminalAreaTrailingConstraint.constant = -TodoDrawerView.width
+            layoutSubtreeIfNeeded()
+            refreshTodoDrawer()
+            startTodoDrawerTimer()
+        } else {
+            todoDrawer.isHidden = true
+            shieldButton?.isHidden = false
+            terminalAreaTrailingConstraint.constant = 0
+            layoutSubtreeIfNeeded()
+            stopTodoDrawerTimer()
+        }
+    }
+
+    private func startTodoDrawerTimer() {
+        guard todoDrawerTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.refreshTodoDrawer()
+        }
+        timer.tolerance = 1
+        todoDrawerTimer = timer
+    }
+
+    /// Called from `toggleTodoDrawer()`'s close branch. Also the reason a
+    /// closed drawer's timer really does stop rather than silently leaking:
+    /// `Timer.invalidate()` removes it from the run loop immediately (no
+    /// further fires can land, in-flight or otherwise — a fire already
+    /// dispatched to the background queue before invalidate() still lands,
+    /// but its result is dropped by `refreshTodoDrawer`'s own generation
+    /// guard below once it hops back to main, same as any other stale
+    /// background read in this file), and `todoDrawerTimer = nil` lets the
+    /// next `startTodoDrawerTimer()` call (the drawer's next open) pass its
+    /// own `guard todoDrawerTimer == nil` and actually schedule a fresh one
+    /// instead of no-op'ing forever.
+    private func stopTodoDrawerTimer() {
+        todoDrawerTimer?.invalidate()
+        todoDrawerTimer = nil
+    }
+
+    /// Timer tick (and the immediate call from `toggleTodoDrawer`'s open
+    /// branch, plus `paneActivityChanged`/`switchTab`'s immediate
+    /// refreshes) — resolves the active session, reads+parses off a
+    /// background queue, then hops back to apply the result to the drawer.
+    /// Bumps `todoDrawerGeneration` and captures it BEFORE dispatching, so
+    /// a result that comes back after a NEWER refresh has already started
+    /// (e.g. two tab switches in quick succession while the drawer is open)
+    /// gets dropped instead of clobbering fresher state — identical
+    /// staleness guard to `refreshContextMeter`'s `contextMeterGeneration`,
+    /// see that function's own doc comment for the full rationale.
+    ///
+    /// No bound session for the active pane (a brand-new pane whose
+    /// SessionStart hook hasn't landed yet, or a shared pane still waiting
+    /// on `sharedBackendDidSpawn`) → empty tasks, i.e. the drawer's own
+    /// "No tasks in this session" empty state. This is the SAME "no data
+    /// beats wrong data" rule `activeSessionId()`'s doc comment describes
+    /// for the context meter: showing some OTHER session's task list next
+    /// to a pane that isn't actually that session would be actively
+    /// misleading, not just incomplete, so this deliberately does not fall
+    /// back to "most recent session" or any other guess.
+    private func refreshTodoDrawer() {
+        // Guards every caller at once (the timer already only runs while
+        // visible — see startTodoDrawerTimer/stopTodoDrawerTimer — but
+        // paneActivityChanged and switchTab below call this unconditionally
+        // on every activity change / tab switch, which fire far more often
+        // than the drawer is actually open; a hidden drawer has nothing on
+        // screen worth a disk read+parse for).
+        guard !todoDrawer.isHidden else { return }
+        todoDrawerGeneration += 1
+        let generation = todoDrawerGeneration
+
+        guard let sessionId = activeSessionId() else {
+            todoDrawer.tasks = []
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let tasks = TaskListReader.load(sessionId: sessionId, tasksDir: Self.tasksDir)
+            DispatchQueue.main.async {
+                guard let self, self.todoDrawerGeneration == generation else { return }
+                self.todoDrawer.tasks = tasks
+            }
         }
     }
 
@@ -1442,6 +1624,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // because a stale-tab bar is a real, easily-hit correctness gap,
         // not a hypothetical.
         refreshContextMeter()
+        // Same reasoning for the todo drawer (v1.6 backlog Task 3): without
+        // this, switching from a tab bound to session A to a tab bound to
+        // session B while the drawer is open would keep showing A's tasks
+        // for up to 5s. No-ops when the drawer is closed.
+        refreshTodoDrawer()
     }
 
     /// True when `text`, once whitespace-trimmed, is nothing but the "❯ "
@@ -1748,6 +1935,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let terminalAreaBottomShown: CGFloat = -59   // -(14 + 26 + 4 + 15)
         let terminalAreaBottomHidden: CGFloat = -29  // -(14 + 15)
         terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
+        // Todo drawer (v1.6 backlog Task 3): own bottom constraint, switched
+        // in lockstep with terminalAreaBottomConstraint using the EXACT SAME
+        // two constants above (not a drawer-specific pair) — the drawer's
+        // bottom edge must always land at the same y-position as
+        // terminalArea's own bottom edge, which this arithmetic already
+        // keeps clear of the rail/tab-bar band in both states. See
+        // buildSubviews()'s doc comment on todoDrawerBottomConstraint.
+        todoDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
         // Status rail: own constant, switched in lockstep with the two
         // above — see buildSubviews' doc comment on railBottomConstraint for
         // why this can't just track tabBar.topAnchor the way it used to.
@@ -1826,6 +2021,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func paneActivityChanged() {
         refreshTabBarStates()
+        // v1.6 backlog Task 3: an immediate refresh on every activity change
+        // (prompt submitted, tool used/done, turn ended, …) — per the brief,
+        // in addition to the drawer's own 5s timer. No-ops when the drawer
+        // is closed (see refreshTodoDrawer's own guard).
+        refreshTodoDrawer()
     }
 
     /// The active tab's active pane, marked as "seen" (clears a `.done`/
