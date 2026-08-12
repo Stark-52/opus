@@ -30,6 +30,12 @@ final class TodoDrawerView: NSView {
     /// empty state beats guessing at some OTHER session's tasks).
     var tasks: [ClaudeTask] = [] {
         didSet {
+            // Fix round finding F4: the container hands this a fresh array
+            // on every 5s timer tick even when nothing on disk changed —
+            // `ClaudeTask` is `Equatable`, so skip the header/table refresh
+            // entirely when the new value is identical to what's already
+            // showing instead of reloading unconditionally.
+            guard tasks != oldValue else { return }
             header.stringValue = Self.headerText(tasks: tasks)
             let isEmpty = tasks.isEmpty
             emptyLabel.isHidden = !isEmpty

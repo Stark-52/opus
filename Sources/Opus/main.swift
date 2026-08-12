@@ -1339,9 +1339,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// visible, nothing extra is revealed (a background panel object staying
     /// hidden while the visible Main Window receives the text is correct —
     /// popping open a second, unrelated surface would not be).
+    ///
+    /// Fix round finding F8: `nativePanel` is `nil` under `.mainOnly` (see
+    /// `OpusDisplayMode.includesPanel` — false only for that mode), so with
+    /// the main window ordered out AND nothing key, BOTH `resolved` and
+    /// `nativePanel?.terminalContainer` used to be `nil` and the whole call
+    /// was a silent no-op — no text sent, no surface revealed, no feedback
+    /// at all. `mainWindowFallback` gives that combination the same "fall
+    /// back to a surface even if hidden, then reveal it" treatment the panel
+    /// already got: `MainTerminalWindow.shared` is guaranteed to exist here
+    /// (`.mainOnly` implies `includesMain`, which is what got it instantiated
+    /// at launch — see `applicationDidFinishLaunching`), so its
+    /// `terminalContainer` is a safe, real fallback target, and `.show()` is
+    /// the exact same reveal API `showMainWindowAction`/
+    /// `applicationShouldHandleReopen` already use elsewhere in this file.
     func sendClipboardToClaude() {
         let resolved = activeRestartContainer()
-        guard let container = resolved ?? nativePanel?.terminalContainer else { return }
+        let mainWindowFallback = resolved == nil && nativePanel == nil
+        guard let container = resolved
+            ?? nativePanel?.terminalContainer
+            ?? (mainWindowFallback ? MainTerminalWindow.shared.terminalContainer : nil)
+        else { return }
 
         let pb = NSPasteboard.general
         let clipboard = container.filePathsString(from: pb) ?? pb.string(forType: .string) ?? ""
@@ -1361,11 +1379,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // found no separate auto-submit issue to mitigate beyond that.
         container.insertIntoActivePane(payload)
 
-        // Only reveal the panel when it was the fallback target (nothing was
+        // Only reveal a surface when it was the fallback target (nothing was
         // visible to resolve). `toggleNativePanel()` is gated on `!isVisible`
-        // so an already-visible panel is never toggled closed.
+        // so an already-visible panel is never toggled closed; the
+        // main-window twin below (F8) applies that same "only when it wasn't
+        // already up" rule for `.mainOnly`, where there's no panel to fall
+        // back to at all.
         if resolved == nil, let panel = nativePanel, !panel.isVisible {
             toggleNativePanel()
+        } else if mainWindowFallback, MainTerminalWindow.shared.window?.isVisible != true {
+            MainTerminalWindow.shared.show()
         }
     }
 
@@ -1381,6 +1404,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if template.contains("{clipboard}") {
             return template.replacingOccurrences(of: "{clipboard}", with: clipboard)
         }
+        // Fix round finding F9: an empty template used to fall straight into
+        // the `template + "\n" + clipboard` concatenation below, prefixing
+        // the clipboard with a stray leading blank line ("\nx"). An empty
+        // template has nothing to prepend, so send the clipboard bare.
+        guard !template.isEmpty else { return clipboard }
         return template + "\n" + clipboard
     }
 
