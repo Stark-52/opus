@@ -80,6 +80,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Bumped on every `refreshTodoDrawer()` call — same staleness guard as
     /// `contextMeterGeneration` above; see `refreshTodoDrawer`'s doc comment.
     private var todoDrawerGeneration = 0
+    /// Fix round finding F3: `refreshTodoDrawer()` fires on EVERY
+    /// `.opusPaneActivityChanged` post (prompt submitted, each tool
+    /// start/stop) via `paneActivityChanged` below, not just the 5s timer —
+    /// a tool-use burst can post several of those in quick succession. The
+    /// generation counter above already drops a STALE *result*, but it does
+    /// nothing about the *work*: each event still pays for its own
+    /// `contentsOfDirectory` + N file reads + N decodes before that result
+    /// is thrown away. This flag stops a new background read from being
+    /// kicked off at all while one is already in flight, so overlapping
+    /// refreshes don't stack up during a burst — set true right before
+    /// dispatching, cleared back on main once that read's result (used or
+    /// dropped) has been handled.
+    private var todoDrawerRefreshInFlight = false
     private static let tasksDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/tasks")
 
     // Cockpit (Lot 3, Task 5) — Cmd+click file[:line] references. The
@@ -305,12 +318,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // trailing (the drawer IS the container's rightmost edge while
         // open — there's nothing further right for it to leave room for).
         // Bottom is the one non-obvious anchor: it does NOT go all the way
-        // to the container's bottomAnchor (that would draw underneath/
-        // behind the status rail and, when 2+ tabs exist, the tab bar too —
-        // both are painted AFTER the drawer in z-order below, so an
-        // overlapping drawer would visually clip them). Instead its own
-        // bottom constraint is switched in lockstep with
-        // terminalAreaBottomConstraint inside updateTabIndicator, using the
+        // to the container's bottomAnchor (that would draw OVER the status
+        // rail and, when 2+ tabs exist, the tab bar too — fix round finding
+        // F6: this drawer is added LAST, below, i.e. it sits ABOVE both of
+        // them in z-order, not the other way around, so an overlapping
+        // drawer would visually hide them rather than being clipped by
+        // them). Instead its own bottom constraint is switched in lockstep
+        // with terminalAreaBottomConstraint inside updateTabIndicator, using the
         // literal SAME constants (terminalAreaBottomShown/Hidden) — so the
         // drawer's bottom edge always sits at EXACTLY the same y-position
         // as terminalArea's own bottom edge, which is already guaranteed
@@ -588,25 +602,27 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         if todoDrawer.isHidden {
             todoDrawer.isHidden = false
             // The dangerous-mode shield button (installShieldButton, above)
-            // floats at topAnchor+2 / trailingAnchor-28, 24×22 — entirely
-            // inside the drawer's top-right corner (drawer is 260pt wide,
-            // flush to the same trailing edge, topAnchor-pinned too). It's
-            // added to the view hierarchy AFTER the drawer (installShieldButton
-            // runs later in init than buildSubviews), so without this it
-            // would draw ON TOP of the drawer's header text instead of
-            // being covered by it — either way, the two fight for the same
-            // corner. Hidden for the drawer's duration rather than
-            // reflowing either one's geometry; restored the moment the
-            // drawer closes. No-ops on a container with no shield button at
-            // all (a non-`useSharedTab0` container never installs one).
-            shieldButton?.isHidden = true
+            // used to float at a FIXED offset from the container's own
+            // trailing edge, which sat inside the drawer's top-right corner
+            // whenever the drawer was open. Fix round finding F2: rather
+            // than hiding the shield for the drawer's duration (which kills
+            // the only at-a-glance "claude is running
+            // --dangerously-skip-permissions" signal), the button's trailing
+            // anchor is now pinned to `terminalArea.trailingAnchor` instead
+            // of the container's — so flipping this same
+            // `terminalAreaTrailingConstraint` that shrinks the terminal
+            // area also slides the shield left with it, landing inside the
+            // now-narrower terminal area instead of under the drawer. No
+            // shield-specific bookkeeping needed here anymore;
+            // `refreshShieldButton()` still governs the button's visibility
+            // on its own, unrelated axis (skip-permissions state, not drawer
+            // state).
             terminalAreaTrailingConstraint.constant = -TodoDrawerView.width
             layoutSubtreeIfNeeded()
             refreshTodoDrawer()
             startTodoDrawerTimer()
         } else {
             todoDrawer.isHidden = true
-            shieldButton?.isHidden = false
             terminalAreaTrailingConstraint.constant = 0
             layoutSubtreeIfNeeded()
             stopTodoDrawerTimer()
@@ -666,6 +682,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // than the drawer is actually open; a hidden drawer has nothing on
         // screen worth a disk read+parse for).
         guard !todoDrawer.isHidden else { return }
+        // Fix round finding F3: a refresh already in flight covers whatever
+        // this call would have asked for too (it started more recently than
+        // this event), so drop this trigger rather than paying for a second
+        // overlapping disk read — the timer (while open) and every other
+        // activity/tab-switch event during the burst will still land a
+        // fresh read the moment the in-flight one clears the flag below.
+        guard !todoDrawerRefreshInFlight else { return }
         todoDrawerGeneration += 1
         let generation = todoDrawerGeneration
 
@@ -673,10 +696,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             todoDrawer.tasks = []
             return
         }
+        todoDrawerRefreshInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let tasks = TaskListReader.load(sessionId: sessionId, tasksDir: Self.tasksDir)
             DispatchQueue.main.async {
-                guard let self, self.todoDrawerGeneration == generation else { return }
+                guard let self else { return }
+                self.todoDrawerRefreshInFlight = false
+                guard self.todoDrawerGeneration == generation else { return }
                 self.todoDrawer.tasks = tasks
             }
         }
@@ -695,9 +721,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         btn.setAccessibilityLabel("Skip permissions toggle")
         btn.translatesAutoresizingMaskIntoConstraints = false
         addSubview(btn)
+        // Fix round finding F2: pinned to `terminalArea.trailingAnchor`, NOT
+        // the container's own `trailingAnchor` — `terminalArea`'s trailing
+        // edge is the one that moves (`terminalAreaTrailingConstraint`, see
+        // `toggleTodoDrawer()`) when the todo drawer opens, so the shield
+        // slides left in lockstep with the terminal area instead of sitting
+        // fixed under the drawer's top-right corner. Offset preserved
+        // (-28) relative to that anchor, same as it was relative to the
+        // container's when the drawer never moved anything.
         NSLayoutConstraint.activate([
             btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            btn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -28),
+            btn.trailingAnchor.constraint(equalTo: terminalArea.trailingAnchor, constant: -28),
             btn.widthAnchor.constraint(equalToConstant: 24),
             btn.heightAnchor.constraint(equalToConstant: 22)
         ])
@@ -1673,16 +1707,31 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// literal Return: exactly the auto-submit bug this function exists to
     /// close, just relocated mid-paste instead of at the first `\n`. No
     /// other byte is touched — a bare, unpaired ESC is left exactly as
-    /// typed/pasted, matching how real terminals don't otherwise sanitize
-    /// pasted content; only this one 6-byte terminator is special-cased,
-    /// and only because it's indistinguishable, on the wire, from our own
-    /// closing marker.
+    /// typed/pasted. That is LESS aggressive than what mainstream terminal
+    /// emulators actually do on paste: xterm's `disallowedPasteControls`
+    /// filters ESC by default, Alacritty strips every `\x1b` byte from a
+    /// bracketed paste, and VTE-based terminals filter C0 controls outright.
+    /// Opus deliberately does none of that — pasting an ANSI-colored
+    /// transcript is a normal thing to do here — and special-cases only this
+    /// one 6-byte terminator, because it's indistinguishable, on the wire,
+    /// from our own closing marker.
+    ///
+    /// Fix round (finding F1): stripping the marker is done to a FIXPOINT —
+    /// a single `replacingOccurrences` pass is not enough, because removing
+    /// one match can splice the surrounding bytes into a NEW match.
+    /// `"\u{1B}[20" + "\u{1B}[201~" + "1~"` demonstrates it: one pass removes
+    /// the middle (real) occurrence and concatenates its neighbors into
+    /// `"\u{1B}[201~"` — a freshly-assembled end marker that a single pass
+    /// leaves behind. Looping until `payload` no longer contains the marker
+    /// closes that hole; each pass can only ever shrink `payload`, so this
+    /// always terminates.
     static func bracketedPaste(_ text: String, enabled: Bool) -> [UInt8] {
         guard enabled else { return Array(text.utf8) }
         let endMarker = "\u{1B}[201~"
-        let payload = text.contains(endMarker)
-            ? text.replacingOccurrences(of: endMarker, with: "")
-            : text
+        var payload = text
+        while payload.contains(endMarker) {
+            payload = payload.replacingOccurrences(of: endMarker, with: "")
+        }
         let start: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]  // ESC [ 2 0 0 ~
         let end: [UInt8]   = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]  // ESC [ 2 0 1 ~
         return start + Array(payload.utf8) + end

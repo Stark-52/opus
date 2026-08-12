@@ -19,4 +19,12 @@ final class SendToClaudeTests: XCTestCase {
     func testEmptyClipboardYieldsEmptyPayload() {
         XCTAssertEqual(AppDelegate.composeSendPayload(template: "{clipboard}", clipboard: ""), "")
     }
+
+    func testEmptyTemplateSendsTheClipboardBareWithNoLeadingBlankLine() {
+        // Fix round finding F9: an empty template (no {clipboard} placeholder
+        // to match, so it used to fall into the "append on its own line"
+        // branch) used to prefix the clipboard with a stray "\n" — "\nx"
+        // instead of "x". An empty template has nothing to prepend.
+        XCTAssertEqual(AppDelegate.composeSendPayload(template: "", clipboard: "x"), "x")
+    }
 }

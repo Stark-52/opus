@@ -71,4 +71,30 @@ final class BracketedPasteTests: XCTestCase {
         let text = "before\u{1B}[201~after"
         XCTAssertEqual(TerminalContainerView.bracketedPaste(text, enabled: false), Array(text.utf8))
     }
+
+    func testAdversarialOverlappingMarkerIsFullyStrippedNotRecreated() {
+        // Fix round finding F1: a single `replacingOccurrences` pass over
+        // "\u{1B}[20" + "\u{1B}[201~" + "1~" removes the middle (real)
+        // occurrence and, in doing so, splices its neighbors into a BRAND
+        // NEW "\u{1B}[201~" — a one-pass strip leaves an end marker behind.
+        // Stripping to a fixpoint (loop until no occurrence remains) must
+        // close that hole: the wrapped output may contain the marker
+        // exactly once, as the function's own trailing terminator, and
+        // nowhere else.
+        let text = "\u{1B}[20" + "\u{1B}[201~" + "1~"
+        let bytes = TerminalContainerView.bracketedPaste(text, enabled: true)
+
+        // The 6-byte end marker must appear EXACTLY once anywhere in the
+        // output — the wrapper's own trailing terminator. A one-pass strip
+        // would leave a second, reconstituted occurrence sitting in the
+        // payload ahead of it.
+        var occurrences = 0
+        if bytes.count >= end.count {
+            for i in 0...(bytes.count - end.count) where Array(bytes[i..<(i + end.count)]) == end {
+                occurrences += 1
+            }
+        }
+        XCTAssertEqual(occurrences, 1)
+        XCTAssertEqual(Array(bytes.suffix(end.count)), end)
+    }
 }

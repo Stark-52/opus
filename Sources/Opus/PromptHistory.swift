@@ -92,7 +92,7 @@ enum PromptHistory {
     /// raw, still-truncated tail instead, which fails `parse(line:)` as
     /// malformed JSON and is dropped in the loop below instead — same net
     /// result, one prompt silently missing from the returned list.
-    static func load(url: URL, limit: Int = 300, fileManager: FileManager = .default) -> [PromptEntry] {
+    static func load(url: URL, limit: Int = 300) -> [PromptEntry] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return [] }
