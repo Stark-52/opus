@@ -17,41 +17,6 @@ protocol TerminalContainerHost: AnyObject {
     func openInTerminalRequested()
 }
 
-/// 8pt circular activity indicator mirroring the ACTIVE tab's session state,
-/// pinned in the container's top-right button row, LEFT of the shield button
-/// (Fix 1, v1.4.1 — see TerminalContainerView.buildSubviews' installation
-/// site and refreshTabBarStates for how it's kept current). Exists because
-/// OpusTabBar collapses to 0pt height with a single tab — the app's PRIMARY
-/// usage mode — leaving its own per-tab dots nowhere to render.
-private final class PaneActivityDot: NSView {
-    var activity: PaneActivity = .idle { didSet { refresh() } }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        refresh()
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    /// Same color rule as OpusTabBar.draw's per-tab dots: amber while
-    /// working, red waiting on input, green once a turn/agent run finished,
-    /// hidden (no fill) at idle.
-    private func refresh() {
-        let color: NSColor?
-        let tip: String?
-        switch activity {
-        case .working:    color = .systemOrange; tip = "Claude is working"
-        case .needsInput: color = .systemRed;     tip = "Claude needs input"
-        case .done:       color = .systemGreen;   tip = "Claude finished"
-        case .idle:       color = nil;            tip = nil
-        }
-        layer?.backgroundColor = color?.cgColor
-        isHidden = color == nil
-        toolTip = tip
-    }
-}
-
 final class TerminalContainerView: NSView, TerminalViewDelegate {
     weak var host: TerminalContainerHost?
 
@@ -60,21 +25,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
     private var shieldButton: NSButton?
-    /// Fix 1 (v1.4.1) — see the class doc comment on PaneActivityDot above.
-    private var activityDot: PaneActivityDot!
-    /// Fix 2 (v1.4.1) — see buildSubviews' doc comment at the install site.
-    private var contextMeterBottomConstraint: NSLayoutConstraint!
-    /// Fix 3 (v1.4.2) — "ctx NN%" text readout, top-right control row,
-    /// immediately left of `activityDot`. See buildSubviews' install site
-    /// for the geometry and applyContextMeterResult for the text/color/
-    /// visibility it's driven from.
-    private var contextPercentLabel: NSTextField!
+    /// Bottom status rail (visual-harmonization spec, section 1 "Rail de
+    /// statut") — replaces the old top-right PaneActivityDot + "ctx NN%"
+    /// label pair (v1.4.1/v1.4.2) AND the bottom ContextMeterBar strip. See
+    /// buildSubviews' install site for the geometry, applyContextMeterResult
+    /// for the context fraction/readout/tooltip wiring, and
+    /// refreshTabBarStates for the activity-dot wiring.
+    private var statusRail: StatusRailView!
+    /// Own bottom constraint to the container's bottomAnchor, switched in
+    /// updateTabIndicator alongside tabBarHeightConstraint/
+    /// terminalAreaBottomConstraint — same mechanism the old
+    /// contextMeterBottomConstraint used (see updateTabIndicator's doc
+    /// comment for why this can't just track tabBar.topAnchor).
+    private var railBottomConstraint: NSLayoutConstraint!
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
     // Cockpit (Lot 3, Task 4) — context-window burn meter, see the MARK
     // section near the bottom of this file for the timer/read/parse pipeline.
-    private var contextMeterBar: ContextMeterBar!
     private var contextMeterTimer: Timer?
     /// Bumped on every `refreshContextMeter()` call — see that function's
     /// doc comment for the staleness guard this enables.
@@ -249,113 +217,47 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBar = bar
         tabBarHeightConstraint = heightC
 
-        // Context meter (Fix round 2, v1.4.1) — OWN bottom constraint to the
-        // container's bottomAnchor, switched in updateTabIndicator alongside
-        // tabBarHeightConstraint/terminalAreaBottomConstraint. The ORIGINAL
-        // `meter.bottomAnchor == bar.topAnchor` tracked the bar automatically,
-        // which sounds safer than a manually-toggled constant, but the bar's
-        // OWN bottomAnchor sits at container-bottom+8 regardless of its
-        // height — so with a single tab (bar height 0, the app's PRIMARY
-        // usage) the meter's 2pt strip rendered at that same +8 point,
-        // outside/below the visible chrome instead of hugging the bottom
-        // edge. Initial constant here already matches the "hidden" branch
-        // (-4) rather than deferring to updateTabIndicator(), because that
-        // function is only ever invoked by switchTab(to:) — a session that
-        // starts and stays on tab 0 would otherwise never correct it (see
-        // init's own updateTabIndicator() call, added for the same reason).
-        // Always present in the view hierarchy (never isHidden) — visibility
-        // is alpha-only, toggled by refreshContextMeter's read result, so a
-        // fade-in/out never needs a relayout pass. Added AFTER terminalArea
-        // above (z-above it already — no reorder needed).
-        // Fix 3 (v1.4.2): height 2 → 4. The owner's second live smoke
-        // reported the strip as "effectively invisible" at 2pt. The meter's
-        // own bottom-edge position (meterBottom's constant, below) is left
-        // UNCHANGED — the strip simply grows upward from the same floor, so
-        // this doesn't reposition it relative to the tab bar, only makes it
-        // thicker. See updateTabIndicator's reserved-space constants for
-        // the matching +2 bump to the room reserved above it.
-        let meter = ContextMeterBar(frame: .zero)
-        meter.translatesAutoresizingMaskIntoConstraints = false
-        meter.alphaValue = 0
-        addSubview(meter)
-        let meterBottom = meter.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
-        NSLayoutConstraint.activate([
-            meter.leadingAnchor.constraint(equalTo: leadingAnchor),
-            meter.trailingAnchor.constraint(equalTo: trailingAnchor),
-            meterBottom,
-            meter.heightAnchor.constraint(equalToConstant: 4)
-        ])
-        contextMeterBar = meter
-        contextMeterBottomConstraint = meterBottom
-
-        // Activity dot (Fix 1, v1.4.1) — top-right button row, left of the
-        // shield button (installed later in init, only when useSharedTab0 —
-        // see installShieldButton; this dot is unconditional so it also
-        // works for a hypothetical non-shared container). Mirrors the
-        // ACTIVE tab's state regardless of tab count — see refreshTabBarStates.
+        // Status rail (visual-harmonization spec, section 1 "Rail de statut")
+        // — bottom-of-panel strip that now carries BOTH the context-usage
+        // fill+readout (formerly ContextMeterBar + the top-right "ctx NN%"
+        // label) AND the activity dot (formerly the top-right PaneActivityDot),
+        // per the spec's "le statut passif descend, l'action reste en haut."
+        // OWN bottom constraint to the container's bottomAnchor, switched in
+        // updateTabIndicator alongside tabBarHeightConstraint/
+        // terminalAreaBottomConstraint — same mechanism the old
+        // contextMeterBottomConstraint used, and for the same reason
+        // (`rail.bottomAnchor == bar.topAnchor` would track the bar's own
+        // bottomAnchor, which sits at container-bottom+8 regardless of its
+        // height, not the bar's actual visible top edge).
         //
-        // Fix round 1 (v1.4.1 review): trailing constant is -88, not the
-        // originally-specified -56 — geometry check against Fix 3's z-order
-        // change caught an overlap. In BLUR coordinates (container is inset
-        // 14pt on every side from QuickTerminalPanel's blur, so
-        // containerTrailingEdge = blurWidth - 14): at -56 the dot spanned
-        // [blurW-78, blurW-70]. The panel-level pin button
-        // (`pinBtn.trailingAnchor == blur.trailingAnchor, constant: -72`,
-        // width 24) spans [blurW-96, blurW-72] in that same coordinate
-        // space — a 6pt overlap with the dot's old position. Fix 3 (same
-        // release) re-parents the pin ABOVE the container in z-order to fix
-        // ITS OWN visibility bug, which means the pin now draws over the
-        // dot in that overlap band instead of the reverse. At -88 the dot
-        // spans [blurW-110, blurW-102]: a 6pt clear gap left of the pin's
-        // left edge (blurW-96), and 36pt clear of the shield button's left
-        // edge (blurW-66, container trailing -28, width 24) on the other
-        // side.
-        let dot = PaneActivityDot(frame: .zero)
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(dot)
+        // No explicit height constraint — StatusRailView's intrinsicContentSize
+        // (the readout label's own height, measured 13pt for the 10pt
+        // monospaced-digit font) drives it, per StatusRailView's own doc
+        // comment and task-2-report.md's layout arithmetic. Leading/trailing
+        // pinned with zero inset, same as the old meter — the container's
+        // own leading/trailing edges already carry the panel's 14pt inset
+        // from the blur, so no additional constant belongs here.
+        //
+        // Initial bottom constant already matches updateTabIndicator's
+        // "hidden" branch (-4) rather than deferring to updateTabIndicator(),
+        // for the same reason the old meter did: that function only ever
+        // runs from switchTab(to:), so a session that starts and stays on
+        // tab 0 would otherwise never correct it (see init's own
+        // updateTabIndicator() call). Always present in the view hierarchy
+        // (never isHidden) — visibility is alpha-only (fraction == nil), so
+        // a fade-in/out never needs a relayout pass. Added AFTER
+        // terminalArea above (z-above it already — no reorder needed).
+        let rail = StatusRailView(frame: .zero)
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(rail)
+        let railBottom = rail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
         NSLayoutConstraint.activate([
-            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -88),
-            dot.topAnchor.constraint(equalTo: topAnchor, constant: 9),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8)
+            rail.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rail.trailingAnchor.constraint(equalTo: trailingAnchor),
+            railBottom
         ])
-        activityDot = dot
-
-        // Fix 3 (v1.4.2): "ctx NN%" text readout, top-right control row,
-        // immediately LEFT of the dot — the 4pt-tall bar alone was still
-        // easy to miss on the owner's second live smoke; a text readout is
-        // unmistakable. Trailing constant -104: in CONTAINER-space trailing
-        // offsets (same coordinate convention as the dot/pin comment
-        // above), the dot occupies [-96 (leading), -88 (trailing)] — see
-        // dot's own constant (-88) and width (8) above — so -104 puts this
-        // label's trailing edge a full 8pt clear of the dot's leading edge.
-        // Checked against the pin button too: pin is defined in BLUR space
-        // (`pinBtn.trailingAnchor == blur.trailingAnchor, constant: -72`,
-        // width 24 — see the dot's own doc comment above for that
-        // definition) which converts to container-space via `container =
-        // blur - 14`: pin trailing = -72-(-14)... i.e. distance-from-blur-
-        // edge(72) minus the 14pt container inset = 58, distance-from-blur-
-        // edge(96) minus 14 = 82, so pin spans container-trailing [-82
-        // (leading), -58 (trailing)] — entirely to the RIGHT of (less
-        // negative than) the dot's own leading edge (-96), so this label
-        // (further left/more negative than the dot) can't reach the pin
-        // either. No explicit width constraint — the label sizes itself
-        // from its own text ("ctx 83%" etc. — see applyContextMeterResult),
-        // growing further left/more negative as needed, well clear of
-        // everything else in this row. Full geometry table in the v1.4.2
-        // task report.
-        let ctxLabel = NSTextField(labelWithString: "")
-        ctxLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        ctxLabel.alignment = .right
-        ctxLabel.isSelectable = false
-        ctxLabel.alphaValue = 0   // hidden until usage data arrives — same condition as contextMeterBar
-        ctxLabel.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(ctxLabel)
-        NSLayoutConstraint.activate([
-            ctxLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -104),
-            ctxLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
-        ])
-        contextPercentLabel = ctxLabel
+        statusRail = rail
+        railBottomConstraint = railBottom
 
         layoutSubtreeIfNeeded()
     }
@@ -364,7 +266,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     //
     // A 10s Timer, started once this container's view first enters a window
     // (viewDidMoveToWindow — see below) and reads the ACTIVE tab's transcript
-    // tail on every fire to update `contextMeterBar`. In practice it then
+    // tail on every fire to update `statusRail`. In practice it then
     // runs for the app's lifetime: both hosts hide via orderOut/alpha
     // (QuickTerminalPanel's slide-out, MainTerminalWindow's orderOut), never
     // by detaching the view from its window, so `window != nil` stays true
@@ -485,7 +387,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let generation = contextMeterGeneration
 
         guard let sessionId = activeSessionIdForContextMeter() else {
-            contextMeterBar.alphaValue = 0
+            statusRail.fraction = nil
             return
         }
         let cwd = OpusPreferences.shared.workingDirectory
@@ -507,51 +409,31 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
-    /// Main-thread-only: paint the bar (or hide it) from a background scan's
-    /// result. `nil` (no transcript, no usage-bearing record yet, or the
-    /// session is otherwise unreadable) hides the bar entirely rather than
-    /// drawing a misleading 0%.
-    /// Fix 3 (v1.4.2) — cream at/under 70%, orange to 85%, red beyond. Takes
-    /// the CLAMPED (0...1) fraction, same input as `contextMeterBar.fraction`
-    /// — a session past 100% should read red, not fall off the end of the
-    /// scale. Deliberately independent of `ContextMeterBar.draw`'s own
-    /// green/orange/red choice (the text readout is a supplementary
-    /// affordance for the barely-visible bar, not required to reuse its
-    /// exact palette — cream reads as "normal" the same way the rest of
-    /// this app's default text does).
-    private static func contextLabelColor(forClampedFraction f: CGFloat) -> NSColor {
-        if f <= 0.70 { return NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.9) }
-        if f <= 0.85 { return .systemOrange }
-        return .systemRed
-    }
-
+    /// Main-thread-only: paint the rail (or hide it) from a background
+    /// scan's result. `nil` (no transcript, no usage-bearing record yet, or
+    /// the session is otherwise unreadable) hides the rail's bar+label
+    /// entirely (`statusRail.fraction = nil`) rather than drawing a
+    /// misleading 0%. The rail's own fill/label coloring (cream at/under
+    /// 70%, amber to 85%, red beyond — `OpusTheme.contextColor`) is
+    /// StatusRailView's job, not this container's; this function only feeds
+    /// it fraction/readout/tooltip.
     private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
         guard let result, result.limit > 0 else {
-            contextMeterBar.alphaValue = 0
-            contextPercentLabel.alphaValue = 0   // Fix 3 (v1.4.2): same hidden condition as the bar
+            statusRail.fraction = nil
             return
         }
         let rawFraction = Double(result.tokens) / Double(result.limit)
         let clampedFraction = CGFloat(min(max(rawFraction, 0), 1))
-        contextMeterBar.fraction = clampedFraction
-        contextMeterBar.alphaValue = 1
+        statusRail.fraction = clampedFraction
+        statusRail.readout = StatusRailView.readoutText(tokens: result.tokens, limit: result.limit)
         let kTokens = Int((Double(result.tokens) / 1000).rounded())
         let kLimit = Int((Double(result.limit) / 1000).rounded())
         // Deliberately computed from the UNCLAMPED rawFraction, unlike the
-        // bar's own `.fraction` above — a session that's blown past its
-        // limit should say so ("173%"), even though the bar itself visually
+        // rail's own `.fraction` above — a session that's blown past its
+        // limit should say so ("173%"), even though the rail's fill visually
         // caps at a full-width fill.
         let percent = Int((rawFraction * 100).rounded())
-        let tooltip = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
-        contextMeterBar.toolTip = tooltip
-
-        // Fix 3 (v1.4.2): text readout — same tooltip, same underlying
-        // numbers, so it can never say something the bar/tooltip disagree
-        // with.
-        contextPercentLabel.stringValue = "ctx \(percent)%"
-        contextPercentLabel.textColor = Self.contextLabelColor(forClampedFraction: clampedFraction)
-        contextPercentLabel.toolTip = tooltip
-        contextPercentLabel.alphaValue = 1
+        statusRail.tooltipText = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
     }
 
     // MARK: Dangerous-mode shield button
@@ -1553,31 +1435,46 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabBar.isHidden = !showBar
         tabBar.alphaValue = showBar ? 1 : 0
         tabBarHeightConstraint.constant = showBar ? 26 : 0
-        // Fix round 2 (v1.4.1): +4 more than before in both branches — room
-        // reserved for the context meter's own strip (see
-        // contextMeterBottomConstraint below) so the terminal never draws
+        // Room reserved above terminalArea's bottom edge for the status
+        // rail (see railBottomConstraint below) so the terminal never draws
         // over it. Broken into named CGFloat constants — the compiler
         // choked ("unable to type-check in reasonable time") on the
         // arithmetic-inside-ternary form.
         //
-        // Fix 3 (v1.4.2): that reserved allocation grows from 4 → 6,
-        // matching the meter's own height going from 2pt → 4pt in
-        // buildSubviews (2pt breathing room above the strip, same as
-        // before, plus the 2 extra points the strip itself now occupies).
-        // The meter's own bottom-edge position (contextMeterBottomShown/
-        // Hidden just below) is a separate, UNCHANGED concern — it fixes
-        // where the strip's floor sits, not how tall it is — so those two
-        // constants don't need to move for a height-only change.
-        let terminalAreaBottomShown: CGFloat = -50   // -(14 + 26 + 4 + 6)
-        let terminalAreaBottomHidden: CGFloat = -20  // -(14 + 6)
+        // Task 3 (visual harmonization): reserved allocation grows from 6 →
+        // 15 — the strip itself is no longer the 4pt ContextMeterBar but
+        // StatusRailView, whose intrinsicContentSize (the 10pt monospaced-
+        // digit readout label's own height) measures 13pt (see
+        // task-2-report.md's layout arithmetic; also reproduced locally: an
+        // `NSTextField(labelWithString:)` in
+        // `.monospacedDigitSystemFont(ofSize: 10, weight: .regular)` reports
+        // `intrinsicContentSize.height == 13.0`). Same "2pt breathing room
+        // above the strip" term as before (established Fix 3, v1.4.2),
+        // 2 + 13 = 15 replacing the old 2 + 4 = 6. The rail's own bottom-edge
+        // position (railBottomShown/Hidden just below) is a separate,
+        // UNCHANGED concern — same floor the old meter used — it fixes
+        // where the strip's floor sits, not how tall it is, so those two
+        // constants don't need to move for a height-only change: growing the
+        // reserved allocation by the same +9 (13 - 4) that the rail grew by
+        // versus the old meter preserves the exact gap between terminalArea's
+        // bottom edge and the strip's top edge in BOTH states (shown: 10pt,
+        // hidden: 12pt — unchanged from before this task), and the rail's
+        // unchanged floor preserves the exact gap from the strip's bottom
+        // edge down to the tab bar in both states too (shown: 18pt, hidden:
+        // 12pt — also unchanged).
+        let terminalAreaBottomShown: CGFloat = -59   // -(14 + 26 + 4 + 15)
+        let terminalAreaBottomHidden: CGFloat = -29  // -(14 + 15)
         terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
-        // Context meter (Fix round 2, v1.4.1): own constant, switched in
-        // lockstep with the two above — see buildSubviews' doc comment on
-        // contextMeterBottomConstraint for why this can't just track
-        // tabBar.topAnchor the way it used to.
-        let contextMeterBottomShown: CGFloat = -36   // -(8 + 26 + 2)
-        let contextMeterBottomHidden: CGFloat = -4
-        contextMeterBottomConstraint.constant = showBar ? contextMeterBottomShown : contextMeterBottomHidden
+        // Status rail: own constant, switched in lockstep with the two
+        // above — see buildSubviews' doc comment on railBottomConstraint for
+        // why this can't just track tabBar.topAnchor the way it used to.
+        // Values UNCHANGED from the old contextMeterBottomShown/Hidden — the
+        // rail's floor doesn't move, only its height (and therefore the
+        // terminalArea reservation above) changed. See this function's own
+        // doc comment above for the gap arithmetic this preserves.
+        let railBottomShown: CGFloat = -36   // -(8 + 26 + 2)
+        let railBottomHidden: CGFloat = -4
+        railBottomConstraint.constant = showBar ? railBottomShown : railBottomHidden
         tabBar.needsDisplay = true
         layoutSubtreeIfNeeded()
     }
@@ -1631,12 +1528,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             guard let sessionId = sessionId(for: panes[idx]) else { return .idle }
             return ClaudeStateStore.shared.state(forSessionId: sessionId)
         }
-        // Fix 1 (v1.4.1): mirror the ACTIVE tab's state into the always-
-        // visible status dot — same refresh path as tabBar.states itself, so
-        // every existing call site that keeps the tab-bar dots current
+        // Mirror the ACTIVE tab's state into the always-visible status
+        // rail's activity dot — same refresh path as tabBar.states itself,
+        // so every existing call site that keeps the tab-bar dots current
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.
-        activityDot.activity = tabBar.states.indices.contains(activeTabIndex) ? tabBar.states[activeTabIndex] : .idle
+        statusRail.activity = tabBar.states.indices.contains(activeTabIndex) ? tabBar.states[activeTabIndex] : .idle
     }
 
     @objc private func paneActivityChanged() {

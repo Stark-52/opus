@@ -1,9 +1,9 @@
 // StatusRailView — the status rail Task 2 adds per the visual-harmonization
 // spec (docs/superpowers/specs/2026-08-12-opus-visual-harmonization-design.md,
-// section 1 "Rail de statut"). Replaces the old top-right "ctx NN%" label +
-// PaneActivityDot + ContextMeterBar trio (all still live in
-// TerminalContainerView.swift/ContextMeter.swift until Task 3 wires this view
-// in and removes them — NOT this task's job, see task-2-brief.md).
+// section 1 "Rail de statut"). Replaced the old top-right "ctx NN%" label +
+// PaneActivityDot + ContextMeterBar trio — Task 3 wired this view into
+// TerminalContainerView and deleted all three (PaneActivityDot and
+// ContextMeterBar no longer exist anywhere in the codebase).
 //
 // Layout, left to right, all geometry from OpusTheme (Task 1):
 //   [context rail — fills all width left of the trailing cluster]
@@ -17,10 +17,11 @@
 //    edge visibly shift every time the readout's digit count changed]
 //
 // The rail is vertically centered on the label's baseline row. Intrinsic
-// height is the label's own height (~14pt for a 10pt system font) — the rail
-// and dot are small enough to always fit centered within that, so nothing
-// else drives the view's height. See task-2-report.md for the exact
-// arithmetic Task 3 should anchor its constraints to.
+// height is the label's own height (measured 13pt for the 10pt monospaced-
+// digit font) — the rail and dot are small enough to always fit centered
+// within that, so nothing else drives the view's height. See
+// task-2-report.md and task-3-report.md for the exact arithmetic
+// TerminalContainerView's constraints anchor to.
 //
 // No animation anywhere (the owner's explicit "retenue sur les animations UI"
 // rule, restated in the design spec's "Ce qui ne change pas") — every
