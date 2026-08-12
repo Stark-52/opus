@@ -110,6 +110,11 @@ final class SessionSwitcherPanel: NSObject {
     /// Bumped on every open() — a background scan whose generation is stale
     /// by the time it returns (palette closed/reopened meanwhile) is dropped.
     private var scanGeneration = 0
+    /// v1.4.2 task-review Finding 4 — retained local keyDown monitor token;
+    /// see its installation site (end of `init`) for what it does and why.
+    /// AppKit drops an unretained monitor, same caveat as
+    /// `TerminalContainerView.commandClickMonitor`.
+    private var keyMonitor: Any?
 
     private override init() {
         let width: CGFloat = 480
@@ -208,6 +213,49 @@ final class SessionSwitcherPanel: NSObject {
         table.dataSource = self
         table.target = self
         table.doubleAction = #selector(rowDoubleClicked)
+
+        // v1.4.2 task-review Finding 4 — clicking a palette row moves first
+        // responder to the NSTableView (AppKit's normal click-to-select
+        // behavior, restored by Fix 1 above), and a plain unsubclassed
+        // NSTableView does NOT map Return to `doubleAction` the way a real
+        // double-click does — so click-then-Enter could silently do
+        // nothing. A LOCAL keyDown monitor scoped to this panel's window
+        // makes Return/Escape/Up/Down handling independent of WHICHEVER
+        // subview currently holds focus (search field or table): it sees
+        // every keyDown before AppKit's normal responder-chain dispatch
+        // (same mechanic as `TerminalContainerView.commandClickMonitor` —
+        // see that monitor's own doc comment), so returning `nil` for these
+        // four keys fully consumes them regardless of first responder.
+        // Every other key returns the event UNTOUCHED so typing still
+        // reaches the search field. Because this monitor runs first and
+        // consumes Return/Escape/Up/Down outright, the search field
+        // delegate's `control(_:textView:doCommandBy:)` handling for those
+        // same commands (moveUp/moveDown/insertNewline/cancelOperation) can
+        // never fire again — confirmed by how local monitors are documented
+        // to run ahead of responder-chain dispatch — so that now-dead
+        // method was removed below rather than left as unreachable
+        // duplicate logic. Never removed once installed — this is a
+        // singleton panel (`SessionSwitcherPanel.shared`) that lives for
+        // the app's lifetime, same rationale as commandClickMonitor.
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
+            guard let self, ev.window === self.panel else { return ev }
+            switch ev.keyCode {
+            case 36:    // Return
+                self.openSelection()
+                return nil
+            case 53:    // Escape
+                self.close()
+                return nil
+            case 125:   // Down arrow
+                self.moveSelection(by: 1)
+                return nil
+            case 126:   // Up arrow
+                self.moveSelection(by: -1)
+                return nil
+            default:
+                return ev
+            }
+        }
     }
 
     // MARK: Show/hide
@@ -302,30 +350,23 @@ final class SessionSwitcherPanel: NSObject {
     }
 }
 
-// MARK: - NSSearchFieldDelegate (live filter + key navigation)
+// MARK: - NSSearchFieldDelegate (live filter)
+//
+// v1.4.2 task-review Finding 4 — this used to also implement
+// `control(_:textView:doCommandBy:)` for moveUp/moveDown/insertNewline/
+// cancelOperation (Up/Down/Return/Escape). That handling only ever fired
+// while the search field itself held first responder — a clicked table row
+// stole focus to the NSTableView, which doesn't forward Return through this
+// delegate path at all (a plain NSTableView maps Return to nothing, not
+// `doubleAction`), so click-then-Enter silently did nothing. Replaced by
+// the local keyDown monitor installed at the end of `init` above, which is
+// independent of first responder AND runs ahead of this delegate path in
+// AppKit's dispatch order — so this method is now dead code for those four
+// keys and was removed rather than left unreachable.
 
 extension SessionSwitcherPanel: NSSearchFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         applyFilter()
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        switch commandSelector {
-        case #selector(NSResponder.moveDown(_:)):
-            moveSelection(by: 1)
-            return true
-        case #selector(NSResponder.moveUp(_:)):
-            moveSelection(by: -1)
-            return true
-        case #selector(NSResponder.insertNewline(_:)):
-            openSelection()
-            return true
-        case #selector(NSResponder.cancelOperation(_:)):
-            close()
-            return true
-        default:
-            return false
-        }
     }
 }
 
