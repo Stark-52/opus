@@ -27,7 +27,7 @@ import Foundation
 /// stream can tell. Drives the tab-bar dot color (see OpusTabBar.draw).
 enum PaneActivity: Equatable {
     case idle        // no dot
-    case working     // amber dot — prompt in flight / tool running
+    case working     // cyan dot — prompt in flight / tool running
     case needsInput  // red dot — permission/idle/elicitation/agent_needs_input
     case done        // green dot — turn ended, or agent reported completion
 }
