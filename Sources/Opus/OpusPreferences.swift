@@ -108,6 +108,8 @@ final class OpusPreferences {
         static let editorCommand          = "opus.editorCommand"
         // Context meter (Task 2, v1.4.2 follow-up)
         static let contextLimitTokens     = "opus.contextLimitTokens"
+        // Send to Claude (v1.6 backlog, Task 2)
+        static let sendToClaudeTemplate   = "opus.sendToClaudeTemplate"
     }
 
     // MARK: Typed accessors
@@ -286,6 +288,17 @@ final class OpusPreferences {
             return v == 0 ? 1_000_000 : min(2_000_000, max(10_000, v))
         }
         set { write(K.contextLimitTokens, min(2_000_000, max(10_000, newValue))) }
+    }
+
+    /// Template for Cmd+Ctrl+S (send clipboard to the active Claude session,
+    /// v1.6 backlog Task 2). `{clipboard}` is replaced with the clipboard
+    /// content by `AppDelegate.composeSendPayload`; a template that forgets
+    /// the placeholder gets the clipboard appended on its own line rather
+    /// than silently dropped. Default is the bare placeholder — clipboard
+    /// content goes through unmodified until the user customizes it.
+    var sendToClaudeTemplate: String {
+        get { defaults.string(forKey: K.sendToClaudeTemplate) ?? "{clipboard}" }
+        set { write(K.sendToClaudeTemplate, newValue) }
     }
 
     /// Bump font size by delta, clamped to 9…24 bounds.
