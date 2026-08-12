@@ -87,6 +87,28 @@ final class FindNavigationTests: XCTestCase {
         XCTAssertEqual(result.text, "2 / 5")
     }
 
+    // MARK: scheduledCountPlaceholder — v1.5 re-review of 43853ca
+
+    func testScheduledCountPlaceholderMatchesFoundWithUnknownTotal() {
+        // The label `navigateFind` paints the instant a jump succeeds but
+        // its count is still in flight (scheduleMatchCount) must be
+        // byte-for-byte the SAME text `resolveMatchDisplay` returns for its
+        // found-but-total-unknown case — otherwise a stale "no match" from a
+        // PRIOR failed search could survive the ~84ms until the background
+        // count lands, contradicting a highlight already visible on screen.
+        // Checked across both directions and several previousIndex values
+        // so the two can never silently drift apart.
+        for direction: TerminalContainerView.FindDirection in [.up, .down] {
+            for previousIndex in [0, 1, 4] {
+                let placeholder = TerminalContainerView.scheduledCountPlaceholder(previousIndex: previousIndex, direction: direction)
+                let expected = TerminalContainerView.resolveMatchDisplay(found: true, total: 0, previousIndex: previousIndex, direction: direction).text
+                XCTAssertEqual(placeholder, expected)
+                XCTAssertEqual(placeholder, "…")
+                XCTAssertNotEqual(placeholder, "no match")
+            }
+        }
+    }
+
     // MARK: harvestCap — Finding 3
 
     func testHarvestCapTracksScrollbackWithHeadroom() {

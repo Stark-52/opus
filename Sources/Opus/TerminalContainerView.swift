@@ -750,10 +750,22 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// harvest + 84ms count at the default 10k scrollback, 535ms at the
     /// old 50k cap — see `harvestBufferLines`'s doc comment). The counter
     /// text is then either updated immediately (cache hit —
-    /// `HarvestCache.isValid(for:)`) or left exactly as it was until a
-    /// background count lands (`scheduleMatchCount`) — never blanked
-    /// mid-flight, and never shown for a stale term (a fresh term's
-    /// position is only shown once ITS count lands).
+    /// `HarvestCache.isValid(for:)`) or replaced with the "unknown position"
+    /// placeholder right away, pending a background count landing
+    /// (`scheduleMatchCount`) — never left showing a STALE label, and never
+    /// shown for a stale term (a fresh term's real position is only shown
+    /// once ITS count lands).
+    ///
+    /// v1.5 re-review of 43853ca (Finding: stale "no match" over a
+    /// highlighted result) — the sequence this closes: search term A finds
+    /// nothing (`applyMatchDisplay` writes "no match" synchronously, see the
+    /// `guard found` branch below), then search term B's jump succeeds
+    /// (`found == true`, and SwiftTerm has ALREADY highlighted it on screen)
+    /// but is a cache miss, so its count goes async. Before this fix, the
+    /// label sat at term A's stale "no match" for the ~84ms the background
+    /// count took — directly contradicting the highlight the user could
+    /// already see. Fixed in the cache-miss branch below: write the
+    /// placeholder BEFORE dispatching, not after.
     private func navigateFind(term: String, direction: FindDirection) {
         guard !term.isEmpty else {
             // Fix 2 (v1.4.2): "empty when the search term is empty." This
@@ -795,6 +807,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             applyMatchDisplay(found: true, total: cache.total, direction: direction)
             return
         }
+        // v1.5 re-review of 43853ca — SwiftTerm already jumped to (and
+        // highlighted) a match by this point, but the real "n / total"
+        // count is about to go async below. Paint the placeholder onto the
+        // bar RIGHT NOW rather than leaving whatever text was there before
+        // this call — including a stale "no match" left over from a PRIOR
+        // search term that failed (see this method's own doc comment above
+        // for the exact repro) — sitting under a highlight it now
+        // contradicts for the ~84ms the background count takes.
+        //
+        // Goes straight to `findBar?.updateMatchCounter`, NOT through
+        // `applyMatchDisplay` — that would also overwrite `matchIndex`/
+        // `matchTotal`, and `scheduleMatchCount`'s eventual completion still
+        // needs THIS navigation's real `matchIndex` (captured below as
+        // `previousIndex`) to compute the correct next position once the
+        // count lands. Only the visible label changes here; the index
+        // bookkeeping is untouched.
+        let placeholder = Self.scheduledCountPlaceholder(previousIndex: matchIndex, direction: direction)
+        findBar?.updateMatchCounter(placeholder)
         scheduleMatchCount(term: term, direction: direction, terminalIdentity: terminalIdentity)
     }
 
@@ -843,6 +873,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         case .down: nextIndex = previousIndex <= 1 ? total : previousIndex - 1
         }
         return ("\(nextIndex) / \(total)", nextIndex, total)
+    }
+
+    /// v1.5 re-review of 43853ca — the exact text `navigateFind` paints onto
+    /// the counter the instant a jump succeeds (`found == true`) but its
+    /// count is a cache miss and about to go async (`scheduleMatchCount`).
+    /// Pure + static, wrapping `resolveMatchDisplay(found: true, total: 0,
+    /// ...)` — the SAME found-but-total-unknown case Finding 2 above
+    /// established — rather than a second "…" literal, so the two can never
+    /// silently drift apart. `previousIndex`/`direction` are accepted (and
+    /// forwarded) purely so this stays a faithful call to
+    /// `resolveMatchDisplay`; the `guard total > 0` branch it hits ignores
+    /// both and always returns "…" regardless.
+    static func scheduledCountPlaceholder(previousIndex: Int, direction: FindDirection) -> String {
+        resolveMatchDisplay(found: true, total: 0, previousIndex: previousIndex, direction: direction).text
     }
 
     /// v1.4.2 task-review Finding 1 — harvest (synchronously, on main — see
