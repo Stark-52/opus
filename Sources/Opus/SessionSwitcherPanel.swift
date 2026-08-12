@@ -33,8 +33,13 @@ private final class SessionRowBackground: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
         let r = bounds.insetBy(dx: 4, dy: 1)
-        NSColor(red: 0.45, green: 0.7, blue: 0.85, alpha: 0.35).setFill()
+        OpusTheme.cyan.withAlphaComponent(0.18).setFill()
         NSBezierPath(roundedRect: r, xRadius: 6, yRadius: 6).fill()
+        // 2pt left-edge accent stripe (spec section 5) — a stronger cyan than
+        // the fill so the selected row reads at a glance even at a distance.
+        let stripe = NSRect(x: r.minX, y: r.minY, width: 2, height: r.height)
+        OpusTheme.cyan.withAlphaComponent(0.6).setFill()
+        NSBezierPath(rect: stripe).fill()
     }
 }
 
@@ -47,7 +52,7 @@ private final class SessionCellView: NSTableCellView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        titleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.95)
+        titleLabel.textColor = OpusTheme.cream(0.95)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         // Fix 1 (v1.4.2) defensive: `labelWithString:` already configures
@@ -59,10 +64,11 @@ private final class SessionCellView: NSTableCellView {
         titleLabel.refusesFirstResponder = true
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 11)
-        // Fix 4 (v1.4.1): explicit cream at 60% alpha (was 50%) — see the
-        // panel-level doc comment on why every label here uses an explicit
-        // color instead of an adaptive one.
-        subtitleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.6)
+        // Harmonization spec section 5: subtitle = cream 55% (was 60%, itself
+        // a bump from an even earlier 50% — see the panel-level doc comment
+        // on why every label here uses an explicit color instead of an
+        // adaptive one).
+        subtitleLabel.textColor = OpusTheme.cream(0.55)
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.isSelectable = false   // Fix 1 (v1.4.2) defensive — see titleLabel above
@@ -147,7 +153,7 @@ final class SessionSwitcherPanel: NSObject {
         blur.blendingMode = .behindWindow
         blur.state = .active
         blur.wantsLayer = true
-        blur.layer?.cornerRadius = 14
+        blur.layer?.cornerRadius = OpusTheme.radiusPanel
         blur.layer?.masksToBounds = true
         blur.autoresizingMask = [.width, .height]
         panel.contentView = blur
@@ -156,23 +162,29 @@ final class SessionSwitcherPanel: NSObject {
         // `darkAqua` above fixes the material's own tint, but a HUD-material
         // NSVisualEffectView is still translucent — enough of a light desktop
         // could still bleed through and wash out the cream text. This solid
-        // fill (97% opaque) removes that dependency entirely.
+        // fill (OpusTheme.panelBackground, 97% opaque) removes that
+        // dependency entirely.
         let opaqueBG = NSView(frame: blur.bounds)
         opaqueBG.wantsLayer = true
-        opaqueBG.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.97).cgColor
-        opaqueBG.layer?.cornerRadius = 14
+        opaqueBG.layer?.backgroundColor = OpusTheme.panelBackground.cgColor
+        opaqueBG.layer?.cornerRadius = OpusTheme.radiusPanel
         opaqueBG.layer?.masksToBounds = true
         opaqueBG.autoresizingMask = [.width, .height]
         blur.addSubview(opaqueBG)
 
         let field = NSSearchField(frame: NSRect(x: 14, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
-        field.placeholderString = "Search conversations…"
+        // Same field styling as FindBarView (spec section 5: "strictement
+        // identique à celui de la barre de recherche").
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Search conversations…",
+            attributes: [.foregroundColor: OpusTheme.cream(0.45)]
+        )
         field.toolTip = "Resumes in the shared session (tab 0); a private tab, if active, is left untouched."
         field.font = NSFont.systemFont(ofSize: 14)
         // Fix 4 (v1.4.1): explicit cream, not the adaptive control-text
         // color — same rationale as titleLabel/subtitleLabel above.
-        field.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.95)
+        field.textColor = OpusTheme.cream(0.95)
         blur.addSubview(field)
         searchField = field
 

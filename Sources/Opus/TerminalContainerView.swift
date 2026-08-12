@@ -69,10 +69,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// left over from before a switch.
     private(set) var broadcastArmed = false { didSet { refreshBroadcastBorders() } }
 
-    /// Icy-cyan brand color — same RGB as `OpusSplitView.dividerColor` — at
-    /// a much louder 0.8 alpha (the divider's own 0.30 is meant to be
+    /// Icy-cyan brand color — same token as `OpusSplitView.dividerColor` —
+    /// at a much louder 0.8 alpha (the divider's own 0.30 is meant to be
     /// subtle; this needs to read as an unmistakable state change).
-    private static let broadcastBorderColor = NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.8).cgColor
+    private static let broadcastBorderColor = OpusTheme.cyan.withAlphaComponent(0.8).cgColor
 
     private var tabs: [NSView] = []
     private var tabPanes: [[TabPane]] = []
@@ -482,8 +482,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             accessibilityDescription: "Skip permissions"
         )
         btn.contentTintColor = active
-            ? NSColor.systemOrange
-            : NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.45)
+            ? OpusTheme.amber
+            : OpusTheme.cream(0.45)
         btn.toolTip = active
             ? "Skip permissions: ON. Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
             : "Skip permissions: OFF. Click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
@@ -1711,7 +1711,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         let title = NSTextField(labelWithString: "Session ended")
         title.font = NSFont.systemFont(ofSize: 17, weight: .semibold)
-        title.textColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
+        // Was a slightly warmer one-off cream (0.96/0.91/0.82) — unified onto
+        // the single OpusTheme.cream token per the harmonization spec.
+        title.textColor = OpusTheme.cream
         title.alignment = .center
 
         let subtitle = NSTextField(labelWithString:
@@ -1720,7 +1722,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 : "Claude exited in this tab."
         )
         subtitle.font = NSFont.systemFont(ofSize: 12)
-        subtitle.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.65)
+        subtitle.textColor = OpusTheme.cream(0.65)
         subtitle.alignment = .center
 
         let restartBtn = NSButton(
@@ -1830,11 +1832,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private func styleTerminal(_ t: TerminalView) {
         t.autoresizingMask = [.width, .height]
         t.nativeBackgroundColor = .clear
-        t.nativeForegroundColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 1.0)
+        t.nativeForegroundColor = OpusTheme.cream
         // Explicit caret color — the default can inherit the (clear) background
-        // and become invisible. Use a warm cream that stays readable on blur.
-        t.caretColor = NSColor(red: 0.96, green: 0.91, blue: 0.82, alpha: 1.0)
-        t.caretTextColor = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
+        // and become invisible. Cream stays readable on blur. (Was a
+        // one-off warmer cream, 0.96/0.91/0.82 — unified onto the same
+        // OpusTheme.cream token used everywhere else.)
+        t.caretColor = OpusTheme.cream
+        t.caretTextColor = OpusTheme.caretText
         t.allowMouseReporting = false
         t.font = OpusPreferences.shared.resolvedTerminalFont()
         // Scrollback applied at pane creation; existing panes keep their depth until recreated.
