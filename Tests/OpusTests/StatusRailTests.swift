@@ -22,4 +22,21 @@ final class StatusRailTests: XCTestCase {
     func testReadoutGuardsAgainstAZeroLimit() {
         XCTAssertEqual(StatusRailView.readoutText(tokens: 42, limit: 0), "0% · 0k")
     }
+
+    // Fix round 1 — review findings.
+
+    func testReadoutClampsNegativeTokensToZero() {
+        // Percent was already clamped at 0; kTokens was not, and produced
+        // "-1k" for a negative token count. Shouldn't happen in practice
+        // (ContextMeter only ever sums non-negative usage fields), but the
+        // formatter is a pure function — clamp defensively.
+        XCTAssertEqual(StatusRailView.readoutText(tokens: -500, limit: 1_000_000), "0% · 0k")
+    }
+
+    func testReadoutClampsPercentButKeepsTheTruthfulTokenCountWhenOverLimit() {
+        // Percent is clamped to 100 (display ceiling), but the absolute
+        // token count stays truthful past the limit — this was already the
+        // correct behavior, just untested until now.
+        XCTAssertEqual(StatusRailView.readoutText(tokens: 1_500_000, limit: 1_000_000), "100% · 1500k")
+    }
 }

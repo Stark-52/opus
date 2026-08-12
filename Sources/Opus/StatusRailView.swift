@@ -10,7 +10,11 @@
 //   [OpusTheme.controlGap]
 //   [activity dot, OpusTheme.dotSize]
 //   [OpusTheme.controlGap]
-//   [readout label, right-aligned at the trailing edge]
+//   [readout label — fixed labelColumnWidth (72pt), text right-aligned
+//    within it, column pinned to the trailing edge — see labelColumnWidth's
+//    doc comment below (Fix round 1) for why this is fixed rather than
+//    intrinsic: an intrinsic-width label made the dot and the rail's right
+//    edge visibly shift every time the readout's digit count changed]
 //
 // The rail is vertically centered on the label's baseline row. Intrinsic
 // height is the label's own height (~14pt for a 10pt system font) — the rail
@@ -76,13 +80,28 @@ final class StatusRailView: NSView {
         return l
     }()
 
+    /// Fixed column width for the readout label (Fix round 1). Measured
+    /// worst case at 10pt monospaced digits is "100% · 1000k" ≈ 68.8pt vs.
+    /// "5% · 7k" ≈ 36.7pt — a ~32pt swing that, left to intrinsic sizing,
+    /// shifted `label.frame.width` (and therefore both `dotX` in `drawDot()`
+    /// and `railWidth` in `drawRail()`, which read it directly) on nearly
+    /// every repaint as the boundaries in `readoutText` (9→10%, 99→100%,
+    /// 9k→10k, 99k→100k, 999k→1000k) are crossed — visible jitter in the
+    /// dot and the rail's right edge. 72pt covers the 68.8pt worst case
+    /// with headroom and lands on the 6pt (OpusTheme.controlGap) grid. The
+    /// label stays right-aligned (`l.alignment = .right` above) inside this
+    /// fixed column so short readouts still hug the trailing edge instead
+    /// of floating in the middle of it.
+    static let labelColumnWidth: CGFloat = 72
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         addSubview(label)
         label.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.widthAnchor.constraint(equalToConstant: Self.labelColumnWidth)
         ])
         updateVisibility()
     }
@@ -109,7 +128,12 @@ final class StatusRailView: NSView {
             label.textColor = OpusTheme.cream(0.55)
             return
         }
-        label.textColor = fraction > 0.70 ? OpusTheme.contextColor(fraction: fraction) : OpusTheme.cream(0.55)
+        // Clamp before both the threshold check and the color lookup (same
+        // clamp `drawRail()` applies) so the label and the rail fill can
+        // never disagree about which side of 0.70 an out-of-range fraction
+        // (e.g. a pre-safety-auto-bump overrun) falls on.
+        let clamped = min(max(fraction, 0), 1)
+        label.textColor = clamped > 0.70 ? OpusTheme.contextColor(fraction: clamped) : OpusTheme.cream(0.55)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -140,7 +164,11 @@ final class StatusRailView: NSView {
         // Minimum visible sliver so a nonzero-but-tiny fraction (e.g. 1%)
         // doesn't round away to nothing — same floor idea as the old
         // ContextMeterBar, expressed here as "at least one rail-height's
-        // worth of width" rather than a hardcoded pixel count.
+        // worth of width" rather than a hardcoded pixel count. DELIBERATE —
+        // not in the original brief, added because a 1% fill rounding down
+        // to 0pt-wide is a real regression (the whole point of the rail is
+        // that the owner can find it without being told where it is). Do not
+        // simplify this back to `railWidth * clamped` alone.
         let fillWidth = clamped > 0 ? max(OpusTheme.railHeight, railWidth * clamped) : 0
         guard fillWidth > 0 else { return }
         let fillRect = NSRect(x: 0, y: railY, width: fillWidth, height: OpusTheme.railHeight)
@@ -173,7 +201,11 @@ final class StatusRailView: NSView {
         guard limit > 0 else { return "0% · 0k" }
         let rawPercent = Int((Double(tokens) / Double(limit) * 100).rounded())
         let percent = min(max(rawPercent, 0), 100)
-        let kTokens = Int((Double(tokens) / 1000).rounded())
+        // Clamped at 0 same as percent above — a negative token count
+        // shouldn't ever happen in practice (ContextMeter sums non-negative
+        // usage fields), but the formatter is a pure function callers can
+        // hand anything to, and "-1k" reads as a bug, not a token count.
+        let kTokens = max(Int((Double(tokens) / 1000).rounded()), 0)
         return "\(percent)% · \(kTokens)k"
     }
 }
