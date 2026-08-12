@@ -100,11 +100,6 @@ final class SessionSwitcherPanel: NSObject {
     private static let projectsDir = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".claude/projects")
     private static let cellID = NSUserInterfaceItemIdentifier("SessionCell")
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
 
     private let panel: SessionSwitcherWindow
     private let searchField: NSSearchField
@@ -399,7 +394,7 @@ extension SessionSwitcherPanel: NSTableViewDataSource, NSTableViewDelegate {
         }
         let folder = (summary.cwd as NSString).lastPathComponent
         let branch = summary.gitBranch.map { " · \($0)" } ?? ""
-        let relative = Self.relativeFormatter.localizedString(for: summary.mtime, relativeTo: Date())
+        let relative = SessionIndex.relativeAge(from: summary.mtime)
         cell.configure(title: summary.title, subtitle: "\(folder)\(branch) · \(relative)")
         return cell
     }

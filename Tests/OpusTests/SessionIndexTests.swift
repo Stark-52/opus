@@ -9,6 +9,75 @@ final class SessionIndexTests: XCTestCase {
         Data(lines.joined(separator: "\n").utf8)
     }
 
+    // MARK: relativeAge
+
+    func testRelativeAge_0s_isNow() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref, now: ref), "now")
+    }
+
+    func testRelativeAge_59s_isNow() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-59), now: ref), "now")
+    }
+
+    func testRelativeAge_60s_is1m() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-60), now: ref), "1m")
+    }
+
+    func testRelativeAge_59min_is59m() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-59 * 60), now: ref), "59m")
+    }
+
+    func testRelativeAge_60min_is1h() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-60 * 60), now: ref), "1h")
+    }
+
+    func testRelativeAge_23h_is23h() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-23 * 3600), now: ref), "23h")
+    }
+
+    func testRelativeAge_24h_is1d() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-24 * 3600), now: ref), "1d")
+    }
+
+    func testRelativeAge_6d_is6d() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-6 * 86400), now: ref), "6d")
+    }
+
+    func testRelativeAge_7d_is1w() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-7 * 86400), now: ref), "1w")
+    }
+
+    func testRelativeAge_34d_is4w() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-34 * 86400), now: ref), "4w")
+    }
+
+    func testRelativeAge_35d_is1mo() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-35 * 86400), now: ref), "1mo")
+    }
+
+    func testRelativeAge_400d_is13mo() {
+        let ref = Date()
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(-400 * 86400), now: ref), "13mo")
+    }
+
+    func testRelativeAge_negativeInterval_futureMtimeFromClockSkew_isNow() {
+        let ref = Date()
+        // `date` is AFTER `now` — e.g. a file mtime slightly ahead due to
+        // clock skew. Must clamp to 0, never emit a sign.
+        XCTAssertEqual(SessionIndex.relativeAge(from: ref.addingTimeInterval(30), now: ref), "now")
+    }
+
     // MARK: parseSummary
 
     func testStringContent_extractsTitleAndCwd() {
