@@ -116,6 +116,12 @@ final class SessionSwitcherPanel: NSObject {
     /// AppKit drops an unretained monitor, same caveat as
     /// `TerminalContainerView.commandClickMonitor`.
     private var keyMonitor: Any?
+    /// Whatever held key status when the switcher opened (normally the Quick
+    /// Terminal panel) — restored on close, same reasoning (and same three
+    /// lines) as PromptPalettePanel.previousKeyWindow: the panel now stays
+    /// on screen when an Opus window takes key, so somebody has to hand key
+    /// back to it or it ends up visible but keyless.
+    private weak var previousKeyWindow: NSWindow?
 
     private override init() {
         let width: CGFloat = 480
@@ -285,6 +291,7 @@ final class SessionSwitcherPanel: NSObject {
         filtered = []
         tableView.reloadData()
 
+        previousKeyWindow = NSApp.keyWindow
         panel.orderFrontRegardless()
         panel.makeKey()
         panel.makeFirstResponder(searchField)
@@ -303,6 +310,12 @@ final class SessionSwitcherPanel: NSObject {
     private func close() {
         visible = false
         panel.orderOut(nil)
+        // See PromptPalettePanel.close() — ordering a non-activating panel out
+        // does not hand key status back on its own while Opus is a background
+        // app, and the Quick Terminal panel no longer autohides itself out of
+        // the way when an Opus window takes key.
+        if let previous = previousKeyWindow, previous.isVisible { previous.makeKey() }
+        previousKeyWindow = nil
     }
 
     // The "mouse" screen — same rationale/technique as QuickTerminalPanel's
