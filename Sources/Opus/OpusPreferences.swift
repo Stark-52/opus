@@ -106,6 +106,8 @@ final class OpusPreferences {
         static let scrollbackLines        = "opus.scrollbackLines"
         // Cockpit (Lot 3, Task 5)
         static let editorCommand          = "opus.editorCommand"
+        // Context meter (Task 2, v1.4.2 follow-up)
+        static let contextLimitTokens     = "opus.contextLimitTokens"
     }
 
     // MARK: Typed accessors
@@ -267,6 +269,23 @@ final class OpusPreferences {
             return v == 0 ? 10_000 : min(200_000, max(1_000, v))
         }
         set { write(K.scrollbackLines, min(200_000, max(1_000, newValue))) }
+    }
+
+    /// Context-window ceiling (in tokens) the context meter divides observed
+    /// usage by. Claude Code's transcript carries no context-window metadata
+    /// (verified across every record field), and the live model id alone
+    /// can't tell 200k from 1M-context sessions — so this is a user-set
+    /// preference, not a derived value. Clamped to 10,000…2,000,000 (the
+    /// 2,000,000 ceiling matches `ContextMeter.twoMillionLimit`, the top tier
+    /// its safety auto-bump can reach). Default 1,000,000 — the owner's
+    /// baseline is 1M-context sessions; drop it to 200,000 in Settings for a
+    /// standard-window session.
+    var contextLimitTokens: Int {
+        get {
+            let v = defaults.integer(forKey: K.contextLimitTokens)
+            return v == 0 ? 1_000_000 : min(2_000_000, max(10_000, v))
+        }
+        set { write(K.contextLimitTokens, min(2_000_000, max(10_000, newValue))) }
     }
 
     /// Bump font size by delta, clamped to 9…24 bounds.

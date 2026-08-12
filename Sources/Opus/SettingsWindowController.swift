@@ -27,6 +27,7 @@ final class SettingsWindowController: NSWindowController {
     private var fontSizeField: NSTextField?
     private var fontSizeStepper: NSStepper?
     private var scrollbackLinesField: NSTextField?
+    private var contextLimitField: NSTextField?
     private var fontFamilies: [String] = []
 
     private convenience init() {
@@ -325,9 +326,25 @@ final class SettingsWindowController: NSWindowController {
         scrollbackField.action = #selector(onScrollbackLinesSubmitted(_:))
         self.scrollbackLinesField = scrollbackField
 
+        let contextLimitLabel = NSTextField(labelWithString: "Context window (tokens)")
+        contextLimitLabel.alignment = .right
+        let contextLimitField = NSTextField(string: String(OpusPreferences.shared.contextLimitTokens))
+        contextLimitField.alignment = .center
+        let contextLimitFormatter = NumberFormatter()
+        contextLimitFormatter.minimum = 10_000
+        contextLimitFormatter.maximum = 2_000_000
+        contextLimitFormatter.allowsFloats = false
+        contextLimitField.formatter = contextLimitFormatter
+        contextLimitField.target = self
+        contextLimitField.action = #selector(onContextLimitSubmitted(_:))
+        let contextLimitTooltip = "Claude Code does not expose the session's context window, so set it here (1000000 default; use 200000 for standard-window sessions)."
+        contextLimitLabel.toolTip = contextLimitTooltip
+        contextLimitField.toolTip = contextLimitTooltip
+        self.contextLimitField = contextLimitField
+
         for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn,
                   fontLabel, fontPopup, sizeLabel, sizeField, sizeStepper,
-                  scrollbackLabel, scrollbackField] {
+                  scrollbackLabel, scrollbackField, contextLimitLabel, contextLimitField] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
@@ -377,7 +394,14 @@ final class SettingsWindowController: NSWindowController {
             scrollbackLabel.widthAnchor.constraint(equalToConstant: 160),
             scrollbackField.centerYAnchor.constraint(equalTo: scrollbackLabel.centerYAnchor),
             scrollbackField.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
-            scrollbackField.widthAnchor.constraint(equalToConstant: 80)
+            scrollbackField.widthAnchor.constraint(equalToConstant: 80),
+
+            contextLimitLabel.topAnchor.constraint(equalTo: scrollbackLabel.bottomAnchor, constant: 20),
+            contextLimitLabel.leadingAnchor.constraint(equalTo: modeLabel.leadingAnchor),
+            contextLimitLabel.widthAnchor.constraint(equalToConstant: 160),
+            contextLimitField.centerYAnchor.constraint(equalTo: contextLimitLabel.centerYAnchor),
+            contextLimitField.leadingAnchor.constraint(equalTo: modePopup.leadingAnchor),
+            contextLimitField.widthAnchor.constraint(equalToConstant: 80)
         ])
 
         refreshAppearanceVisibility(mode: currentMode)
@@ -559,6 +583,12 @@ final class SettingsWindowController: NSWindowController {
         sender.stringValue = String(clamped)
     }
 
+    @objc private func onContextLimitSubmitted(_ sender: NSTextField) {
+        OpusPreferences.shared.contextLimitTokens = Int(sender.intValue)
+        let clamped = OpusPreferences.shared.contextLimitTokens
+        sender.stringValue = String(clamped)
+    }
+
     private func refreshAppearanceVisibility(mode: String) {
         let showTint = (mode == "tint")
         let showImage = (mode == "image")
@@ -577,6 +607,7 @@ final class SettingsWindowController: NSWindowController {
         fontSizeField?.stringValue = String(Int(OpusPreferences.shared.fontSize))
         fontSizeStepper?.integerValue = Int(OpusPreferences.shared.fontSize)
         scrollbackLinesField?.stringValue = String(OpusPreferences.shared.scrollbackLines)
+        contextLimitField?.stringValue = String(OpusPreferences.shared.contextLimitTokens)
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)

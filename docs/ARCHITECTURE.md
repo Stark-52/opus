@@ -198,6 +198,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.panelPinned` | Bool | `false` |
 | `opus.scrollbackLines` | Int | `10_000` (clamped 1,000–200,000) |
 | `opus.editorCommand` | String | `code -g {target}` (`{target}` → `path` or `path:line`) |
+| `opus.contextLimitTokens` | Int | `1_000_000` (clamped 10,000–2,000,000) — the transcript carries no context-window metadata, so ContextMeter's limit is this pref, not a derived value (see `ContextMeter.resolveLimit`) |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
 
