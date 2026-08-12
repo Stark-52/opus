@@ -28,7 +28,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Session-ended overlay** — when Claude exits and there are no other live panes, you get a centered "Start new session" / "Close Opus" prompt instead of a frozen dead terminal.
 - **Event-driven resize** — `opus-attach` reports SIGWINCH via a self-pipe; the broadcaster ioctls the master PTY and SIGWINCHes the child on focus change. No polling.
 - **Cursor stays visible in Claude's TUI** — DECTCEM hide/show sequences (`\e[?25l` / `\e[?25h`) are filtered out before reaching SwiftTerm so the caret doesn't disappear inside the panel.
-- **Find in scrollback** (`Cmd+F`) — a find bar over SwiftTerm's built-in search engine. Enter = next match, Shift+Enter = previous, Esc = close. `Cmd+G` / `Cmd+Shift+G` step to the next/previous match without refocusing the bar.
+- **Find in scrollback** (`Cmd+F`) — a find bar over SwiftTerm's built-in search engine. Enter = previous match (searches up, toward older lines), Shift+Enter = next match (down, toward the bottom), Esc = close. `Cmd+G` / `Cmd+Shift+G` repeat the previous/next match without refocusing the bar.
 - **"Claude needs you" notifications** — a terminal bell fires a Dock badge + bounce and a native notification when Opus is backgrounded, debounced so a bell storm collapses to one signal.
 - **Pin button** (top-right of the panel) — disables panel autohide so it stays visible while you work in another app, for monitoring long-running sessions.
 - **`opus-attach send`** — push a one-shot prompt into the live shared session from scripts, cron, git hooks, or Raycast, without attaching a terminal.
@@ -40,6 +40,11 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Cmd+click file:line** — click a file path (with optional `:line`) anywhere in the terminal to open it in your editor. Defaults to `code -g {target}`; there's no Settings UI for this yet, so change it with `defaults write com.stark52.opus opus.editorCommand "your-editor {target}"`.
 - **Broadcast input** (`Cmd+Shift+I`) — type once, land in every pane of the active tab; armed panes get a lit border so you can't forget it's on.
 - **Prompt jump** (`Cmd+Up` / `Cmd+Down`) — jump the scrollback straight to the previous/next submitted prompt.
+- **Prompt history palette** (`Cmd+Shift+P`, v1.6) — fuzzy-search every prompt you've ever typed into Claude Code on this machine, any project or session, not just the active pane's scrollback. Enter inserts the picked prompt into the active pane without submitting it — you review and hit Return yourself, same feel as a paste.
+- **Send to Claude** (`Cmd+Ctrl+S`, v1.6) — global hotkey, works from anywhere: sends the clipboard (or Finder-selected file paths, same handling as `Cmd+V`) straight into the active Claude session without submitting it. The payload template is configurable in Settings (`opus.sendToClaudeTemplate`, default `{clipboard}`).
+- **Task drawer** (`Cmd+Shift+T`, v1.6) — slide-in right-side panel showing the active pane's bound Claude session's task list (pending / in-progress / completed), read live off `~/.claude/tasks/<session-id>/` and refreshed every 5s while open.
+
+Note: multi-line pastes, drag-dropped Finder paths, and text delivered by the palette/hotkey above are now wrapped in bracketed-paste markers before reaching claude, so embedded newlines land as data instead of triggering an early submit (fixed in v1.6 — see Changelog).
 
 ## Build
 
@@ -128,6 +133,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- v1.6 (2026-08-12): prompt history palette, global send-to-Claude hotkey, task drawer, bracketed paste for multi-line input.
 - v1.5 (2026-08-12): visual harmonization — bottom status rail, one color per meaning, shared theme tokens.
 - v1.4.2 (2026-08-12): clickable Cmd+K rows, arrow-key search navigation with a match counter, a visible context readout.
 - v1.4.1 (2026-08-11): live-smoke fixes — visible status dot in single-tab mode, context bar placement, pin button z-order, legible Cmd+K palette, Cmd+F searches up through the full scrollback.

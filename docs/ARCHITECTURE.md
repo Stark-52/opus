@@ -8,7 +8,7 @@ How Opus is wired internally. Aimed at contributors and curious readers.
 Opus.app
 ├── AppDelegate
 │     ├── installAppMenu()           — minimal menu bar (Settings…, Quit)
-│     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M / Cmd+Ctrl+R
+│     ├── registerHotkey()           — Carbon RegisterEventHotKey for Cmd+Ctrl+T / Cmd+Ctrl+M / Cmd+Ctrl+R / Cmd+Ctrl+S (v1.6)
 │     ├── SocketServer               — Unix domain socket at /tmp/opus.sock, always running regardless of displayMode; also serves `opus-attach send` one-shot prompt injection
 │     ├── EventSocketServer          — Unix domain socket at /tmp/opus-events.sock, the read side of the Claude Code hook bus (Task 1); feeds ClaudeStateStore
 │     ├── QuickTerminalPanel?        — slide-down NSPanel host (panel/both modes)
@@ -39,6 +39,14 @@ Opus.app
 │     ├── SessionIndex scans ~/.claude/projects/*/*.jsonl (bounded 16KB head read per file, plus a 40KB tail read to catch a fresher ai-title record) across every project on this machine
 │     └── SessionSwitcherPanel fuzzy-filters by title/cwd, resumes the pick into the shared session (tab 0)
 │
+├── PromptHistory / PromptPalettePanel (v1.6) — Cmd+Shift+P prompt-history palette
+│     ├── PromptHistory tail-reads ~/.claude/history.jsonl (512KB budget from EOF, append-only/newest-last), parses `display`/`pastedContents`, dedupes by exact prompt text keeping the most recent occurrence, returns newest-first
+│     └── PromptPalettePanel — structural copy of SessionSwitcherPanel's panel mechanics (620×420, forced .darkAqua); fuzzy-filters by text/project with current-project prompts surfaced first; Return/double-click INSERTS the full picked text into the active pane via `TerminalContainerView.insertIntoActivePane` WITHOUT submitting it — same "review, then Return yourself" feel as a paste
+│
+├── TaskListReader / TodoDrawerView (v1.6) — Cmd+Shift+T task drawer, the active pane's bound Claude session's task list
+│     ├── TaskListReader loads `~/.claude/tasks/<session-id>/<n>.json` (numeric-filename order; `.lock`/`.highwatermark` and non-numeric names ignored), a missing/unrecognized `status` falls back to `.pending`, a missing session directory returns `[]` rather than erroring
+│     └── TodoDrawerView — dumb display component owning no I/O or timer; TerminalContainerView resolves the active pane's bound session, reads+parses off a background queue (`DispatchQueue.global(qos: .utility)`), and hands the resulting `[ClaudeTask]` to `tasks`. No bound session → empty array → the drawer's own empty state, never a guess at some other session's tasks.
+│
 ├── ContextMeter — context-window usage parsing (pure), fed into the status rail below
 │     └── parses the ACTIVE tab's session's live transcript tail for `message.usage` token counts, refreshed on a timer
 │
@@ -55,13 +63,15 @@ Opus.app
 │     ├── tabs[] / tabPanes[][] / tabActivePaneIndex[] / tabTitles[]
 │     ├── OpusTabBar at the bottom (hidden when single tab), dots sourced from ClaudeStateStore
 │     ├── StatusRailView (v1.5) at the very bottom, below OpusTabBar — context gauge + active tab's activity dot + readout
+│     ├── TodoDrawerView (v1.6) — right-side drawer, Cmd+Shift+T; its bottom constraint tracks terminalAreaBottomConstraint's own constant (never a fixed value) so it stays clear of the status rail/tab bar band regardless of tab count
 │     ├── OpusSplitView for nested Cmd+D / Cmd+Shift+D splits
 │     ├── TabPane abstraction
 │     │     ├── shared  → ClaudeBackend subscriber, no own process (mirrors Terminal.app)
 │     │     └── private → own FilteredClaudeTab wrapping LocalProcess
 │     ├── TerminalViewDelegate impl (send/sizeChanged/setTerminalTitle/clipboardCopy/…)
-│     ├── FindBarView — Cmd+F find bar over SwiftTerm's built-in scrollback search (Enter/Shift+Enter/Esc); also backs Cmd+Up/Down prompt jump (searches "❯ ")
+│     ├── FindBarView — Cmd+F find bar over SwiftTerm's built-in scrollback search (Enter = previous match/up, Shift+Enter = next match/down, Esc = close); Cmd+G/Cmd+Shift+G repeat the same two directions, also backs Cmd+Up/Down prompt jump (searches "❯ ")
 │     ├── broadcastArmed — Cmd+Shift+I fans keystrokes out to every pane of the active tab, lit border while armed
+│     ├── deliverAsPaste(_:) (v1.6) — the delivery path for anything that lands as one paste-like operation (Cmd+V, Finder drag-drop, a PromptPalettePanel pick, the Cmd+Ctrl+S clipboard send): wraps the text in `ESC[200~…ESC[201~` bracketed-paste markers PER TARGET PANE, gated on that pane's own currently-negotiated `SwiftTerm.Terminal.bracketedPasteMode` (never hardcoded true), so embedded newlines are delivered as data instead of each one triggering an early submit like a real Return keystroke. A literal `ESC[201~` already inside the payload is stripped first (would otherwise prematurely close the wrapper). `deliver(bytes:)` stays the separate, unwrapped raw-bytes path — used only by the empty-selection Ctrl-C interrupt, which must never be paste-wrapped.
 │     └── copySelectionToPasteboard() / pasteFromPasteboard()
 │
 ├── ClaudeAttention (singleton)
@@ -74,11 +84,12 @@ Opus.app
       ├── editorCommand → Cmd+click target for PathDetector hits (default `code -g {target}`)
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload, including `--session-id <id>` (fresh spawns) and `--settings <opus-hooks.json path>` (every `.claude`-preset spawn)
 
-Tests/OpusTests/          — 210 unit tests
+Tests/OpusTests/          — 251 unit tests
       ├── spawn-command flag assembly
       ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
       ├── MRU recent-projects list
-      └── cockpit: ClaudeStateStore transitions/binding, SessionIndex parsing, ContextMeter parsing, PathDetector token-scan, HookSettingsWriter, EventSocketServer parsing, prompt-marker-selection predicate
+      ├── cockpit: ClaudeStateStore transitions/binding, SessionIndex parsing, ContextMeter parsing, PathDetector token-scan, HookSettingsWriter, EventSocketServer parsing, prompt-marker-selection predicate
+      └── v1.6: PromptHistory parsing/tail-window/dedup, TaskListReader parsing/sorting/ignore-rules, bracketed-paste wrapping (BracketedPasteTests), send-to-Claude template composition (SendToClaudeTests)
 ```
 
 ## Hosting model
@@ -206,6 +217,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 | `opus.scrollbackLines` | Int | `10_000` (clamped 1,000–200,000) |
 | `opus.editorCommand` | String | `code -g {target}` (`{target}` → `path` or `path:line`) |
 | `opus.contextLimitTokens` | Int | `1_000_000` (clamped 10,000–2,000,000) — the transcript carries no context-window metadata, so ContextMeter's limit is this pref, not a derived value (see `ContextMeter.resolveLimit`) |
+| `opus.sendToClaudeTemplate` | String | `{clipboard}` (v1.6) — payload template for the Cmd+Ctrl+S "send to Claude" hotkey; `{clipboard}` is substituted verbatim, a template missing the placeholder gets the clipboard appended on its own line instead of silently dropped (`AppDelegate.composeSendPayload`) |
 
 Panel size is keyed by `CGDirectDisplayID` (via `NSScreen.deviceDescription["NSScreenNumber"]`) so two physically distinct monitors with identical pixel dimensions don't share one entry.
 
@@ -235,8 +247,11 @@ Global hotkeys are registered via Carbon `RegisterEventHotKey`:
 | Cmd+Ctrl+T | 1 | Toggle quick-terminal panel (when displayMode includes panel) |
 | Cmd+Ctrl+M | 2 | Toggle main window (only registered when displayMode includes main) |
 | Cmd+Ctrl+R | 3 | Restart Claude session (kill + respawn, all surfaces stay attached) |
+| Cmd+Ctrl+S | 4 | (v1.6) Send the clipboard (or Finder file paths) to the active Claude session — `AppDelegate.sendClipboardToClaude()`. Registered unconditionally, like T/R, not gated behind `displayMode.includesMain` the way id 2 is: falls back to the panel even when hidden, so it stays meaningful regardless of display mode. |
 
 The dispatcher in `hotkeyCallback` reads the `EventHotKeyID.id` and routes accordingly.
+
+Cmd+Shift+P (prompt palette) and Cmd+Shift+T (todo drawer) are NOT Carbon hotkeys — they're local `NSEvent` keyDown monitors scoped to each window (`QuickTerminalPanel.handleKeyEvent` / `MainTerminalWindow.handleKey`), same as every other Cmd+letter/Cmd+Shift+letter shortcut in this app. Only the four hotkeys above need to fire while Opus isn't the frontmost app, hence Carbon.
 
 ## Footprint
 
