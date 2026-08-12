@@ -36,7 +36,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Permission-mode picker** — right-click the shield button to pick a `--permission-mode` preset (default / plan / auto-accept edits) independent of the dangerous-mode toggle.
 - **Activity dots** — each tab shows an amber (working) / red (needs input) / green (done) dot, driven live by Claude Code's own hooks (`opus-hooks.json` injected into every spawned session, relayed over a Unix socket) — no polling, no scraping the TUI.
 - **Cmd+K conversation switcher** — fuzzy-search every Claude Code conversation on this machine (any project, any working directory), Enter resumes it into the shared session.
-- **Context usage bar** — a thin bar above the tab bar showing how full the active tab's session's context window is, parsed live from the transcript. Claude Code's transcript never says which context window a session is running with, so the ceiling is a Settings → Appearance preference (`opus.contextLimitTokens`, default 1,000,000), with a safety auto-bump if observed usage ever exceeds it.
+- **Status rail** (v1.5) — a strip at the very bottom of the panel/window, below the tab bar: a context-usage gauge for the active tab's session (cyan → amber → red as it fills), the active tab's activity dot, and a "NN% · NNk" readout, all sharing one color-token set (`OpusTheme`) so each color means exactly one thing across the app. Parsed live from the transcript — Claude Code's transcript never says which context window a session is running with, so the ceiling is a Settings → Appearance preference (`opus.contextLimitTokens`, default 1,000,000), with a safety auto-bump if observed usage ever exceeds it.
 - **Cmd+click file:line** — click a file path (with optional `:line`) anywhere in the terminal to open it in your editor. Defaults to `code -g {target}`; there's no Settings UI for this yet, so change it with `defaults write com.stark52.opus opus.editorCommand "your-editor {target}"`.
 - **Broadcast input** (`Cmd+Shift+I`) — type once, land in every pane of the active tab; armed panes get a lit border so you can't forget it's on.
 - **Prompt jump** (`Cmd+Up` / `Cmd+Down`) — jump the scrollback straight to the previous/next submitted prompt.
@@ -128,6 +128,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- v1.5 (2026-08-12): visual harmonization — bottom status rail, one color per meaning, shared theme tokens.
 - v1.4.2 (2026-08-12): clickable Cmd+K rows, arrow-key search navigation with a match counter, a visible context readout.
 - v1.4.1 (2026-08-11): live-smoke fixes — visible status dot in single-tab mode, context bar placement, pin button z-order, legible Cmd+K palette, Cmd+F searches up through the full scrollback.
 - v1.4 (2026-08-11): the Claude cockpit — hook-driven state bus, activity dots, Cmd+K switcher, context meter, Cmd+click paths, broadcast input, prompt jump, deterministic session ids.

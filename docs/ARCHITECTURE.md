@@ -39,8 +39,14 @@ Opus.app
 │     ├── SessionIndex scans ~/.claude/projects/*/*.jsonl (bounded 16KB head read per file, plus a 40KB tail read to catch a fresher ai-title record) across every project on this machine
 │     └── SessionSwitcherPanel fuzzy-filters by title/cwd, resumes the pick into the shared session (tab 0)
 │
-├── ContextMeter / ContextMeterBar — context-window usage bar above the tab bar
+├── ContextMeter — context-window usage parsing (pure), fed into the status rail below
 │     └── parses the ACTIVE tab's session's live transcript tail for `message.usage` token counts, refreshed on a timer
+│
+├── OpusTheme (v1.5) — single source of truth for colors + layout metrics (cream/cyan/amber/red/green, corner radii, insets)
+│     └── every view reads from here; contextColor(fraction:)/activityColor(_:) give each color exactly one meaning across the app
+│
+├── StatusRailView (v1.5) — bottom status rail replacing the old top-right "ctx NN%" label + PaneActivityDot + the 4pt ContextMeterBar strip
+│     └── context-usage gauge + the active tab's activity dot + a "NN% · NNk" readout, wired by TerminalContainerView.applyContextMeterResult
 │
 ├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text
 │     └── TerminalContainerView resolves the result against cwd and opens it via `OpusPreferences.editorCommand`
@@ -48,6 +54,7 @@ Opus.app
 ├── TerminalContainerView (NSView)
 │     ├── tabs[] / tabPanes[][] / tabActivePaneIndex[] / tabTitles[]
 │     ├── OpusTabBar at the bottom (hidden when single tab), dots sourced from ClaudeStateStore
+│     ├── StatusRailView (v1.5) at the very bottom, below OpusTabBar — context gauge + active tab's activity dot + readout
 │     ├── OpusSplitView for nested Cmd+D / Cmd+Shift+D splits
 │     ├── TabPane abstraction
 │     │     ├── shared  → ClaudeBackend subscriber, no own process (mirrors Terminal.app)
@@ -67,7 +74,7 @@ Opus.app
       ├── editorCommand → Cmd+click target for PathDetector hits (default `code -g {target}`)
       └── resolvedSpawnCommand() → assembles the `/bin/zsh -c` payload, including `--session-id <id>` (fresh spawns) and `--settings <opus-hooks.json path>` (every `.claude`-preset spawn)
 
-Tests/OpusTests/          — 170 unit tests
+Tests/OpusTests/          — 210 unit tests
       ├── spawn-command flag assembly
       ├── ClaudeSessionLocator (cwd encoding, UUID selection, --continue fallback)
       ├── MRU recent-projects list
