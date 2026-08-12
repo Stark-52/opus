@@ -49,6 +49,28 @@ enum SessionIndex {
     /// of the sample with headroom, at a bounded, cheap-per-file cost.
     static let tailBudgetBytes = 40 * 1024
 
+    /// Compact, unsigned age for the palette's subtitle line. RelativeDateTimeFormatter
+    /// emitted signed forms ("-27 s") in the abbreviated style, which read as broken.
+    static func relativeAge(from date: Date, now: Date = Date()) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 60 { return "now" }
+
+        let minutes = seconds / 60
+        if minutes < 60 { return "\(minutes)m" }
+
+        let hours = seconds / 3600
+        if hours < 24 { return "\(hours)h" }
+
+        let days = seconds / 86400
+        if days < 7 { return "\(days)d" }
+
+        let weeks = seconds / (7 * 86400)
+        if weeks < 5 { return "\(weeks)w" }
+
+        let months = days / 30
+        return "\(months)mo"
+    }
+
     /// Parse a session summary out of the first ~16KB of a transcript.
     /// Pure — no filesystem access. Safe on a head buffer whose last line is
     /// mid-record (truncated by the byte cutoff): line-splitting plus
