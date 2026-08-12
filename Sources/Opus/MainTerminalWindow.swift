@@ -117,6 +117,13 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "p" {
             PromptPalettePanel.shared.toggle(); return nil
         }
+        // Cmd+Shift+T — toggle the todo drawer (v1.6 backlog Task 3): the
+        // active pane's bound session's Claude Code task list. "T" for
+        // Tasks — plain Cmd+T (no Shift) already means "spawn new tab"
+        // above, a different key combination, so there's no collision.
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "t" {
+            container.toggleTodoDrawer(); return nil
+        }
         return ev
     }
 

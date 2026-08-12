@@ -790,6 +790,16 @@ final class QuickTerminalPanel: NSObject {
            ev.charactersIgnoringModifiers?.lowercased() == "p" {
             PromptPalettePanel.shared.toggle(); return nil
         }
+        // Cmd+Shift+T — toggle the todo drawer (v1.6 backlog task 3): the
+        // active pane's bound session's Claude Code task list. Plain Cmd+T
+        // (no Shift) already means "spawn new tab" above — a different
+        // modifier combination, so no collision with that or with anything
+        // else in this handler (D/G/I/P are the only other Cmd+Shift letters
+        // claimed).
+        if mods == [.command, .shift],
+           ev.charactersIgnoringModifiers?.lowercased() == "t" {
+            container.toggleTodoDrawer(); return nil
+        }
         return ev
     }
 
