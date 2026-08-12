@@ -783,6 +783,13 @@ final class QuickTerminalPanel: NSObject {
            ev.charactersIgnoringModifiers?.lowercased() == "i" {
             container.toggleBroadcast(); return nil
         }
+        // Cmd+Shift+P — toggle the prompt-history palette (v1.6 backlog
+        // task 1): every prompt ever typed into Claude Code on this
+        // machine, any project/session, not just this pane's scrollback.
+        if mods == [.command, .shift],
+           ev.charactersIgnoringModifiers?.lowercased() == "p" {
+            PromptPalettePanel.shared.toggle(); return nil
+        }
         return ev
     }
 
@@ -1281,7 +1288,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// fallback. Must be called before any alert can steal key status (see
     /// restartSessionRequested) — resolution itself is alert-safe since
     /// TerminalContainerView.activePane falls back to tabActivePaneIndex.
-    private func activeRestartContainer() -> TerminalContainerView? {
+    ///
+    /// Not `private` (Cmd+Shift+P task) — PromptPalettePanel reuses this
+    /// exact same resolution (key panel > visible main window > visible
+    /// panel) to decide which container's active pane a picked prompt gets
+    /// inserted into, via `AppDelegate.shared?.activeRestartContainer()`,
+    /// rather than re-deriving the same rule a second time.
+    func activeRestartContainer() -> TerminalContainerView? {
         if let panel = nativePanel, panel.isVisible,
            panel.terminalContainer.window?.isKeyWindow == true {
             return panel.terminalContainer

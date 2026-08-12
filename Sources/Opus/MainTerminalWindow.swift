@@ -112,6 +112,11 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "i" {
             container.toggleBroadcast(); return nil
         }
+        // Cmd+Shift+P — toggle the prompt-history palette (see
+        // QuickTerminalPanel.handleKeyEvent for the full rationale).
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "p" {
+            PromptPalettePanel.shared.toggle(); return nil
+        }
         return ev
     }
 

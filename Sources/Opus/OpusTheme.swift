@@ -28,6 +28,19 @@ enum OpusTheme {
     /// Opaque backing for floating surfaces (palette, find bar).
     static let panelBackground = NSColor(calibratedWhite: 0.08, alpha: 0.97)
 
+    /// Search-field background — a shade LIGHTER than `panelBackground` so a
+    /// text field still reads as a distinct control set from its containing
+    /// bar/panel rather than fusing into one flat block. Used by every
+    /// field that paints its own background instead of AppKit's system
+    /// bezel (`isBezeled = false` + `drawsBackground = true`): FindBarView's
+    /// Cmd+F bar and PromptPalettePanel's Cmd+Shift+P search field — see
+    /// FindBarView's own doc comment for why a plain NSSearchField needs
+    /// this treatment at all. Promoted here (Cmd+Shift+P task) once a
+    /// second field needed the identical value — was local to FindBarView.swift
+    /// before that, on the (now false) premise that it was the one place in
+    /// the app that needed it.
+    static let fieldBackground = NSColor(calibratedWhite: 0.16, alpha: 1.0)
+
     /// Dark text painted on top of the terminal caret block (SwiftTerm's
     /// `caretTextColor`) so the character under the caret stays legible
     /// against the light `caretColor` fill. Not part of the cream/cyan/

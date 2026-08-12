@@ -1501,6 +1501,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         deliver(bytes: ArraySlice(Array(text.utf8)))
     }
 
+    /// Public entry point for PromptPalettePanel (Cmd+Shift+P, task-1 of the
+    /// v1.6 backlog): insert a picked prompt into the active pane WITHOUT a
+    /// trailing return — the user reviews and submits it themselves, same as
+    /// a plain paste. Reuses `sendToActivePane` verbatim rather than
+    /// duplicating its `deliver(bytes:)` call, so this gets the exact same
+    /// broadcast-arming behavior as Cmd+V/Finder-drop for free: while
+    /// broadcast is armed, the prompt lands in every pane of the active tab,
+    /// not just the one on screen.
+    func insertIntoActivePane(_ text: String) {
+        sendToActivePane(text)
+    }
+
     /// Cockpit (Lot 3, Task 7 fix round 1) — the single delivery point for
     /// input that does NOT arrive as a keystroke: paste, Finder drag-drop,
     /// and the empty-selection Ctrl-C interrupt. Broadcasts to every pane

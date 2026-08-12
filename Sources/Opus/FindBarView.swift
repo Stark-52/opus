@@ -23,14 +23,6 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
     /// trailing end. Empty string (its initial/idle value) takes ~0 width,
     /// so `field` gets the bar's full space until there's something to show.
     private let counterLabel = NSTextField(labelWithString: "")
-    /// Fix (v1.5.1, Cmd+F readability) — the search field's own background,
-    /// deliberately a shade LIGHTER than the bar's `panelBackground` (0.08)
-    /// so the field still reads as a distinct control set into the bar
-    /// rather than fusing into one flat block. Local to this file, not
-    /// promoted to `OpusTheme`: this is the one place in the app a control
-    /// needs a background distinct from its container's, so it isn't a
-    /// token anything else would reuse.
-    private static let fieldBackground = NSColor(calibratedWhite: 0.16, alpha: 1.0)
     var onSearchUp: ((String) -> Void)?
     var onSearchDown: ((String) -> Void)?
     var onClose: (() -> Void)?
@@ -74,13 +66,13 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         // bezel — a rounded control background AppKit draws itself, not
         // something `layer?.backgroundColor` above ever touched. Killing
         // that bezel and painting the field's own background ourselves
-        // (`fieldBackground`, lighter than the bar so it stays visually
-        // distinct — see that property's doc comment) is what actually
-        // removes the white rect the owner saw. `focusRingType` is
+        // (`OpusTheme.fieldBackground`, lighter than the bar so it stays
+        // visually distinct — see that token's doc comment) is what
+        // actually removes the white rect the owner saw. `focusRingType` is
         // deliberately left untouched: the focus ring must stay visible.
         field.isBezeled = false
         field.drawsBackground = true
-        field.backgroundColor = Self.fieldBackground
+        field.backgroundColor = OpusTheme.fieldBackground
         field.delegate = self
         field.sendsSearchStringImmediately = false
         addSubview(field)
