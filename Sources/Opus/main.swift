@@ -47,37 +47,29 @@ final class OpusTabBar: NSView {
                            width: segW - 6, height: bounds.height - 6)
             let path = NSBezierPath(roundedRect: r, xRadius: 5, yRadius: 5)
             let fill = (i == activeIndex)
-                ? NSColor(red: 0.45, green: 0.7, blue: 0.85, alpha: 0.45)
-                : NSColor(white: 1, alpha: 0.07)
+                ? OpusTheme.cyan.withAlphaComponent(0.20)
+                : OpusTheme.cream(0.07)
             fill.setFill()
             path.fill()
 
-            // Activity dot, before the label — amber while Claude is working,
-            // red when it's waiting on the user, green once a turn/agent run
-            // has finished. No dot at all for `.idle` (or a not-yet-sized
-            // states array).
-            if i < states.count {
-                let dotColor: NSColor?
-                switch states[i] {
-                case .working: dotColor = NSColor.systemOrange
-                case .needsInput: dotColor = NSColor.systemRed
-                case .done: dotColor = NSColor.systemGreen
-                case .idle: dotColor = nil
-                }
-                if let dotColor {
-                    let dotSize: CGFloat = 6
-                    let dotRect = NSRect(x: r.minX + 6, y: r.midY - dotSize / 2,
-                                         width: dotSize, height: dotSize)
-                    dotColor.setFill()
-                    NSBezierPath(ovalIn: dotRect).fill()
-                }
+            // Activity dot, before the label — same semantics as everywhere
+            // else in the app (OpusTheme.activityColor): cyan while Claude
+            // is working, red when it's waiting on the user, green once a
+            // turn/agent run has finished. No dot at all for `.idle` (or a
+            // not-yet-sized states array).
+            if i < states.count, let dotColor = OpusTheme.activityColor(states[i]) {
+                let dotSize = OpusTheme.dotSize
+                let dotRect = NSRect(x: r.minX + 6, y: r.midY - dotSize / 2,
+                                     width: dotSize, height: dotSize)
+                dotColor.setFill()
+                NSBezierPath(ovalIn: dotRect).fill()
             }
 
             let raw = i < titles.count && !titles[i].isEmpty ? titles[i] : "Claude"
             let label = "\(i + 1)  \(raw)"
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: i == activeIndex ? 0.95 : 0.55)
+                .foregroundColor: i == activeIndex ? OpusTheme.cream(0.95) : OpusTheme.cream(0.45)
             ]
             // Truncated centered draw within the segment (with horizontal padding).
             let para = NSMutableParagraphStyle()
@@ -358,7 +350,7 @@ final class OpusSplitView: NSSplitView {
     override var dividerColor: NSColor {
         // Pale icy-cyan — the Opus icon's core glow color. Low alpha keeps it
         // subtle against the dark blur so the pane content stays the focus.
-        NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.30)
+        OpusTheme.cyan.withAlphaComponent(0.30)
     }
     override func drawDivider(in rect: NSRect) {
         dividerColor.setFill()
@@ -484,7 +476,7 @@ final class QuickTerminalPanel: NSObject {
         let openBtn = NSButton(title: "↗", target: self, action: #selector(openInTerminalTapped))
         openBtn.isBordered = false
         openBtn.font = NSFont.systemFont(ofSize: 16, weight: .medium)
-        openBtn.contentTintColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.75)
+        openBtn.contentTintColor = OpusTheme.cream(0.45)
         openBtn.toolTip = "Open a Terminal.app window mirroring the shared session"
         openBtn.translatesAutoresizingMaskIntoConstraints = false
         blur.addSubview(openBtn)
@@ -607,8 +599,8 @@ final class QuickTerminalPanel: NSObject {
         btn.image = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin",
                             accessibilityDescription: "Pin panel")
         btn.contentTintColor = pinned
-            ? NSColor(red: 0.60, green: 0.85, blue: 0.95, alpha: 0.9)   // brand cyan
-            : NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.45)
+            ? OpusTheme.cyan
+            : OpusTheme.cream(0.45)
         btn.toolTip = pinned
             ? "Pinned: the panel stays visible when it loses focus. Click to unpin."
             : "Pin the panel so it stays visible while you work in another app."

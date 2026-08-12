@@ -30,12 +30,16 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
-        layer?.cornerRadius = 8
+        layer?.backgroundColor = OpusTheme.panelBackground.cgColor
+        layer?.cornerRadius = OpusTheme.radiusControl
         field.translatesAutoresizingMaskIntoConstraints = false
         // Fix 2 (v1.4.2): mention both arrow directions now that they work,
         // not just Enter.
-        field.placeholderString = "Find (↑ older, ↓ newer)"
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Find (↑ older, ↓ newer)",
+            attributes: [.foregroundColor: OpusTheme.cream(0.45)]
+        )
+        field.textColor = OpusTheme.cream(0.95)
         field.delegate = self
         field.sendsSearchStringImmediately = false
         addSubview(field)
@@ -45,7 +49,7 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         // same base color as the rest of the app's text (see e.g.
         // SessionSwitcherPanel's title/subtitle labels).
         counterLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        counterLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.75)
+        counterLabel.textColor = OpusTheme.cream(0.55)
         counterLabel.alignment = .right
         counterLabel.lineBreakMode = .byClipping
         counterLabel.translatesAutoresizingMaskIntoConstraints = false

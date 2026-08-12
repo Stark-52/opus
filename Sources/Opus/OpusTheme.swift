@@ -28,6 +28,15 @@ enum OpusTheme {
     /// Opaque backing for floating surfaces (palette, find bar).
     static let panelBackground = NSColor(calibratedWhite: 0.08, alpha: 0.97)
 
+    /// Dark text painted on top of the terminal caret block (SwiftTerm's
+    /// `caretTextColor`) so the character under the caret stays legible
+    /// against the light `caretColor` fill. Not part of the cream/cyan/
+    /// amber/red/green semantic set above — this is a fixed contrast pair
+    /// with `cream`, not a status color — so it gets its own token rather
+    /// than overloading one of those meanings. Value unchanged from the
+    /// pre-token literal in `styleTerminal`.
+    static let caretText = NSColor(red: 0.04, green: 0.05, blue: 0.07, alpha: 1.0)
+
     // MARK: Metrics
 
     static let radiusPanel: CGFloat = 14
