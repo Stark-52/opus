@@ -35,8 +35,8 @@ cat > Opus.app/Contents/Info.plist <<'PLIST'
     <key>CFBundleIdentifier</key><string>com.stark52.opus</string>
     <key>CFBundleName</key><string>Opus</string>
     <key>CFBundleDisplayName</key><string>Opus</string>
-    <key>CFBundleVersion</key><string>1.5</string>
-    <key>CFBundleShortVersionString</key><string>1.5</string>
+    <key>CFBundleVersion</key><string>1.6</string>
+    <key>CFBundleShortVersionString</key><string>1.6</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>Opus</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
