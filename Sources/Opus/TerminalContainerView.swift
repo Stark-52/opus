@@ -64,6 +64,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var activityDot: PaneActivityDot!
     /// Fix 2 (v1.4.1) — see buildSubviews' doc comment at the install site.
     private var contextMeterBottomConstraint: NSLayoutConstraint!
+    /// Fix 3 (v1.4.2) — "ctx NN%" text readout, top-right control row,
+    /// immediately left of `activityDot`. See buildSubviews' install site
+    /// for the geometry and applyContextMeterResult for the text/color/
+    /// visibility it's driven from.
+    private var contextPercentLabel: NSTextField!
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
@@ -262,6 +267,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // is alpha-only, toggled by refreshContextMeter's read result, so a
         // fade-in/out never needs a relayout pass. Added AFTER terminalArea
         // above (z-above it already — no reorder needed).
+        // Fix 3 (v1.4.2): height 2 → 4. The owner's second live smoke
+        // reported the strip as "effectively invisible" at 2pt. The meter's
+        // own bottom-edge position (meterBottom's constant, below) is left
+        // UNCHANGED — the strip simply grows upward from the same floor, so
+        // this doesn't reposition it relative to the tab bar, only makes it
+        // thicker. See updateTabIndicator's reserved-space constants for
+        // the matching +2 bump to the room reserved above it.
         let meter = ContextMeterBar(frame: .zero)
         meter.translatesAutoresizingMaskIntoConstraints = false
         meter.alphaValue = 0
@@ -271,7 +283,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             meter.leadingAnchor.constraint(equalTo: leadingAnchor),
             meter.trailingAnchor.constraint(equalTo: trailingAnchor),
             meterBottom,
-            meter.heightAnchor.constraint(equalToConstant: 2)
+            meter.heightAnchor.constraint(equalToConstant: 4)
         ])
         contextMeterBar = meter
         contextMeterBottomConstraint = meterBottom
@@ -308,6 +320,42 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             dot.heightAnchor.constraint(equalToConstant: 8)
         ])
         activityDot = dot
+
+        // Fix 3 (v1.4.2): "ctx NN%" text readout, top-right control row,
+        // immediately LEFT of the dot — the 4pt-tall bar alone was still
+        // easy to miss on the owner's second live smoke; a text readout is
+        // unmistakable. Trailing constant -104: in CONTAINER-space trailing
+        // offsets (same coordinate convention as the dot/pin comment
+        // above), the dot occupies [-96 (leading), -88 (trailing)] — see
+        // dot's own constant (-88) and width (8) above — so -104 puts this
+        // label's trailing edge a full 8pt clear of the dot's leading edge.
+        // Checked against the pin button too: pin is defined in BLUR space
+        // (`pinBtn.trailingAnchor == blur.trailingAnchor, constant: -72`,
+        // width 24 — see the dot's own doc comment above for that
+        // definition) which converts to container-space via `container =
+        // blur - 14`: pin trailing = -72-(-14)... i.e. distance-from-blur-
+        // edge(72) minus the 14pt container inset = 58, distance-from-blur-
+        // edge(96) minus 14 = 82, so pin spans container-trailing [-82
+        // (leading), -58 (trailing)] — entirely to the RIGHT of (less
+        // negative than) the dot's own leading edge (-96), so this label
+        // (further left/more negative than the dot) can't reach the pin
+        // either. No explicit width constraint — the label sizes itself
+        // from its own text ("ctx 83%" etc. — see applyContextMeterResult),
+        // growing further left/more negative as needed, well clear of
+        // everything else in this row. Full geometry table in the v1.4.2
+        // task report.
+        let ctxLabel = NSTextField(labelWithString: "")
+        ctxLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        ctxLabel.alignment = .right
+        ctxLabel.isSelectable = false
+        ctxLabel.alphaValue = 0   // hidden until usage data arrives — same condition as contextMeterBar
+        ctxLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(ctxLabel)
+        NSLayoutConstraint.activate([
+            ctxLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -104),
+            ctxLabel.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
+        ])
+        contextPercentLabel = ctxLabel
 
         layoutSubtreeIfNeeded()
     }
@@ -455,13 +503,29 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// result. `nil` (no transcript, no usage-bearing record yet, or the
     /// session is otherwise unreadable) hides the bar entirely rather than
     /// drawing a misleading 0%.
+    /// Fix 3 (v1.4.2) — cream at/under 70%, orange to 85%, red beyond. Takes
+    /// the CLAMPED (0...1) fraction, same input as `contextMeterBar.fraction`
+    /// — a session past 100% should read red, not fall off the end of the
+    /// scale. Deliberately independent of `ContextMeterBar.draw`'s own
+    /// green/orange/red choice (the text readout is a supplementary
+    /// affordance for the barely-visible bar, not required to reuse its
+    /// exact palette — cream reads as "normal" the same way the rest of
+    /// this app's default text does).
+    private static func contextLabelColor(forClampedFraction f: CGFloat) -> NSColor {
+        if f <= 0.70 { return NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.9) }
+        if f <= 0.85 { return .systemOrange }
+        return .systemRed
+    }
+
     private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
         guard let result, result.limit > 0 else {
             contextMeterBar.alphaValue = 0
+            contextPercentLabel.alphaValue = 0   // Fix 3 (v1.4.2): same hidden condition as the bar
             return
         }
         let rawFraction = Double(result.tokens) / Double(result.limit)
-        contextMeterBar.fraction = CGFloat(min(max(rawFraction, 0), 1))
+        let clampedFraction = CGFloat(min(max(rawFraction, 0), 1))
+        contextMeterBar.fraction = clampedFraction
         contextMeterBar.alphaValue = 1
         let kTokens = Int((Double(result.tokens) / 1000).rounded())
         let kLimit = Int((Double(result.limit) / 1000).rounded())
@@ -470,7 +534,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // limit should say so ("173%"), even though the bar itself visually
         // caps at a full-width fill.
         let percent = Int((rawFraction * 100).rounded())
-        contextMeterBar.toolTip = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
+        let tooltip = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
+        contextMeterBar.toolTip = tooltip
+
+        // Fix 3 (v1.4.2): text readout — same tooltip, same underlying
+        // numbers, so it can never say something the bar/tooltip disagree
+        // with.
+        contextPercentLabel.stringValue = "ctx \(percent)%"
+        contextPercentLabel.textColor = Self.contextLabelColor(forClampedFraction: clampedFraction)
+        contextPercentLabel.toolTip = tooltip
+        contextPercentLabel.alphaValue = 1
     }
 
     // MARK: Dangerous-mode shield button
@@ -683,6 +756,89 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Find bar (Cmd+F scrollback search over SwiftTerm's built-in engine)
 
+    /// Fix 2 (v1.4.2) — which way a find navigation moves: `.up` = older/
+    /// earlier lines (SwiftTerm's findPrevious), `.down` = newer/toward the
+    /// bottom (findNext). Same up/down framing as onSearchUp/onSearchDown.
+    private enum FindDirection { case up, down }
+
+    /// Fix 2 (v1.4.2) — our own 1-based "n / total" bookkeeping for the
+    /// find-bar match counter. SwiftTerm's find cursor is entirely internal
+    /// (SearchService/SearchEngine are not `public`), so there is no way to
+    /// read "which match number is this" back out of SwiftTerm itself; this
+    /// is purely our own approximation, advanced in lockstep with each
+    /// successful navigation via `navigateFind`. It CAN drift from
+    /// SwiftTerm's true cursor position if the buffer changes (new output
+    /// streaming in) mid-search, since nothing re-validates it against
+    /// SwiftTerm's live state — only a fresh navigation (or a term change,
+    /// which resets it to 0) ever recomputes it.
+    private var matchIndex = 0
+    private var matchTotal = 0
+
+    /// Single entry point for every find navigation: the bar's Enter/
+    /// Shift+Enter/arrow keys (wired in toggleFindBar below) AND the
+    /// Cmd+G/Cmd+Shift+G repeat hotkeys (searchUpInActivePane/
+    /// searchDownInActivePane) all route through here, so the "n / total"
+    /// counter stays correct no matter which path triggered the search.
+    /// Recomputes `matchTotal` from the live buffer on EVERY call — never
+    /// cached — so it stays fresh as output streams in (see
+    /// `harvestBufferLines`'s doc comment for the cost/frequency tradeoff
+    /// that makes a full rescan per navigation acceptable).
+    private func navigateFind(term: String, direction: FindDirection) {
+        guard !term.isEmpty else {
+            // Fix 2 (v1.4.2): "empty when the search term is empty." This
+            // deliberately does NOT touch `lastSearchTerm` — Cmd+G still
+            // repeats whatever was last actually searched even if Enter
+            // fires while the field is momentarily empty.
+            matchIndex = 0
+            matchTotal = 0
+            findBar?.updateMatchCounter("")
+            return
+        }
+        if term != lastSearchTerm {
+            matchIndex = 0   // fresh term — the old index no longer means anything
+        }
+        lastSearchTerm = term
+        matchTotal = MatchCounter.count(term: term, in: harvestBufferLines())
+
+        let found: Bool
+        switch direction {
+        case .up:   found = activeTerminal?.findPrevious(term) ?? false
+        case .down: found = activeTerminal?.findNext(term) ?? false
+        }
+
+        guard found, matchTotal > 0 else {
+            matchIndex = 0
+            findBar?.updateMatchCounter("no match")
+            return
+        }
+        switch direction {
+        case .up:   matchIndex = matchIndex >= matchTotal ? 1 : matchIndex + 1
+        case .down: matchIndex = matchIndex <= 1 ? matchTotal : matchIndex - 1
+        }
+        findBar?.updateMatchCounter("\(matchIndex) / \(matchTotal)")
+    }
+
+    /// Fix 2 (v1.4.2) — harvest the ACTIVE terminal's buffer as plain-text
+    /// lines via SwiftTerm's PUBLIC API (`getScrollInvariantLine` +
+    /// `translateToString`), feeding `MatchCounter`. SwiftTerm's own match
+    /// counting (`SearchService.findAll`) is `internal` — not usable from
+    /// here — so this reads the same buffer through the public surface
+    /// instead: starting at row 0, walking forward until
+    /// `getScrollInvariantLine` returns nil. Capped at 50_000 rows as a
+    /// runaway guard against a pathologically long scrollback. Called ONLY
+    /// from `navigateFind` (a search navigation), never per keystroke —
+    /// this is a full buffer walk + string-translate per line.
+    private func harvestBufferLines() -> [String] {
+        guard let term = activeTerminal?.getTerminal() else { return [] }
+        var lines: [String] = []
+        var row = 0
+        while row < 50_000, let line = term.getScrollInvariantLine(row: row) {
+            lines.append(line.translateToString(trimRight: true))
+            row += 1
+        }
+        return lines
+    }
+
     func toggleFindBar() {
         if let bar = findBar {
             bar.removeFromSuperview()
@@ -695,17 +851,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         bar.translatesAutoresizingMaskIntoConstraints = false
         // Fix 5b (v1.4.1): Enter (onSearchUp) → SwiftTerm's findPrevious
         // (backward through the buffer, toward older/earlier lines — "up").
-        // Shift+Enter (onSearchDown) → findNext (toward the bottom).
-        bar.onSearchUp = { [weak self] term in
-            guard !term.isEmpty else { return }
-            self?.lastSearchTerm = term
-            _ = self?.activeTerminal?.findPrevious(term)
-        }
-        bar.onSearchDown = { [weak self] term in
-            guard !term.isEmpty else { return }
-            self?.lastSearchTerm = term
-            _ = self?.activeTerminal?.findNext(term)
-        }
+        // Shift+Enter (onSearchDown) → findNext (toward the bottom). Fix 2
+        // (v1.4.2): arrow keys land on these same two callbacks (see
+        // FindBarView.control(_:textView:doCommandBy:)); both now route
+        // through navigateFind so the match counter tracks every path.
+        bar.onSearchUp = { [weak self] term in self?.navigateFind(term: term, direction: .up) }
+        bar.onSearchDown = { [weak self] term in self?.navigateFind(term: term, direction: .down) }
         bar.onClose = { [weak self] in self?.toggleFindBar() }
         addSubview(bar)
         NSLayoutConstraint.activate([
@@ -722,11 +873,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Cmd+G. Fix 5b (v1.4.1) rename from findNextInActivePane: the method
     /// now calls SwiftTerm's findPrevious, so the old "next" name would
     /// have been actively misleading about which direction it searches.
-    func searchUpInActivePane()   { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findPrevious(lastSearchTerm) } }
+    /// Fix 2 (v1.4.2): routes through navigateFind so Cmd+G keeps the match
+    /// counter current too, not just the bar's own Enter/arrows.
+    func searchUpInActivePane()   { if !lastSearchTerm.isEmpty { navigateFind(term: lastSearchTerm, direction: .up) } }
     /// Repeat the last find-bar search DOWNWARD (toward the bottom) —
     /// Cmd+Shift+G. Renamed from findPreviousInActivePane for the same
-    /// reason as searchUpInActivePane above.
-    func searchDownInActivePane() { if !lastSearchTerm.isEmpty { _ = activeTerminal?.findNext(lastSearchTerm) } }
+    /// reason as searchUpInActivePane above. Fix 2 (v1.4.2): same
+    /// navigateFind routing as searchUpInActivePane.
+    func searchDownInActivePane() { if !lastSearchTerm.isEmpty { navigateFind(term: lastSearchTerm, direction: .down) } }
 
     /// Claude Code renders its prompt line with the "❯" glyph — jumping
     /// between prompts is a search in disguise (SwiftTerm's public findNext/
@@ -1203,8 +1357,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // over it. Broken into named CGFloat constants — the compiler
         // choked ("unable to type-check in reasonable time") on the
         // arithmetic-inside-ternary form.
-        let terminalAreaBottomShown: CGFloat = -48   // -(14 + 26 + 4 + 4)
-        let terminalAreaBottomHidden: CGFloat = -18  // -(14 + 4)
+        //
+        // Fix 3 (v1.4.2): that reserved allocation grows from 4 → 6,
+        // matching the meter's own height going from 2pt → 4pt in
+        // buildSubviews (2pt breathing room above the strip, same as
+        // before, plus the 2 extra points the strip itself now occupies).
+        // The meter's own bottom-edge position (contextMeterBottomShown/
+        // Hidden just below) is a separate, UNCHANGED concern — it fixes
+        // where the strip's floor sits, not how tall it is — so those two
+        // constants don't need to move for a height-only change.
+        let terminalAreaBottomShown: CGFloat = -50   // -(14 + 26 + 4 + 6)
+        let terminalAreaBottomHidden: CGFloat = -20  // -(14 + 6)
         terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
         // Context meter (Fix round 2, v1.4.1): own constant, switched in
         // lockstep with the two above — see buildSubviews' doc comment on

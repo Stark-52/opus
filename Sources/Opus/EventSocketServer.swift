@@ -53,6 +53,21 @@ struct OpusClaudeEvent: Equatable {
         case turnEnded
         /// `source`: startup|resume|clear|compact|fork.
         case sessionStarted(source: String)
+
+        /// Fix 4 (v1.4.2) — cheap one-line description for the diagnostic
+        /// NSLog in `EventSocketServer.handleClient`. The state bus has
+        /// never been observed end-to-end; this lets `log show` confirm
+        /// hooks are actually firing without needing a GUI screenshot.
+        var logDescription: String {
+            switch self {
+            case .promptSubmitted: return "promptSubmitted"
+            case .toolUse(let name): return "toolUse(\(name))"
+            case .toolDone: return "toolDone"
+            case .needsAttention(let kind, _): return "needsAttention(\(kind))"
+            case .turnEnded: return "turnEnded"
+            case .sessionStarted(let source): return "sessionStarted(\(source))"
+            }
+        }
     }
 
     /// Parses one line of hook stdin (already newline-compacted by
@@ -177,6 +192,9 @@ final class EventSocketServer {
 
         for line in data.split(separator: 0x0A) where !line.isEmpty {
             guard let event = OpusClaudeEvent.parse(line: Data(line)) else { continue }
+            // Fix 4 (v1.4.2): one NSLog per successfully parsed event —
+            // see Kind.logDescription's doc comment above.
+            NSLog("Opus EventSocketServer: %@ session=%@", event.kind.logDescription, event.sessionId)
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .opusClaudeEvent, object: nil,

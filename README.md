@@ -128,6 +128,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- v1.4.2 (2026-08-12): clickable Cmd+K rows, arrow-key search navigation with a match counter, a visible context readout.
 - v1.4.1 (2026-08-11): live-smoke fixes — visible status dot in single-tab mode, context bar placement, pin button z-order, legible Cmd+K palette, Cmd+F searches up through the full scrollback.
 - v1.4 (2026-08-11): the Claude cockpit — hook-driven state bus, activity dots, Cmd+K switcher, context meter, Cmd+click paths, broadcast input, prompt jump, deterministic session ids.
 - v1.3 (2026-08-11): Cmd+F search, attention notifications, panel pin, opus-attach send, font zoom + scrollback setting, permission-mode picker, transcript-marker env fix.

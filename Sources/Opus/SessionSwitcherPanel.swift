@@ -21,6 +21,14 @@ private final class SessionSwitcherWindow: NSPanel {
 
 /// Selected-row background — same translucent brand cyan as OpusTabBar's
 /// active-tab pill, so the palette reads as part of the same app.
+///
+/// Fix 1 (v1.4.2): this override IS the entire selection-drawing story —
+/// it never calls `super.drawSelection(in:)`, so it already fully replaces
+/// AppKit's own default highlight box regardless of the table's
+/// `selectionHighlightStyle`. That means switching the table from `.none`
+/// to `.regular` below (the actual click-to-select fix) introduces no
+/// double-draw: there was never a second drawSelection implementation to
+/// collide with. Left unchanged from v1.4.1 — no code churn needed here.
 private final class SessionRowBackground: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
@@ -42,6 +50,13 @@ private final class SessionCellView: NSTableCellView {
         titleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.95)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        // Fix 1 (v1.4.2) defensive: `labelWithString:` already configures
+        // isSelectable=false, but a click landing on a label must never be
+        // able to grab first responder / start a text-selection drag either
+        // — that would compete with the table's own click-to-select. Costs
+        // nothing since these are never meant to be interactive.
+        titleLabel.isSelectable = false
+        titleLabel.refusesFirstResponder = true
 
         subtitleLabel.font = NSFont.systemFont(ofSize: 11)
         // Fix 4 (v1.4.1): explicit cream at 60% alpha (was 50%) — see the
@@ -50,6 +65,8 @@ private final class SessionCellView: NSTableCellView {
         subtitleLabel.textColor = NSColor(red: 0.93, green: 0.92, blue: 0.86, alpha: 0.6)
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.isSelectable = false   // Fix 1 (v1.4.2) defensive — see titleLabel above
+        subtitleLabel.refusesFirstResponder = true
 
         addSubview(titleLabel)
         addSubview(subtitleLabel)
@@ -163,7 +180,17 @@ final class SessionSwitcherPanel: NSObject {
         table.rowSizeStyle = .custom
         table.rowHeight = 38
         table.intercellSpacing = NSSize(width: 0, height: 2)
-        table.selectionHighlightStyle = .none  // custom draw via SessionRowBackground
+        // Fix 1 (v1.4.2): was `.none`, which silently disabled the table's
+        // own click-to-select handling for a view-based table — clicking a
+        // row never changed `selectedRow` at all (arrow keys/Enter still
+        // worked because those go through our own doCommandBy handlers
+        // below, calling selectRowIndexes directly, bypassing whatever
+        // `.none` broke). `.regular` restores normal AppKit mouseDown →
+        // selection handling. This does NOT bring back AppKit's own blue
+        // highlight box — see SessionRowBackground's doc comment above for
+        // why its drawSelection(in:) override already fully owns the
+        // selected-row appearance regardless of this setting.
+        table.selectionHighlightStyle = .regular
         table.style = .plain
 
         let scroll = NSScrollView(frame: NSRect(x: 14, y: 14, width: width - 28, height: height - 42 - 14 - 8))
