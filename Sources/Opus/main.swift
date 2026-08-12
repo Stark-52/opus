@@ -452,7 +452,7 @@ final class QuickTerminalPanel: NSObject {
         blur.blendingMode = .behindWindow
         blur.state = .active
         blur.wantsLayer = true
-        blur.layer?.cornerRadius = 14
+        blur.layer?.cornerRadius = OpusTheme.radiusPanel
         blur.layer?.masksToBounds = true
         blur.autoresizingMask = [.width, .height]
         // Background image layer (below tint, hidden unless mode == image)

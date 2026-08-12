@@ -172,7 +172,7 @@ final class SessionSwitcherPanel: NSObject {
         opaqueBG.autoresizingMask = [.width, .height]
         blur.addSubview(opaqueBG)
 
-        let field = NSSearchField(frame: NSRect(x: 14, y: height - 42, width: width - 28, height: 28))
+        let field = NSSearchField(frame: NSRect(x: OpusTheme.insetPanel, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
         // Same field styling as FindBarView (spec section 5: "strictement
         // identique à celui de la barre de recherche").
@@ -210,7 +210,7 @@ final class SessionSwitcherPanel: NSObject {
         table.selectionHighlightStyle = .regular
         table.style = .plain
 
-        let scroll = NSScrollView(frame: NSRect(x: 14, y: 14, width: width - 28, height: height - 42 - 14 - 8))
+        let scroll = NSScrollView(frame: NSRect(x: OpusTheme.insetPanel, y: OpusTheme.insetPanel, width: width - 28, height: height - 42 - 14 - 8))
         scroll.autoresizingMask = [.width, .height]
         scroll.documentView = table
         scroll.drawsBackground = false

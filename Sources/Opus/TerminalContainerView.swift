@@ -38,6 +38,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// contextMeterBottomConstraint used (see updateTabIndicator's doc
     /// comment for why this can't just track tabBar.topAnchor).
     private var railBottomConstraint: NSLayoutConstraint!
+    /// The "NNk / NNk tokens (NN%)" half of the rail's tooltip, from the most
+    /// recent context-meter scan — `nil` when there's no context data to show
+    /// (the two `applyContextMeterResult`/`refreshContextMeter` nil branches,
+    /// where the rail's fill is invisible too). Kept separately from
+    /// `statusRail.tooltipText` so `refreshTabBarStates` — which fires on
+    /// every activity change, independent of the context-meter timer — can
+    /// recompose the full tooltip from this plus the current activity
+    /// without redoing the context math. See `updateStatusRailTooltip`.
+    private var contextTooltipSentence: String?
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
@@ -388,6 +397,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         guard let sessionId = activeSessionIdForContextMeter() else {
             statusRail.fraction = nil
+            statusRail.readout = nil
+            contextTooltipSentence = nil
+            updateStatusRailTooltip()
             return
         }
         let cwd = OpusPreferences.shared.workingDirectory
@@ -413,13 +425,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// scan's result. `nil` (no transcript, no usage-bearing record yet, or
     /// the session is otherwise unreadable) hides the rail's bar+label
     /// entirely (`statusRail.fraction = nil`) rather than drawing a
-    /// misleading 0%. The rail's own fill/label coloring (cream at/under
-    /// 70%, amber to 85%, red beyond — `OpusTheme.contextColor`) is
-    /// StatusRailView's job, not this container's; this function only feeds
-    /// it fraction/readout/tooltip.
+    /// misleading 0%. The rail's FILL color (cyan at/under 70%, amber to
+    /// 85%, red beyond — `OpusTheme.contextColor`) is StatusRailView's job,
+    /// not this container's; this function only feeds it fraction/readout/
+    /// tooltip. (The label's own color is a separate rule inside
+    /// StatusRailView.updateLabelColor: cream at/under 70%, matching
+    /// contextColor above that — cream is the resting text color, not part
+    /// of the cyan/amber/red fill scale.)
     private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
         guard let result, result.limit > 0 else {
             statusRail.fraction = nil
+            statusRail.readout = nil
+            contextTooltipSentence = nil
+            updateStatusRailTooltip()
             return
         }
         let rawFraction = Double(result.tokens) / Double(result.limit)
@@ -433,7 +451,53 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // limit should say so ("173%"), even though the rail's fill visually
         // caps at a full-width fill.
         let percent = Int((rawFraction * 100).rounded())
-        statusRail.tooltipText = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
+        contextTooltipSentence = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
+        updateStatusRailTooltip()
+    }
+
+    /// Word describing `activity` for the tooltip's second line — mirrors
+    /// the per-state tooltips the deleted `PaneActivityDot` used to show
+    /// (Task 6 follow-up: `StatusRailView`'s single `tooltipText` otherwise
+    /// only ever carries the context sentence, so hovering the dot stopped
+    /// explaining what it means). `nil` for `.idle`, matching
+    /// `OpusTheme.activityColor` — no dot, no line.
+    private func activityTooltipLine(_ activity: PaneActivity) -> String? {
+        switch activity {
+        case .idle: return nil
+        case .working: return "Claude is working"
+        case .needsInput: return "Claude needs input"
+        case .done: return "Claude finished"
+        }
+    }
+
+    /// Recomposes `statusRail.tooltipText` from the two independent signals
+    /// that feed it: `contextTooltipSentence` (the context-meter sentence,
+    /// `nil` when there's no data — rail fill invisible) and
+    /// `statusRail.activity`'s state word (`nil` when `.idle` — no dot
+    /// either). Called from BOTH refresh paths that can change either half —
+    /// `applyContextMeterResult`/`refreshContextMeter` when the context part
+    /// changes, and `refreshTabBarStates` when ONLY the activity part
+    /// changes — so hovering the rail always reflects the latest of both,
+    /// not just whichever path happened to run most recently.
+    ///
+    /// The activity line is kept even when there's no context sentence
+    /// (rail fill invisible): the dot has its own independent lifecycle
+    /// (StatusRailView.fraction's doc comment — Claude can be `.working`
+    /// before the first transcript read produces a usage fraction), so it
+    /// can be the only thing visible on the strip and still deserves an
+    /// explanation on hover.
+    private func updateStatusRailTooltip() {
+        let activityLine = activityTooltipLine(statusRail.activity)
+        switch (contextTooltipSentence, activityLine) {
+        case let (.some(context), .some(activity)):
+            statusRail.tooltipText = "\(context)\n\(activity)"
+        case let (.some(context), nil):
+            statusRail.tooltipText = context
+        case let (nil, .some(activity)):
+            statusRail.tooltipText = activity
+        case (nil, nil):
+            statusRail.tooltipText = nil
+        }
     }
 
     // MARK: Dangerous-mode shield button
@@ -1578,6 +1642,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.
         statusRail.activity = tabBar.states.indices.contains(activeTabIndex) ? tabBar.states[activeTabIndex] : .idle
+        // Task 6 follow-up: this is the activity-only refresh path — it can
+        // fire (e.g. a hook event flips .idle → .working) without the
+        // context-meter timer having run at all, so the tooltip needs its
+        // own recompose here too, not just from applyContextMeterResult.
+        updateStatusRailTooltip()
     }
 
     @objc private func paneActivityChanged() {
