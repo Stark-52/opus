@@ -212,6 +212,20 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertEqual(inner["n"] as? Int, 7)
     }
 
+    func testPostWarnsAndProducesNoOutputWhenTheKeychainCannotBeRead() {
+        // The redaction net silently ceasing to work is the worst outcome for
+        // this function: output flows to the model unredacted and nothing says
+        // so. A locked Keychain mid-session (screen sleep) is the realistic
+        // trigger. With no readable value the redactor is empty, so runPost
+        // must return nil rather than emit an identity payload — and the
+        // stderr warning is what makes the failure visible at all.
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["resend"], sessionID: "s1")
+        let runner = HookRunner(store: FailingSecretStore(error: .commandFailed("keychain is locked")),
+                                usage: usage)
+        XCTAssertNil(runner.runPost(input: postInput(response: ["stdout": "re_live_abc123"])))
+    }
+
     // MARK: SessionStart
 
     func testSessionStartListsNamesOnly() throws {
