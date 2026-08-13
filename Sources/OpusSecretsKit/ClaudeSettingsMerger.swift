@@ -16,6 +16,7 @@ import Foundation
 
 public enum ClaudeSettingsMergeError: Error {
     case malformedExistingFile
+    case backupFailed(String)
 }
 
 public enum ClaudeSettingsMerger {
@@ -23,6 +24,21 @@ public enum ClaudeSettingsMerger {
     /// replaced rather than appended to, which is what makes a rerun
     /// idempotent and a moved binary self-healing.
     public static let commandMarker = "opus-secrets hook-"
+
+    /// Single-quote a POSIX path so it survives `sh -c` verbatim. A hook entry
+    /// with no `args` key is SHELL form: Claude Code passes the command string
+    /// to `sh -c`, so an unquoted path containing a space fails tokenisation
+    /// and the binary is never invoked — PreToolUse and PostToolUse would
+    /// silently stop firing, which for this feature means a secret silently
+    /// not substituted and not redacted.
+    ///
+    /// Third copy of this idiom in the repo, deliberately: the one in
+    /// HookSettingsWriter is private to the Opus app target and unreachable
+    /// from this module, and TerminalContainerView's own copy records the same
+    /// "tiny, one call site, not worth a cross-file dependency" reasoning.
+    private static func shellQuote(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
 
     private static let registrations: [(event: String, matcher: String?, subcommand: String)] = [
         ("PreToolUse", "Bash", "hook-pre"),
@@ -42,16 +58,22 @@ public enum ClaudeSettingsMerger {
             var entries = (hooks[registration.event] as? [[String: Any]]) ?? []
 
             // Drop any previous registration of ours, at any binary path.
+            // Commands are shell-quoted (see shellQuote), which puts a "'"
+            // directly between the binary path and the subcommand — strip
+            // quotes before the containment check so commandMarker still
+            // matches the quoted form, not just the raw unquoted one.
             entries.removeAll { entry in
                 let commands = (entry["hooks"] as? [[String: Any]] ?? [])
                     .compactMap { $0["command"] as? String }
-                return commands.contains { $0.contains(commandMarker) }
+                return commands.contains {
+                    $0.replacingOccurrences(of: "'", with: "").contains(commandMarker)
+                }
             }
 
             var entry: [String: Any] = [
                 "hooks": [[
                     "type": "command",
-                    "command": "\(binaryPath) \(registration.subcommand)",
+                    "command": "\(shellQuote(binaryPath)) \(registration.subcommand)",
                     "timeout": timeoutSeconds
                 ]]
             ]
@@ -99,8 +121,32 @@ public enum ClaudeSettingsMerger {
             return false
         }
 
-        if let existingData, !FileManager.default.fileExists(atPath: backupURL.path) {
-            try? existingData.write(to: backupURL, options: .atomic)
+        try FileManager.default.createDirectory(
+            at: settingsURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        // A regular file already at backupURL means an earlier run already
+        // secured the backup — skip it. Anything else there (nothing, or a
+        // directory occupying the path) is NOT a valid backup, so the write
+        // must still be attempted so a real obstruction surfaces as a thrown
+        // error instead of being mistaken for "already backed up".
+        var backupIsDirectory: ObjCBool = false
+        let backupFileAlreadyExists = FileManager.default.fileExists(
+            atPath: backupURL.path, isDirectory: &backupIsDirectory
+        ) && !backupIsDirectory.boolValue
+
+        if let existingData, !backupFileAlreadyExists {
+            do {
+                try existingData.write(to: backupURL, options: .atomic)
+            } catch {
+                // Refuse to touch the user's settings when we cannot first
+                // secure a copy of what was there. This is the run that
+                // matters: the first real change to a pristine file. Writing
+                // anyway and returning true would leave them with no way back
+                // and no signal that anything went wrong.
+                throw ClaudeSettingsMergeError.backupFailed(String(describing: error))
+            }
         }
 
         try newData.write(to: settingsURL, options: .atomic)

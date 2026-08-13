@@ -31,9 +31,9 @@ final class ClaudeSettingsMergerTests: XCTestCase {
 
     func testAddsAllThreeEventsToAnEmptySettingsObject() {
         let out = merge([:])
-        XCTAssertEqual(commands(out, "PreToolUse"), ["\(binary) hook-pre"])
-        XCTAssertEqual(commands(out, "PostToolUse"), ["\(binary) hook-post"])
-        XCTAssertEqual(commands(out, "SessionStart"), ["\(binary) hook-session"])
+        XCTAssertEqual(commands(out, "PreToolUse"), ["'\(binary)' hook-pre"])
+        XCTAssertEqual(commands(out, "PostToolUse"), ["'\(binary)' hook-post"])
+        XCTAssertEqual(commands(out, "SessionStart"), ["'\(binary)' hook-session"])
     }
 
     func testMatchersFollowTheSpec() throws {
@@ -57,21 +57,28 @@ final class ClaudeSettingsMergerTests: XCTestCase {
             "PreToolUse": [["matcher": "Bash", "hooks": [["type": "command", "command": "/my/own/linter"]]]]
         ]]
         let out = merge(existing)
-        XCTAssertEqual(commands(out, "PreToolUse"), ["/my/own/linter", "\(binary) hook-pre"])
+        XCTAssertEqual(commands(out, "PreToolUse"), ["/my/own/linter", "'\(binary)' hook-pre"])
     }
 
     func testMergingTwiceDoesNotDuplicate() {
         let once = merge([:])
         let twice = merge(once)
-        XCTAssertEqual(commands(twice, "PreToolUse"), ["\(binary) hook-pre"])
-        XCTAssertEqual(commands(twice, "PostToolUse"), ["\(binary) hook-post"])
+        XCTAssertEqual(commands(twice, "PreToolUse"), ["'\(binary)' hook-pre"])
+        XCTAssertEqual(commands(twice, "PostToolUse"), ["'\(binary)' hook-post"])
     }
 
     func testAStaleBinaryPathIsReplacedNotAccumulated() {
         let stale = ClaudeSettingsMerger.merged(into: [:], binaryPath: "/old/opus-secrets", timeoutSeconds: 3)
         let fresh = merge(stale)
-        XCTAssertEqual(commands(fresh, "PreToolUse"), ["\(binary) hook-pre"],
+        XCTAssertEqual(commands(fresh, "PreToolUse"), ["'\(binary)' hook-pre"],
                        "entries are identified by the command marker, so a moved binary is updated in place")
+    }
+
+    func testCommandPathIsShellQuoted() throws {
+        let out = ClaudeSettingsMerger.merged(into: [:], binaryPath: "/Users/a b/opus-secrets", timeoutSeconds: 3)
+        // A hook with no `args` key is shell form and runs under `sh -c`, so an
+        // unquoted path with a space is never invoked at all.
+        XCTAssertEqual(commands(out, "PreToolUse"), ["'/Users/a b/opus-secrets' hook-pre"])
     }
 
     func testNoUnknownTopLevelKeyIsIntroduced() {
@@ -119,5 +126,40 @@ final class ClaudeSettingsMergerTests: XCTestCase {
         ))
         XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), original,
                        "never clobber a settings file we cannot parse")
+    }
+
+    func testApplyThrowsAndWritesNothingWhenTheBackupCannotBeWritten() throws {
+        let settings = dir.appendingPathComponent("settings.json")
+        let original = "{\"model\":\"opus\"}"
+        try Data(original.utf8).write(to: settings)
+
+        // A directory where the backup file should go: the write must fail.
+        let backup = dir.appendingPathComponent("blocked.bak")
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: true)
+
+        XCTAssertThrowsError(try ClaudeSettingsMerger.apply(
+            settingsURL: settings, backupURL: backup, binaryPath: binary, timeoutSeconds: 3
+        ))
+        XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), original,
+                       "the user's settings must be untouched when no backup could be secured")
+    }
+
+    func testNoOpDetectionSurvivesDifferentFormattingOnDisk() throws {
+        // Proves the comparison is semantic, not a byte comparison of our own
+        // output: the file is rewritten by hand with different key order and
+        // whitespace between the two applies.
+        let settings = dir.appendingPathComponent("settings.json")
+        let backup = dir.appendingPathComponent("settings.json.opus-bak")
+        try Data("{}".utf8).write(to: settings)
+        XCTAssertTrue(try ClaudeSettingsMerger.apply(
+            settingsURL: settings, backupURL: backup, binaryPath: binary, timeoutSeconds: 3))
+
+        let parsed = try XCTUnwrap(JSONSerialization.jsonObject(with: try Data(contentsOf: settings)) as? [String: Any])
+        let reformatted = try JSONSerialization.data(withJSONObject: parsed, options: [])  // compact, unsorted
+        try reformatted.write(to: settings)
+
+        XCTAssertFalse(try ClaudeSettingsMerger.apply(
+            settingsURL: settings, backupURL: backup, binaryPath: binary, timeoutSeconds: 3),
+            "same content, different formatting, must not rewrite")
     }
 }
