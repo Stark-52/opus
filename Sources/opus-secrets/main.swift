@@ -72,7 +72,7 @@ case "put":
             print("attention : trop courte pour être couverte par la redaction automatique.")
         }
     } catch {
-        fail("échec : \(error)")
+        fail("\(error)")
     }
     exit(0)
 
@@ -87,13 +87,20 @@ case "get":
             FileHandle.standardError.write(Data("\n(valeur affichée sur un terminal : préférer un pipe)\n".utf8))
         }
     } catch {
-        fail("introuvable : \(arguments[1])")
+        fail("\(error)")
     }
     exit(0)
 
 case "ls":
-    let names = (try? store.names()) ?? []
-    print(names.isEmpty ? "(aucun)" : names.joined(separator: "\n"))
+    do {
+        let names = try store.names()
+        print(names.isEmpty ? "(aucun)" : names.joined(separator: "\n"))
+    } catch {
+        // Never report a failed read as an empty store: `ls` is the command
+        // you run to find out what is in there, and "(aucun)" on a locked
+        // Keychain is a lie that sends you looking in the wrong place.
+        fail("\(error)")
+    }
     exit(0)
 
 case "rm":
@@ -102,7 +109,7 @@ case "rm":
         try store.remove(name: arguments[1])
         print("supprimé : \(arguments[1])")
     } catch {
-        fail("introuvable : \(arguments[1])")
+        fail("\(error)")
     }
     exit(0)
 
