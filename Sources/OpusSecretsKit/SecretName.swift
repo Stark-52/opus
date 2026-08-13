@@ -18,10 +18,18 @@ public enum SecretName {
     /// Regex body without anchors, so PlaceholderParser can embed it.
     public static let grammar = "[a-z0-9][a-z0-9._-]{0,63}"
 
+    // try! deliberately, and hoisted to a stored property so it compiles
+    // once instead of on every call (isValid runs once per line on the
+    // hook-post path via SessionUsage.names). This pattern is a
+    // compile-time constant built from `grammar`, so it cannot fail on any
+    // input — a failure could only mean a future edit to the grammar broke
+    // it. `try?` would return nil and make isValid reject every name,
+    // meaning nothing could ever be stored. Crashing in CI beats that.
+    private static let validator = try! NSRegularExpression(pattern: "^\(grammar)$")
+
     public static func isValid(_ name: String) -> Bool {
-        guard let re = try? NSRegularExpression(pattern: "^\(grammar)$") else { return false }
         let range = NSRange(name.startIndex..<name.endIndex, in: name)
-        return re.firstMatch(in: name, options: [], range: range) != nil
+        return Self.validator.firstMatch(in: name, options: [], range: range) != nil
     }
 
     /// Best-effort conversion of arbitrary text (an env var name, a JSON

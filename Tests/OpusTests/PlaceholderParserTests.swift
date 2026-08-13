@@ -24,6 +24,13 @@ final class PlaceholderParserTests: XCTestCase {
         XCTAssertEqual(PlaceholderParser.names(in: "Bearer{{secret:k}}suffix"), ["k"])
     }
 
+    func testNamesAcceptsUnderscoreInName() {
+        // The underscore IS in SecretName.grammar. This is the detail the
+        // plan got wrong twice, so it gets an assertion rather than trust.
+        XCTAssertEqual(PlaceholderParser.names(in: "{{secret:my_key}}"), ["my_key"])
+        XCTAssertEqual(PlaceholderParser.substitute("{{secret:my_key}}", values: ["my_key": "V"]), "V")
+    }
+
     func testSubstituteReplacesEveryOccurrence() {
         let cmd = "A={{secret:alpha}} B={{secret:alpha}}"
         let out = PlaceholderParser.substitute(cmd, values: ["alpha": "V"])

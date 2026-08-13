@@ -15,7 +15,13 @@ import Foundation
 public enum PlaceholderParser {
     public static let marker = "{{secret:"
 
-    private static let regex = try? NSRegularExpression(
+    // try! deliberately. This pattern is a compile-time constant built from
+    // SecretName.grammar, so it cannot fail on any input — a failure could
+    // only mean a future edit to the grammar broke it. `try?` would return
+    // nil and make names()/substitute() report "no placeholders", which
+    // would let a literal {{secret:x}} run as if it were the credential.
+    // Crashing in CI beats silently disabling the control in production.
+    private static let regex = try! NSRegularExpression(
         pattern: "\\{\\{secret:(\(SecretName.grammar))\\}\\}"
     )
 
@@ -27,7 +33,6 @@ public enum PlaceholderParser {
 
     /// Every valid name referenced, in first-appearance order, deduplicated.
     public static func names(in text: String) -> [String] {
-        guard let regex else { return [] }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         var ordered: [String] = []
         var seen = Set<String>()
@@ -42,7 +47,7 @@ public enum PlaceholderParser {
     /// Replace each placeholder whose name is present in `values`. A
     /// placeholder with no entry is left exactly as written.
     public static func substitute(_ text: String, values: [String: String]) -> String {
-        guard let regex, containsMarker(text) else { return text }
+        guard containsMarker(text) else { return text }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         let matches = regex.matches(in: text, options: [], range: range)
         guard !matches.isEmpty else { return text }
