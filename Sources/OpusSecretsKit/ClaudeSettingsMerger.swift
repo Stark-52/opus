@@ -73,11 +73,21 @@ public enum ClaudeSettingsMerger {
         for registration in registrations {
             var entries = (hooks[registration.event] as? [[String: Any]]) ?? []
 
-            // Drop any previous registration of ours, at any binary path.
-            entries.removeAll { entry in
-                let commands = (entry["hooks"] as? [[String: Any]] ?? [])
-                    .compactMap { $0["command"] as? String }
-                return commands.contains { isOurs($0) }
+            // Remove only OUR commands from each entry's inner `hooks`
+            // array, rather than dropping the whole entry the instant ANY
+            // command in it matches: a user block bundling their own hook
+            // next to a colliding one (same matcher group) would otherwise
+            // lose both, not just the one being replaced. An entry left
+            // with nothing of its own after filtering is dropped; one
+            // where nothing changed is returned untouched.
+            entries = entries.compactMap { entry -> [String: Any]? in
+                guard let innerHooks = entry["hooks"] as? [[String: Any]] else { return entry }
+                let kept = innerHooks.filter { !isOurs($0["command"] as? String ?? "") }
+                if kept.count == innerHooks.count { return entry }
+                guard !kept.isEmpty else { return nil }
+                var updated = entry
+                updated["hooks"] = kept
+                return updated
             }
 
             var entry: [String: Any] = [
@@ -126,6 +136,17 @@ public enum ClaudeSettingsMerger {
                 throw ClaudeSettingsMergeError.malformedExistingFile
             }
             existing = parsed
+        }
+
+        // A valid JSON object whose "hooks" key is the wrong shape (e.g.
+        // `{"hooks": "oops"}`, a string where an object belongs) used to be
+        // silently accepted here: `merged(into:)` casts with `as?` and
+        // falls back to an empty dictionary on a mismatch, discarding
+        // whatever the user actually typed with no error at all. Treated as
+        // malformed, same as top-level invalid JSON, so the file is refused
+        // rather than half-understood.
+        if let hooksValue = existing["hooks"], !(hooksValue is [String: Any]) {
+            throw ClaudeSettingsMergeError.malformedExistingFile
         }
 
         let merged = merged(into: existing, binaryPath: binaryPath, timeoutSeconds: timeoutSeconds)

@@ -93,6 +93,20 @@ final class ClaudeSettingsMergerTests: XCTestCase {
                        ["run opus-secre'ts hook-x --foo", "'\(binary)' hook-pre"])
     }
 
+    func testAUserHookBundledWithACollidingOneInTheSameMatcherGroupSurvives() {
+        // Dropping the whole entry the instant ANY of its commands matched
+        // ours used to lose the user's own hook too, not just the one being
+        // replaced.
+        let existing: [String: Any] = ["hooks": [
+            "PreToolUse": [["matcher": "Bash", "hooks": [
+                ["type": "command", "command": "/my/own/linter"],
+                ["type": "command", "command": "\(binary) hook-pre"]
+            ]]]
+        ]]
+        XCTAssertEqual(commands(merge(existing), "PreToolUse"),
+                       ["/my/own/linter", "'\(binary)' hook-pre"])
+    }
+
     func testAPreQuotingRegistrationIsMigratedNotDuplicated() {
         // An entry written before shell-quoting was added must be recognised
         // and replaced, not left alongside a second one.
@@ -135,6 +149,28 @@ final class ClaudeSettingsMergerTests: XCTestCase {
         ))
         XCTAssertTrue(FileManager.default.fileExists(atPath: settings.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path), "nothing existed, so nothing to back up")
+    }
+
+    func testApplyRefusesAValidObjectWithTheWrongInnerHooksShape() throws {
+        // {"hooks": "oops"} is valid JSON, and `existing["hooks"] as?
+        // [String: Any]` in merged(into:) silently falls back to an empty
+        // dictionary on the mismatch — discarding whatever the user typed
+        // there with no error at all. Must be treated as malformed, like
+        // top-level invalid JSON, and leave the file untouched.
+        let settings = dir.appendingPathComponent("wrong-shape.json")
+        let backup = dir.appendingPathComponent("wrong-shape.json.opus-bak")
+        let original = "{\"hooks\": \"oops\"}"
+        try Data(original.utf8).write(to: settings)
+
+        XCTAssertThrowsError(try ClaudeSettingsMerger.apply(
+            settingsURL: settings, backupURL: backup, binaryPath: binary, timeoutSeconds: 3
+        )) { error in
+            guard case ClaudeSettingsMergeError.malformedExistingFile = error else {
+                return XCTFail("expected malformedExistingFile, got \(error)")
+            }
+        }
+        XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), original,
+                       "never discard a value the user typed just because we can't merge it")
     }
 
     func testApplyRefusesToTouchAMalformedFile() throws {
