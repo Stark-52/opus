@@ -36,9 +36,11 @@ let runner = HookRunner(store: store, usage: usage)
 switch arguments.first {
 
 case "hook-pre":
-    // Read the whole payload, then gate on a raw substring search BEFORE
-    // any JSON parsing. Braces are not escaped in JSON, so searching the
-    // undecoded buffer is valid and skips a parse on the common path.
+    // Read the whole payload, decode it as UTF-8, then gate on a plain
+    // substring search BEFORE any JSON parsing. Braces are not escaped in
+    // JSON, so searching the decoded text this way is valid and still
+    // skips a JSON parse on the common (no-placeholder) path — decoding
+    // costs far less than JSONSerialization does.
     let raw = FileHandle.standardInput.readDataToEndOfFile()
     guard let text = String(data: raw, encoding: .utf8),
           text.contains(PlaceholderParser.marker)
@@ -126,8 +128,15 @@ case "run":
     for binding in bindings {
         let parts = binding.split(separator: "=", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { fail("liaison invalide : \(binding)") }
-        guard let value = try? store.value(for: parts[0]) else { fail("introuvable : \(parts[0])") }
-        environment[parts[1]] = value
+        do {
+            environment[parts[1]] = try store.value(for: parts[0])
+        } catch {
+            // Same reasoning as get/ls/rm above: `try?` would report a
+            // locked Keychain identically to a plain typo ("introuvable"),
+            // which is a lie when the real problem is that nothing at all
+            // could be read.
+            fail("\(error)")
+        }
     }
 
     let process = Process()
