@@ -29,6 +29,28 @@ public enum SecretStoreError: Error, Equatable {
     case commandFailed(String)
 }
 
+extension SecretStoreError: CustomStringConvertible {
+    /// The CLI prints these straight to the user, so they are sentences, not
+    /// debug output. `commandFailed` carries `security`'s own stderr, which
+    /// cannot contain a value: the read command never obtained one, and the
+    /// write command receives the value on stdin rather than in argv.
+    public var description: String {
+        switch self {
+        case .notFound(let name):
+            return "secret « \(name) » introuvable"
+        case .invalidName(let name):
+            return "nom invalide : \(name) (attendu : \(SecretName.grammar))"
+        case .invalidValue(let reason):
+            return reason
+        case .commandFailed(let detail):
+            let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty
+                ? "Trousseau inaccessible"
+                : "Trousseau inaccessible : \(trimmed)"
+        }
+    }
+}
+
 public protocol SecretStore {
     func names() throws -> [String]
     func value(for name: String) throws -> String
