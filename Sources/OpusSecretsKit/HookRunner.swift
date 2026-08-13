@@ -100,6 +100,71 @@ public struct HookRunner {
         ])
     }
 
+    // MARK: PostToolUse
+
+    /// Fast path: no session file means this session has never had a
+    /// secret substituted, so no output of any tool can contain one.
+    /// That is a single stat() and an immediate exit, which is what makes
+    /// a matcher of "*" affordable.
+    public func runPost(input: Data) -> Data? {
+        guard let root = try? JSONSerialization.jsonObject(with: input) as? [String: Any] else { return nil }
+        let sessionID = root["session_id"] as? String ?? ""
+        guard usage.hasAny(sessionID: sessionID) else { return nil }
+
+        let used = usage.names(sessionID: sessionID)
+        guard !used.isEmpty else { return nil }
+
+        let pairs: [(name: String, value: String)] = used.compactMap { name in
+            guard let value = try? store.value(for: name) else { return nil }
+            return (name: name, value: value)
+        }
+        let redactor = SecretRedactor(secrets: pairs)
+        guard !redactor.isEmpty else { return nil }
+
+        guard let response = root["tool_response"] else { return nil }
+
+        var changed = false
+        let redacted = SecretRedactor.redactStrings(in: response) { text in
+            let out = redactor.redactKnownValues(text)
+            if out != text { changed = true }
+            return out
+        }
+
+        // Nothing leaked, so let the original output through untouched
+        // rather than paying for a schema revalidation.
+        guard changed else { return nil }
+
+        return encode([
+            "hookSpecificOutput": [
+                "hookEventName": "PostToolUse",
+                "updatedToolOutput": redacted
+            ]
+        ])
+    }
+
+    // MARK: SessionStart
+
+    public func runSessionStart(input: Data) -> Data? {
+        usage.prune(olderThan: 7 * 24 * 3600)
+
+        let names = ((try? store.names()) ?? []).sorted()
+        guard !names.isEmpty else { return nil }
+
+        let context = """
+        Secrets disponibles (valeurs inaccessibles, ne pas tenter de les lire) : \
+        \(names.joined(separator: ", ")). \
+        Pour en utiliser un, écrire {{secret:<nom>}} directement dans une commande Bash ; \
+        la substitution a lieu à l'exécution et la valeur n'apparaît jamais ici.
+        """
+
+        return encode([
+            "hookSpecificOutput": [
+                "hookEventName": "SessionStart",
+                "additionalContext": context
+            ]
+        ])
+    }
+
     fileprivate func encode(_ object: [String: Any]) -> Data? {
         try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
     }

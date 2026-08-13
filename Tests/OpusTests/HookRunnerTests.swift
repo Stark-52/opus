@@ -121,4 +121,86 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertNil(runner(["k": "V"]).runPre(input: input),
                      "substitution is Bash-only by design (spec section 5.4)")
     }
+
+    // MARK: PostToolUse
+
+    private func postInput(response: Any, sessionID: String = "s1") -> Data {
+        json([
+            "session_id": sessionID,
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Bash",
+            "tool_response": response
+        ])
+    }
+
+    func testPostWithNoRecordedUsageProducesNoOutput() {
+        let input = postInput(response: ["stdout": "re_live_abc123", "stderr": ""])
+        XCTAssertNil(runner(["k": "re_live_abc123"]).runPost(input: input),
+                     "no session file means nothing was ever substituted, so there is nothing to redact")
+    }
+
+    func testPostRedactsAUsedSecretAndPreservesShape() throws {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["resend"], sessionID: "s1")
+        let runner = HookRunner(store: InMemorySecretStore(["resend": "re_live_abc123"]), usage: usage)
+
+        let input = postInput(response: ["stdout": "KEY=re_live_abc123\n", "stderr": "", "interrupted": false])
+        let out = try XCTUnwrap(runner.runPost(input: input))
+        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["hookEventName"] as? String, "PostToolUse")
+
+        let updated = try XCTUnwrap(specific["updatedToolOutput"] as? [String: Any])
+        XCTAssertEqual(updated["stdout"] as? String, "KEY=[secret:resend]\n")
+        XCTAssertEqual(updated["stderr"] as? String, "")
+        XCTAssertEqual(updated["interrupted"] as? Bool, false,
+                       "non-string keys must survive so the result still matches the tool's output shape")
+    }
+
+    func testPostProducesNoOutputWhenNothingActuallyChanged() {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["resend"], sessionID: "s1")
+        let runner = HookRunner(store: InMemorySecretStore(["resend": "re_live_abc123"]), usage: usage)
+        XCTAssertNil(runner.runPost(input: postInput(response: ["stdout": "all good", "stderr": ""])))
+    }
+
+    func testPostIgnoresSecretsNotUsedInThisSession() {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["used"], sessionID: "s1")
+        let runner = HookRunner(
+            store: InMemorySecretStore(["used": "aaaaaaaaaa", "unused": "bbbbbbbbbb"]),
+            usage: usage
+        )
+        XCTAssertNil(runner.runPost(input: postInput(response: ["stdout": "bbbbbbbbbb"])),
+                     "an unused secret cannot have leaked, so it is not in the redaction set")
+    }
+
+    func testPostRedactsInsideAStringResponse() throws {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["k"], sessionID: "s1")
+        let runner = HookRunner(store: InMemorySecretStore(["k": "aaaaaaaaaa"]), usage: usage)
+
+        let out = try XCTUnwrap(runner.runPost(input: postInput(response: "value is aaaaaaaaaa")))
+        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["updatedToolOutput"] as? String, "value is [secret:k]")
+    }
+
+    // MARK: SessionStart
+
+    func testSessionStartListsNamesOnly() throws {
+        let runner = self.runner(["resend-landing": "V1", "asc-key-id": "V2"])
+        let out = try XCTUnwrap(runner.runSessionStart(input: json(["hook_event_name": "SessionStart"])))
+        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["hookEventName"] as? String, "SessionStart")
+
+        let context = try XCTUnwrap(specific["additionalContext"] as? String)
+        XCTAssertTrue(context.contains("asc-key-id"))
+        XCTAssertTrue(context.contains("resend-landing"))
+        XCTAssertTrue(context.contains("{{secret:"), "Claude must be told the calling convention")
+        XCTAssertFalse(context.contains("V1"), "values must never appear")
+        XCTAssertFalse(context.contains("V2"))
+    }
+
+    func testSessionStartWithAnEmptyStoreProducesNoOutput() {
+        XCTAssertNil(runner().runSessionStart(input: json(["hook_event_name": "SessionStart"])))
+    }
 }
