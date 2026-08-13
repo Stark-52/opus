@@ -82,6 +82,37 @@ final class SecretExtractorTests: XCTestCase {
         XCTAssertEqual(SecretExtractor.maskedPreview("abcd"), "…… (4 car.)")
     }
 
+    func testBareURLIsNotSplitIntoKeyAndValue() {
+        // A Slack webhook is a realistic paste. Filing it as name "https"
+        // with the scheme stripped off the value would corrupt it silently.
+        let url = "https://hooks.slack.com/services/T00/B00/XXXX"
+        XCTAssertEqual(SecretExtractor.candidates(from: url),
+                       [SecretCandidate(suggestedName: "", value: url)])
+    }
+
+    func testConnectionStringIsNotSplit() {
+        let dsn = "postgres://user:pass@host:5432/db"
+        XCTAssertEqual(SecretExtractor.candidates(from: dsn),
+                       [SecretCandidate(suggestedName: "", value: dsn)])
+    }
+
+    func testWindowsPathIsNotSplit() {
+        let path = "C:\\Users\\dev\\secrets.txt"
+        XCTAssertEqual(SecretExtractor.candidates(from: path),
+                       [SecretCandidate(suggestedName: "", value: path)])
+    }
+
+    func testEqualsSeparatedValueStartingWithSlashesIsStillAnAssignment() {
+        // The URI guard is gated on the separator, so this must not regress.
+        XCTAssertEqual(SecretExtractor.candidates(from: "PATH_PREFIX=//shared"),
+                       [SecretCandidate(suggestedName: "path-prefix", value: "//shared")])
+    }
+
+    func testAtMostOneAuthSchemeIsStripped() {
+        XCTAssertEqual(SecretExtractor.candidates(from: "Authorization: Bearer Token abc123"),
+                       [SecretCandidate(suggestedName: "authorization", value: "Token abc123")])
+    }
+
     func testShellHostileDetection() {
         XCTAssertFalse(SecretExtractor.isShellHostile("re_live_abc-123.XYZ"))
         XCTAssertTrue(SecretExtractor.isShellHostile("has'quote"))
