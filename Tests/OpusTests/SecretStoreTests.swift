@@ -60,6 +60,18 @@ final class SecretStoreTests: XCTestCase {
         }
     }
 
+    func testPutRejectsCRLFValue() {
+        // Regression guard: Swift treats "\r\n" as a single Character, so a
+        // Character-level contains("\n") check silently passes CRLF through.
+        // The validator must look at UTF-8 bytes.
+        let store = InMemorySecretStore()
+        XCTAssertThrowsError(try store.put(name: "k", value: "line1\r\nline2")) { error in
+            guard case .invalidValue = error as? SecretStoreError else {
+                return XCTFail("expected .invalidValue, got \(error)")
+            }
+        }
+    }
+
     func testPutRejectsValueOverTheByteCap() {
         let store = InMemorySecretStore()
         let tooLong = String(repeating: "a", count: SecretValueValidator.maximumValueBytes + 1)
