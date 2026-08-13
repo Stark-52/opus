@@ -173,4 +173,14 @@ final class PromptHistoryTests: XCTestCase {
         XCTAssertNil(PromptHistory.parse(line: historyLine("sk-abcdefghijklmnopqrst")),
                      "a prompt that was nothing but a credential has no value once redacted")
     }
+
+    func testParseDropsALineLeftEmptyByAKnownStoredValueRedaction() {
+        // Mirrors testParseDropsALineLeftEmptyByRedaction, but for the
+        // known-value path: stripping only the "[secret:" prefix would have
+        // left the secret's NAME behind as residue, keeping this row alive
+        // as a dead "[secret:mine]" entry.
+        let redactor = SecretRedactor(secrets: [(name: "mine", value: "zzzzzzzzzzzz")])
+        XCTAssertNil(PromptHistory.parse(line: historyLine("zzzzzzzzzzzz"), redactor: redactor),
+                     "a prompt that was nothing but a stored value has no value once redacted")
+    }
 }

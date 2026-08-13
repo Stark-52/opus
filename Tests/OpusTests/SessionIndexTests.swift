@@ -244,6 +244,18 @@ final class SessionIndexTests: XCTestCase {
         XCTAssertEqual(title, String(long.prefix(80)))
     }
 
+    func testLatestAiTitle_redactsACredentialInTheTailPath() {
+        // scan() overrides parseSummary's already-redacted title with
+        // latestAiTitle's value whenever the transcript is bigger than
+        // headBudgetBytes — the common case for real transcripts — so this
+        // path needs its own redaction, independent of parseSummary's.
+        let tail = data([
+            "garbage-partial-line-not-json",
+            #"{"type":"ai-title","aiTitle":"RESEND_API_KEY=re_abcdefghijklmnop"}"#,
+        ])
+        XCTAssertEqual(SessionIndex.latestAiTitle(jsonlTail: tail), "RESEND_API_KEY=[redacted]")
+    }
+
     // MARK: scan
 
     private var root: URL!
