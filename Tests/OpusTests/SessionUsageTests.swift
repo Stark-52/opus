@@ -53,8 +53,7 @@ final class SessionUsageTests: XCTestCase {
         let usage = SessionUsage(directory: dir)
         usage.record(names: ["a"], sessionID: "../../etc/passwd")
         let contents = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        XCTAssertEqual(contents.count, 1)
-        XCTAssertFalse(contents[0].contains("/"))
+        XCTAssertEqual(contents, ["etcpasswd.names"])
     }
 
     func testFileIsOwnerReadableOnly() throws {
@@ -78,5 +77,37 @@ final class SessionUsageTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
         XCTAssertTrue(usage.hasAny(sessionID: "new"))
+    }
+
+    func testConcurrentRecordsDoNotLoseNames() {
+        // The read-merge-overwrite this replaced lost names here: two writers
+        // both read the old set, then the second overwrote the first. Claude
+        // Code's parallel tool calls make that the normal case, not a corner.
+        let usage = SessionUsage(directory: dir)
+        DispatchQueue.concurrentPerform(iterations: 50) { i in
+            usage.record(names: ["name-\(i)"], sessionID: "s1")
+        }
+        XCTAssertEqual(usage.names(sessionID: "s1").count, 50)
+    }
+
+    func testNamesDeduplicatesRepeatedRecords() {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["a"], sessionID: "s1")
+        usage.record(names: ["a", "b"], sessionID: "s1")
+        usage.record(names: ["a"], sessionID: "s1")
+        XCTAssertEqual(usage.names(sessionID: "s1").sorted(), ["a", "b"])
+    }
+
+    func testDirectoryModeIsEnforcedEvenWhenItAlreadyExists() {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o755])
+        SessionUsage(directory: dir).record(names: ["a"], sessionID: "s1")
+        let attrs = try? FileManager.default.attributesOfItem(atPath: dir.path)
+        XCTAssertEqual(attrs?[.posixPermissions] as? NSNumber, NSNumber(value: 0o700))
+    }
+
+    func testPruneOnAMissingDirectoryDoesNotCrash() {
+        let absent = dir.appendingPathComponent("never-created")
+        SessionUsage(directory: absent).prune(olderThan: 1, now: Date())
     }
 }
