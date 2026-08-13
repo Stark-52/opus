@@ -277,12 +277,23 @@ final class PromptPalettePanel: NSObject {
             // empty for ~230 ms on every open. Same reasoning and same shape as
             // HookRunner.runPost.
             var pairs: [(name: String, value: String)] = []
+            var unreadable: [String] = []
             if !names.isEmpty {
                 let lock = NSLock()
                 DispatchQueue.concurrentPerform(iterations: names.count) { index in
-                    guard let value = try? store.value(for: names[index]) else { return }
-                    lock.lock(); pairs.append((name: names[index], value: value)); lock.unlock()
+                    if let value = try? store.value(for: names[index]) {
+                        lock.lock(); pairs.append((name: names[index], value: value)); lock.unlock()
+                    } else {
+                        lock.lock(); unreadable.append(names[index]); lock.unlock()
+                    }
                 }
+            }
+            // Never fail open in silence: a value dropped here silently
+            // drops that secret from the palette's redaction set, the same
+            // situation HookRunner.runPost already warns about for the
+            // same underlying cause (a Keychain that locked mid-session).
+            if !unreadable.isEmpty {
+                NSLog("Opus PromptPalettePanel: cannot read \(unreadable.count) secret(s) from the Keychain (\(unreadable.sorted().joined(separator: ", "))); the redaction set is incomplete for this open")
             }
             let entries = PromptHistory.load(url: Self.historyURL, redactor: SecretRedactor(secrets: pairs))
             DispatchQueue.main.async {
