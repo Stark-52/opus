@@ -13,16 +13,39 @@
 //   PostToolUse accepts hookSpecificOutput.updatedToolOutput, which
 //               replaces the output before the model sees it, for all
 //               tools, and is validated against the tool's output shape.
+//
+// runPre does NOT resolve secret values, on purpose. It used to: it read
+// each requested value and substituted it directly into `command`, and
+// that command became `updatedInput.command`, which IS this hook's stdout.
+// Because Claude Code writes a hook's stdout into the session .jsonl
+// unconditionally (see the `suppressOutput` note on `encode`, below), every
+// substitution put the real value on disk. Confirmed by an end-to-end
+// canary test with a disposable secret. The fix is
+// CommandSubstitutionRewriter: it rewrites the placeholder into a shell
+// `$(...)` command substitution that the SHELL resolves later, at
+// execution time, in the process that actually runs the command — never in
+// this one. So runPre only needs to confirm the name EXISTS
+// (`store.names()`), never read what it maps to.
 
 import Foundation
 
 public struct HookRunner {
     private let store: SecretStore
     private let usage: SessionUsage
+    private let binaryPath: String
 
-    public init(store: SecretStore, usage: SessionUsage) {
+    /// `binaryPath` is what gets embedded in every rewritten `$(...)`
+    /// command substitution (see runPre / CommandSubstitutionRewriter). It
+    /// defaults to this PROCESS's own absolute path: the hook is always
+    /// invoked by absolute path from settings.json (ClaudeSettingsMerger
+    /// writes it that way), so `CommandLine.arguments[0]` IS the binary a
+    /// rewritten placeholder must shell back out to. Made injectable, with
+    /// this default, so tests can assert against a fixed string instead of
+    /// a machine- and build-directory-dependent one.
+    public init(store: SecretStore, usage: SessionUsage, binaryPath: String = CommandLine.arguments[0]) {
         self.store = store
         self.usage = usage
+        self.binaryPath = binaryPath
     }
 
     // MARK: PreToolUse
@@ -38,36 +61,41 @@ public struct HookRunner {
         let requested = PlaceholderParser.names(in: command)
         guard !requested.isEmpty else { return nil }
 
-        // `try?` would be wrong here. The store deliberately distinguishes
-        // `.notFound` from `.commandFailed`, because a locked Keychain is a
-        // different problem from a typo and the spec requires it be reported
-        // as one. Collapsing both into "missing" would tell the user
-        // "secret introuvable, disponibles : ..." while the truth is that
-        // the Keychain is locked and the list is empty for the same reason.
-        var values: [String: String] = [:]
-        var missing: [String] = []
-        var storeFailure: String?
-        for name in requested {
-            do {
-                values[name] = try store.value(for: name)
-            } catch SecretStoreError.notFound {
-                missing.append(name)
-            } catch {
-                storeFailure = String(describing: error)
-                break
-            }
-        }
-
-        // Refuse the whole command rather than let an unresolved
-        // placeholder travel to a provider as if it were a credential.
-        if let storeFailure {
+        // Existence only — never the value. `try?` would be wrong here:
+        // the store deliberately distinguishes a store-wide failure (this
+        // throw) from a name simply being absent from a successful listing,
+        // because a locked Keychain is a different problem from a typo and
+        // the spec requires it be reported as one. Collapsing both into
+        // "missing" would tell the user "secret introuvable, disponibles :
+        // ..." while the truth is that the Keychain is locked and the list
+        // is empty for the same reason.
+        let available: [String]
+        do {
+            available = try store.names()
+        } catch {
             return refusal(
-                "Trousseau inaccessible (\(storeFailure)). Aucune substitution effectuée. Déverrouiller le Trousseau puis réessayer."
+                "Trousseau inaccessible (\(String(describing: error))). Aucune substitution effectuée. Déverrouiller le Trousseau puis réessayer."
             )
         }
-        guard missing.isEmpty else { return denial(missing: missing) }
 
-        toolInput["command"] = PlaceholderParser.substitute(command, values: values)
+        let known = Set(available)
+        let missing = requested.filter { !known.contains($0) }
+        guard missing.isEmpty else { return denial(missing: missing, available: available) }
+
+        // Refuse the whole command rather than let a placeholder that
+        // cannot safely expand where it sits travel to a provider as if it
+        // were a credential (see CommandSubstitutionRewriter for why single
+        // quotes are the case that cannot be made safe).
+        let rewritten: String
+        switch CommandSubstitutionRewriter.rewrite(command, binaryPath: binaryPath) {
+        case .refusedInsideSingleQuotes(let name):
+            return refusal(
+                "Secret « \(name) » utilisé entre guillemets simples : le shell n'y développe pas $(...), donc la substitution y placerait le texte littéral au lieu de la valeur. Utiliser des guillemets doubles ou aucun guillemet autour de {{secret:\(name)}}."
+            )
+        case .rewritten(let rewrittenCommand):
+            rewritten = rewrittenCommand
+        }
+        toolInput["command"] = rewritten
 
         let sessionID = root["session_id"] as? String ?? ""
         usage.record(names: requested, sessionID: sessionID)
@@ -80,8 +108,7 @@ public struct HookRunner {
         ])
     }
 
-    private func denial(missing: [String]) -> Data? {
-        let available = (try? store.names()) ?? []
+    private func denial(missing: [String], available: [String]) -> Data? {
         let known = available.isEmpty ? "aucun secret enregistré" : available.joined(separator: ", ")
         let subject = missing.count == 1
             ? "Secret « \(missing[0]) » introuvable."
