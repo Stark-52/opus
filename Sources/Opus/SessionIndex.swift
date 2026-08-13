@@ -125,6 +125,12 @@ enum SessionIndex {
         // truncation below keeps a "[redacted]" marker from being cut in
         // half. Pattern-only: parseSummary is pure and must stay free of
         // Keychain access.
+        //
+        // This does NOT redact everything scan() ends up returning: for any
+        // transcript bigger than headBudgetBytes (the common case), scan()
+        // below discards this title in favor of latestAiTitle(jsonlTail:),
+        // which does its own redaction separately. Do not assume this call
+        // covers that path too.
         let resolved = SecretRedactor.redactCredentialPatterns(
             aiTitle
                 ?? firstUserTitle
@@ -166,7 +172,14 @@ enum SessionIndex {
             latest = t
         }
         guard let latest else { return nil }
-        return latest.count > 80 ? String(latest.prefix(80)) : latest
+        // Redact BEFORE truncating, same reason as parseSummary: a marker cut
+        // in half is worse than useless. This path is not an edge case —
+        // scan() overrides parseSummary's already-redacted title with this
+        // value whenever the transcript exceeds headBudgetBytes, which is the
+        // common case for real transcripts, so leaving it unredacted would
+        // keep the Cmd+K leak open for most sessions.
+        let clean = SecretRedactor.redactCredentialPatterns(latest)
+        return clean.count > 80 ? String(clean.prefix(80)) : clean
     }
 
     /// Enumerate every transcript under `projectsDir` (one level of project

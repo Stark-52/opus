@@ -69,8 +69,14 @@ enum PromptHistory {
 
         // A prompt that was nothing but a credential is now nothing but a
         // marker. Dropping it keeps the palette free of dead rows.
-        let residue = text.replacingOccurrences(of: "[redacted]", with: "")
-            .replacingOccurrences(of: "[secret:", with: "")
+        //
+        // Strip WHOLE markers. Removing the "[secret:" prefix alone leaves the
+        // secret's name as residue, so a prompt that was nothing but a stored
+        // value survived as a dead "[secret:name]" row while the pattern-only
+        // equivalent was dropped.
+        let residue = text
+            .replacingOccurrences(of: "\\[secret:[a-z0-9._-]+\\]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "[redacted]", with: "")
             .trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         if residue.isEmpty { return nil }
 

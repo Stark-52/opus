@@ -271,9 +271,18 @@ final class PromptPalettePanel: NSObject {
             // panel appearing. Values are read once per open, not per
             // keystroke.
             let store = KeychainSecretStore()
-            let pairs: [(name: String, value: String)] = ((try? store.names()) ?? []).compactMap { name in
-                guard let value = try? store.value(for: name) else { return nil }
-                return (name: name, value: value)
+            let names = (try? store.names()) ?? []
+            // Concurrent, not sequential. Each read spawns /usr/bin/security at
+            // a measured ~23 ms, so ten stored secrets would leave the list
+            // empty for ~230 ms on every open. Same reasoning and same shape as
+            // HookRunner.runPost.
+            var pairs: [(name: String, value: String)] = []
+            if !names.isEmpty {
+                let lock = NSLock()
+                DispatchQueue.concurrentPerform(iterations: names.count) { index in
+                    guard let value = try? store.value(for: names[index]) else { return }
+                    lock.lock(); pairs.append((name: names[index], value: value)); lock.unlock()
+                }
             }
             let entries = PromptHistory.load(url: Self.historyURL, redactor: SecretRedactor(secrets: pairs))
             DispatchQueue.main.async {
