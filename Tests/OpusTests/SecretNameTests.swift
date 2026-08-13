@@ -5,6 +5,8 @@ final class SecretNameTests: XCTestCase {
     func testAcceptsGrammarConformingNames() {
         XCTAssertTrue(SecretName.isValid("resend-landing"))
         XCTAssertTrue(SecretName.isValid("asc.key.id"))
+        XCTAssertTrue(SecretName.isValid("has_underscore"),
+                      "underscore IS in the grammar: slug normalizes it away when deriving a name from an env var, but a hand-typed name may keep it")
         XCTAssertTrue(SecretName.isValid("a"))
         XCTAssertTrue(SecretName.isValid("x9"))
         XCTAssertTrue(SecretName.isValid(String(repeating: "a", count: 64)))
@@ -17,7 +19,7 @@ final class SecretNameTests: XCTestCase {
         XCTAssertFalse(SecretName.isValid("UPPER"), "lowercase only")
         XCTAssertFalse(SecretName.isValid("has space"))
         XCTAssertFalse(SecretName.isValid("has/slash"))
-        XCTAssertFalse(SecretName.isValid("has_underscore"), "underscore is not in the grammar")
+        XCTAssertFalse(SecretName.isValid("_leading-underscore"), "must start alphanumeric")
         XCTAssertFalse(SecretName.isValid(String(repeating: "a", count: 65)), "65 chars is one too many")
     }
 
