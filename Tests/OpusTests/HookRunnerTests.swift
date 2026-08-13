@@ -184,6 +184,34 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertEqual(specific["updatedToolOutput"] as? String, "value is [secret:k]")
     }
 
+    func testPostPreservesATopLevelArrayResponse() throws {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["k"], sessionID: "s1")
+        let runner = HookRunner(store: InMemorySecretStore(["k": "aaaaaaaaaa"]), usage: usage)
+
+        let out = try XCTUnwrap(runner.runPost(input: postInput(response: ["aaaaaaaaaa", 42, true])))
+        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        let updated = try XCTUnwrap(specific["updatedToolOutput"] as? [Any])
+        XCTAssertEqual(updated[0] as? String, "[secret:k]")
+        XCTAssertEqual(updated[1] as? Int, 42)
+        XCTAssertEqual(updated[2] as? Bool, true)
+    }
+
+    func testPostPreservesNestedDictionaries() throws {
+        let usage = SessionUsage(directory: dir)
+        usage.record(names: ["k"], sessionID: "s1")
+        let runner = HookRunner(store: InMemorySecretStore(["k": "aaaaaaaaaa"]), usage: usage)
+
+        let response: [String: Any] = ["outer": ["inner": ["leaf": "x aaaaaaaaaa y", "n": 7]]]
+        let out = try XCTUnwrap(runner.runPost(input: postInput(response: response)))
+        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        let updated = try XCTUnwrap(specific["updatedToolOutput"] as? [String: Any])
+        let outer = try XCTUnwrap(updated["outer"] as? [String: Any])
+        let inner = try XCTUnwrap(outer["inner"] as? [String: Any])
+        XCTAssertEqual(inner["leaf"] as? String, "x [secret:k] y")
+        XCTAssertEqual(inner["n"] as? Int, 7)
+    }
+
     // MARK: SessionStart
 
     func testSessionStartListsNamesOnly() throws {

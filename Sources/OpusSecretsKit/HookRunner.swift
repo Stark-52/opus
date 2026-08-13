@@ -114,14 +114,35 @@ public struct HookRunner {
         let used = usage.names(sessionID: sessionID)
         guard !used.isEmpty else { return nil }
 
-        let pairs: [(name: String, value: String)] = used.compactMap { name in
-            guard let value = try? store.value(for: name) else { return nil }
-            return (name: name, value: value)
+        // Cheap check before the expensive one: no response, nothing to do.
+        guard let response = root["tool_response"] else { return nil }
+
+        // Read concurrently. Each read spawns /usr/bin/security, measured at
+        // ~23 ms, and this runs on EVERY tool call for the rest of a session
+        // that has used a secret. Sequentially, four used secrets would cost
+        // ~91 ms per tool call, added even to tool calls unrelated to any
+        // secret. Concurrently it is one read's latency regardless of count.
+        var pairs: [(name: String, value: String)] = []
+        var unreadable: [String] = []
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: used.count) { index in
+            let name = used[index]
+            if let value = try? store.value(for: name) {
+                lock.lock(); pairs.append((name: name, value: value)); lock.unlock()
+            } else {
+                lock.lock(); unreadable.append(name); lock.unlock()
+            }
         }
+
+        // Never fail open in silence. runPost IS the safety net; a Keychain
+        // that locked mid-session would otherwise disable it for the rest of
+        // the session with no signal at all.
+        if !unreadable.isEmpty {
+            Self.warn("cannot read \(unreadable.count) secret(s) from the Keychain (\(unreadable.sorted().joined(separator: ", "))); the redaction net is incomplete for this tool call")
+        }
+
         let redactor = SecretRedactor(secrets: pairs)
         guard !redactor.isEmpty else { return nil }
-
-        guard let response = root["tool_response"] else { return nil }
 
         var changed = false
         let redacted = SecretRedactor.redactStrings(in: response) { text in
@@ -167,5 +188,11 @@ public struct HookRunner {
 
     fileprivate func encode(_ object: [String: Any]) -> Data? {
         try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
+    }
+
+    /// Diagnostics go to stderr, never stdout: stdout carries the hook's JSON
+    /// protocol and anything written there would corrupt it.
+    private static func warn(_ message: String) {
+        FileHandle.standardError.write(Data("opus-secrets: \(message)\n".utf8))
     }
 }
