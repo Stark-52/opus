@@ -28,8 +28,16 @@ public enum SecretExtractor {
     // programmer error that belongs in CI. `try?` here would silently
     // degrade every line to the bare-token path, turning `KEY=value` into a
     // candidate whose value is the whole line.
+    // The value group is `(.*?)`, not `(.+?)`: it must also match an EMPTY
+    // value (`FOO=` with nothing after the `=`) so that case reaches the
+    // `guard !value.isEmpty else { return nil }` below and is skipped
+    // outright, rather than falling through to the bare-token path below
+    // and being filed as a nameless candidate whose value is the literal
+    // text "FOO=". Behaviourally identical to `(.+?)` for every non-empty
+    // value — the non-greedy quantifier already expands to the minimum
+    // needed to satisfy the trailing anchor either way.
     private static let assignment = try! NSRegularExpression(
-        pattern: "^\\s*(?:export\\s+)?[\"']?([A-Za-z0-9_.-]+)[\"']?\\s*([=:])\\s*(.+?)\\s*,?\\s*$"
+        pattern: "^\\s*(?:export\\s+)?[\"']?([A-Za-z0-9_.-]+)[\"']?\\s*([=:])\\s*(.*?)\\s*,?\\s*$"
     )
 
     public static func candidates(from blob: String) -> [SecretCandidate] {
