@@ -6,24 +6,24 @@ import XCTest
 /// likely to have an edge case, so it gets tested directly against the
 /// scanner rather than only indirectly through HookRunner.
 ///
-/// Each fixture marks the position to query with `@`. `context(in:at:)`
+/// Each fixture marks the position to query with `@`. `position(in:at:)`
 /// only looks at characters STRICTLY BEFORE the given index, so the marker
 /// itself never needs to be stripped out first — leaving it in place is
 /// simpler and avoids reusing a String.Index across two different String
 /// values.
 final class ShellQuoteScannerTests: XCTestCase {
+    /// `context(in:at:)` was a convenience wrapper with no production
+    /// caller — deleted, since `CommandSubstitutionRewriter` (the only real
+    /// caller of this scanner) always needs the full `ShellPosition`. This
+    /// helper gets the same thing straight from `position(...)`.
     private func context(_ fixture: String) -> ShellQuoteContext {
-        guard let markerIndex = fixture.firstIndex(of: "@") else {
-            XCTFail("fixture must contain '@' marking the query position")
-            return .outside
-        }
-        return ShellQuoteScanner.context(in: fixture, at: markerIndex)
+        position(fixture).quoteContext
     }
 
     private func position(_ fixture: String) -> ShellPosition {
         guard let markerIndex = fixture.firstIndex(of: "@") else {
             XCTFail("fixture must contain '@' marking the query position")
-            return ShellPosition(quoteContext: .outside, pendingEscape: false)
+            return ShellPosition(quoteContext: .outside, pendingEscape: false, insideHeredocBody: false)
         }
         return ShellQuoteScanner.position(in: fixture, at: markerIndex)
     }
@@ -149,5 +149,54 @@ final class ShellQuoteScannerTests: XCTestCase {
         let p = position("echo '\\@b'")
         XCTAssertEqual(p.quoteContext, .singleQuoted)
         XCTAssertFalse(p.pendingEscape)
+    }
+
+    // MARK: insideHeredocBody — added after a review caught a placeholder
+    // inside a heredoc body reading as plain "outside quotes" (see
+    // CommandSubstitutionRewriterTests for the real-shell proof: a heredoc
+    // written this way puts the literal, unresolved substitution text on
+    // disk instead of a value).
+
+    func testHeredocWithASingleQuotedDelimiterBodyIsInsideHeredoc() {
+        let p = position("cat <<'EOF'\napi_key=@x\nEOF\n")
+        XCTAssertTrue(p.insideHeredocBody)
+    }
+
+    func testHeredocWithADoubleQuotedDelimiterBodyIsInsideHeredoc() {
+        let p = position("cat <<\"EOF\"\napi_key=@x\nEOF\n")
+        XCTAssertTrue(p.insideHeredocBody)
+    }
+
+    func testHeredocWithAnUnquotedDelimiterBodyIsInsideHeredoc() {
+        let p = position("cat <<EOF\napi_key=@x\nEOF\n")
+        XCTAssertTrue(p.insideHeredocBody)
+    }
+
+    func testAHereStringIsNotMistakenForAHeredoc() {
+        // <<< is a here-string, not a heredoc — this scanner must leave it
+        // alone entirely, so the placeholder here sits in plain double
+        // quotes, not a heredoc body.
+        let p = position("cat <<<\"@x\"")
+        XCTAssertFalse(p.insideHeredocBody)
+        XCTAssertEqual(p.quoteContext, .doubleQuoted)
+    }
+
+    func testAPlaceholderAfterAHeredocHasClosedIsOutsideAgain() {
+        let p = position("cat <<'EOF'\nbody\nEOF\necho @x\n")
+        XCTAssertFalse(p.insideHeredocBody)
+        XCTAssertEqual(p.quoteContext, .outside)
+    }
+
+    func testADashedHeredocWithATabIndentedBodyLineIsInsideHeredoc() {
+        let p = position("cat <<-EOF\n\tapi_key=@x\nEOF\n")
+        XCTAssertTrue(p.insideHeredocBody)
+    }
+
+    func testADashedHeredocRecognisesATabIndentedTerminatorLine() {
+        // <<- strips leading tabs from the TERMINATOR line too, so the body
+        // ends there and a placeholder on the following line is outside
+        // the heredoc again.
+        let p = position("cat <<-EOF\nbody\n\tEOF\necho @x\n")
+        XCTAssertFalse(p.insideHeredocBody)
     }
 }

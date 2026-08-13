@@ -77,12 +77,40 @@
 //                         (Backslash has no meaning inside single quotes at
 //                         all, so this can never fire there — that case is
 //                         always reported as refusedInsideSingleQuotes.)
+//
+//   inside a heredoc body → REFUSED, unconditionally, regardless of what
+//                         ShellQuoteScanner's outside/single/double
+//                         classification says at that position (a heredoc
+//                         body is not one of those three regions at all —
+//                         see ShellQuoteScanner's header). A QUOTED
+//                         delimiter (`<<'EOF'`) disables every expansion in
+//                         the body, so a spliced `$(...)` would never run —
+//                         the literal text reaches whatever reads the body
+//                         (a file, a variable) exactly like the
+//                         single-quote case. An UNQUOTED delimiter
+//                         (`<<EOF`) does let `$(...)` run, but this
+//                         rewriter also adds its OWN surrounding double
+//                         quotes in the outside-quotes branch, and those
+//                         added quote characters have no special meaning
+//                         inside a heredoc body — they would land as two
+//                         literal `"` characters in whatever the body
+//                         becomes. Found by running the generated heredoc
+//                         through a real shell rather than reasoning about
+//                         it: `cat > .env <<'EOF'` / `API_KEY={{secret:k}}`
+//                         / `EOF` wrote the literal placeholder-turned-
+//                         substitution text into `.env`, which a later
+//                         `source .env` or deploy step would then send as
+//                         the credential.
 import Foundation
 
 enum CommandSubstitutionRewrite {
-    case rewritten(String)
+    /// `consumed` is the number of DISTINCT secret names this pass actually
+    /// spliced a substitution in for — see runPre for why this is reported
+    /// rather than trusted implicitly.
+    case rewritten(String, consumed: Int)
     case refusedInsideSingleQuotes(name: String)
     case refusedPendingEscape(name: String)
+    case refusedInsideHeredoc(name: String)
 }
 
 enum CommandSubstitutionRewriter {
@@ -104,6 +132,10 @@ enum CommandSubstitutionRewriter {
 
         var out = ""
         var cursor = command.startIndex
+        // Distinct names actually spliced — see the type's doc comment and
+        // runPre for why the caller checks this against what it requested
+        // rather than trusting that every match here was processed.
+        var consumedNames: Set<String> = []
         for match in matches {
             guard let whole = Range(match.range, in: command),
                   let nameRange = Range(match.range(at: 1), in: command)
@@ -112,6 +144,13 @@ enum CommandSubstitutionRewriter {
             let name = String(command[nameRange])
             let position = ShellQuoteScanner.position(in: command, at: whole.lowerBound)
 
+            // A heredoc body is not a context this scanner's quote states
+            // describe at all (see the file header): checked first, ahead
+            // of the quote-context branches below, since neither of those
+            // is meaningful once a placeholder is inside one.
+            guard !position.insideHeredocBody else {
+                return .refusedInsideHeredoc(name: name)
+            }
             // $(...) does not expand inside single quotes at all, so there
             // is no safe rewrite to fall back to here — the whole command
             // must be refused rather than let the literal text through.
@@ -133,9 +172,10 @@ enum CommandSubstitutionRewriter {
             out += command[cursor..<whole.lowerBound]
             out += replacement
             cursor = whole.upperBound
+            consumedNames.insert(name)
         }
         out += command[cursor...]
-        return .rewritten(out)
+        return .rewritten(out, consumed: consumedNames.count)
     }
 
     /// Single-quote a POSIX path so it survives `sh -c` verbatim. Nth copy

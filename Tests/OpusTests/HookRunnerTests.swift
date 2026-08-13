@@ -262,6 +262,33 @@ final class HookRunnerTests: XCTestCase {
                        "the command never runs (it is refused), so recording it as used would be a lie")
     }
 
+    func testPlaceholderInsideAHeredocIsRefusedWithADistinctMessage() throws {
+        // See CommandSubstitutionRewriterTests for real-shell proof of why
+        // a heredoc body cannot be rewritten safely with either a quoted or
+        // unquoted delimiter; here we only need HookRunner to surface a
+        // refusal, with its own wording distinct from the other two.
+        let command = "cat > .env <<'EOF'\nAPI_KEY={{secret:k}}\nEOF\n"
+        let out = try XCTUnwrap(runner(["k": "VALUE"]).runPre(input: preInput(command: command)))
+        let root = try decode(out)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
+        XCTAssertNil(specific["updatedInput"])
+        let reason = try XCTUnwrap(specific["permissionDecisionReason"] as? String)
+        XCTAssertTrue(reason.contains("k"), "the reason must name the offending secret; got: \(reason)")
+        XCTAssertTrue(reason.contains("heredoc"), "must explain WHY: a heredoc body is involved; got: \(reason)")
+        XCTAssertFalse(reason.contains("guillemets simples"),
+                       "this is a different failure than the single-quote one and must not reuse its wording")
+    }
+
+    func testRefusalForAHeredocRecordsNothing() {
+        let usage = SessionUsage(directory: dir)
+        let runner = HookRunner(store: InMemorySecretStore(["k": "V"]), usage: usage, binaryPath: testBinaryPath)
+        let command = "cat > .env <<'EOF'\nAPI_KEY={{secret:k}}\nEOF\n"
+        _ = runner.runPre(input: preInput(command: command, sessionID: "sess-99"))
+        XCTAssertFalse(usage.hasAny(sessionID: "sess-99"),
+                       "the command never runs (it is refused), so recording it as used would be a lie")
+    }
+
     // MARK: PostToolUse
 
     private func postInput(response: Any, sessionID: String = "s1") -> Data {
