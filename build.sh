@@ -11,8 +11,10 @@ swift build -c release
 BUILD_DIR="$(swift build -c release --show-bin-path)"
 OPUS_BIN="$BUILD_DIR/Opus"
 ATTACH_BIN="$BUILD_DIR/opus-attach"
+SECRETS_BIN="$BUILD_DIR/opus-secrets"
 test -f "$OPUS_BIN"   || { echo "✗ Opus binary not found at $OPUS_BIN"; exit 1; }
 test -f "$ATTACH_BIN" || { echo "✗ opus-attach binary not found at $ATTACH_BIN"; exit 1; }
+test -f "$SECRETS_BIN" || { echo "✗ opus-secrets binary not found at $SECRETS_BIN"; exit 1; }
 
 echo "→ assembling Opus.app bundle"
 rm -rf Opus.app
@@ -20,11 +22,16 @@ mkdir -p Opus.app/Contents/MacOS
 mkdir -p Opus.app/Contents/Resources
 cp "$OPUS_BIN"   Opus.app/Contents/MacOS/Opus
 cp "$ATTACH_BIN" Opus.app/Contents/MacOS/opus-attach
+cp "$SECRETS_BIN" Opus.app/Contents/MacOS/opus-secrets
 
 echo "→ installing opus-attach to ~/.local/bin"
 mkdir -p "$HOME/.local/bin"
 cp "$ATTACH_BIN" "$HOME/.local/bin/opus-attach"
 chmod +x "$HOME/.local/bin/opus-attach"
+
+echo "→ installing opus-secrets to ~/.local/bin"
+cp "$SECRETS_BIN" "$HOME/.local/bin/opus-secrets"
+chmod +x "$HOME/.local/bin/opus-secrets"
 
 cat > Opus.app/Contents/Info.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
