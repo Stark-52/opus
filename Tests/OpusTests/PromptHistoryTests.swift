@@ -1,5 +1,6 @@
 import XCTest
 @testable import Opus
+@testable import OpusSecretsKit
 
 final class PromptHistoryTests: XCTestCase {
     private func line(_ s: String) -> Data { Data(s.utf8) }
@@ -141,5 +142,35 @@ final class PromptHistoryTests: XCTestCase {
         XCTAssertGreaterThan(filler.utf8.count, PromptHistory.tailBudgetBytes)
         let entries = PromptHistory.load(url: makeHistoryFile(filler + "\n"))
         XCTAssertEqual(entries, [])
+    }
+
+    // MARK: - Redaction
+
+    private func historyLine(_ display: String) -> Data {
+        Data("""
+        {"display":"\(display)","timestamp":1700000000000,"project":"/tmp/p"}
+        """.utf8)
+    }
+
+    func testParseRedactsCredentialPatternsByDefault() throws {
+        let entry = try XCTUnwrap(PromptHistory.parse(line: historyLine("RESEND_API_KEY=re_abcdefghijklmnop")))
+        XCTAssertEqual(entry.text, "RESEND_API_KEY=[redacted]",
+                       "the credential is stripped, the surrounding prompt is kept")
+    }
+
+    func testParseKeepsOrdinaryPromptsIntact() throws {
+        let entry = try XCTUnwrap(PromptHistory.parse(line: historyLine("fix the login bug")))
+        XCTAssertEqual(entry.text, "fix the login bug")
+    }
+
+    func testParseRedactsAKnownStoredValueMidLine() throws {
+        let redactor = SecretRedactor(secrets: [(name: "mine", value: "zzzzzzzzzzzz")])
+        let entry = try XCTUnwrap(PromptHistory.parse(line: historyLine("KEY=zzzzzzzzzzzz voilà"), redactor: redactor))
+        XCTAssertEqual(entry.text, "KEY=[secret:mine] voilà")
+    }
+
+    func testParseDropsALineLeftEmptyByRedaction() {
+        XCTAssertNil(PromptHistory.parse(line: historyLine("sk-abcdefghijklmnopqrst")),
+                     "a prompt that was nothing but a credential has no value once redacted")
     }
 }

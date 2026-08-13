@@ -27,6 +27,7 @@
 //     `latestAiTitle` parses the tail with last-match-wins semantics (the
 //     freshest regenerated title is the one worth showing).
 import Foundation
+import OpusSecretsKit
 
 struct SessionSummary: Equatable {
     let sessionId: String
@@ -117,9 +118,18 @@ enum SessionIndex {
 
         guard let cwd else { return nil }
 
-        let resolved = aiTitle
-            ?? firstUserTitle
-            ?? (cwd as NSString).lastPathComponent
+        // Same leak as the prompt palette: the first user message is used
+        // verbatim as the Cmd+K title, so a prompt that carried a key put
+        // that key in a session list. Redacting the RESOLVED title covers
+        // both assignment sites at once, and doing it before the 80-char
+        // truncation below keeps a "[redacted]" marker from being cut in
+        // half. Pattern-only: parseSummary is pure and must stay free of
+        // Keychain access.
+        let resolved = SecretRedactor.redactCredentialPatterns(
+            aiTitle
+                ?? firstUserTitle
+                ?? (cwd as NSString).lastPathComponent
+        )
         let truncated = resolved.count > 80 ? String(resolved.prefix(80)) : resolved
 
         return SessionSummary(

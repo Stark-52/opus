@@ -11,6 +11,7 @@
 // prompt's text needs more room to read than a session title.
 
 import AppKit
+import OpusSecretsKit
 
 /// NSPanel returns false for canBecomeKey by default; override so the search
 /// field can take keyboard focus when the palette opens. Same technique as
@@ -265,7 +266,16 @@ final class PromptPalettePanel: NSObject {
         visible = true
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let entries = PromptHistory.load(url: Self.historyURL)
+            // Built here, on the background queue that already exists for
+            // the history read, so the Keychain round-trip never blocks the
+            // panel appearing. Values are read once per open, not per
+            // keystroke.
+            let store = KeychainSecretStore()
+            let pairs: [(name: String, value: String)] = ((try? store.names()) ?? []).compactMap { name in
+                guard let value = try? store.value(for: name) else { return nil }
+                return (name: name, value: value)
+            }
+            let entries = PromptHistory.load(url: Self.historyURL, redactor: SecretRedactor(secrets: pairs))
             DispatchQueue.main.async {
                 guard let self, self.visible, self.scanGeneration == generation else { return }
                 self.allEntries = entries
