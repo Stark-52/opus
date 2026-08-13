@@ -25,6 +25,7 @@ import Security
 public enum SecretStoreError: Error, Equatable {
     case notFound(String)
     case invalidName(String)
+    case invalidValue(String)
     case commandFailed(String)
 }
 
@@ -33,6 +34,35 @@ public protocol SecretStore {
     func value(for name: String) throws -> String
     func put(name: String, value: String) throws
     func remove(name: String) throws
+}
+
+// SecretValueValidator — the door both stores put a value through, kept
+// as one piece of code so the fake and the real Keychain store can never
+// diverge on what they accept.
+public enum SecretValueValidator {
+    /// Same ceiling as SecretExtractor.maximumBlobBytes, deliberately: the
+    /// panel and the store agree on one limit. The value is fed to
+    /// `security` twice, so this caps stdin at 16 KB, comfortably under a
+    /// pipe's default capacity — which is what keeps `run`'s write-then-read
+    /// ordering from being able to stall.
+    public static let maximumValueBytes = 8 * 1024
+
+    static func validate(name: String, value: String) throws {
+        guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
+        // `security -w` reads the value line by line, so a newline would
+        // truncate it and desynchronise the confirmation prompt. Refuse it
+        // here rather than let `security` fail with "passwords don't match".
+        guard !value.contains("\n"), !value.contains("\r") else {
+            throw SecretStoreError.invalidValue(
+                "valeur multi-ligne : le Trousseau est mono-ligne ici. Une clé PEM (.p8) reste dans un fichier."
+            )
+        }
+        guard value.utf8.count <= maximumValueBytes else {
+            throw SecretStoreError.invalidValue(
+                "valeur trop longue (\(value.utf8.count) octets, maximum \(maximumValueBytes))"
+            )
+        }
+    }
 }
 
 public final class InMemorySecretStore: SecretStore {
@@ -45,16 +75,18 @@ public final class InMemorySecretStore: SecretStore {
     public func names() throws -> [String] { storage.keys.sorted() }
 
     public func value(for name: String) throws -> String {
+        guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
         guard let v = storage[name] else { throw SecretStoreError.notFound(name) }
         return v
     }
 
     public func put(name: String, value: String) throws {
-        guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
+        try SecretValueValidator.validate(name: name, value: value)
         storage[name] = value
     }
 
     public func remove(name: String) throws {
+        guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
         guard storage.removeValue(forKey: name) != nil else { throw SecretStoreError.notFound(name) }
     }
 }
@@ -62,6 +94,12 @@ public final class InMemorySecretStore: SecretStore {
 public final class KeychainSecretStore: SecretStore {
     private let service: String
     private static let securityPath = "/usr/bin/security"
+
+    /// Exit status `security` uses for "the specified item could not be
+    /// found in the keychain". Every other non-zero status (locked
+    /// keychain, denied authorization, malformed request, ...) is a real
+    /// failure and must not be reported to the caller as a plain miss.
+    private static let itemNotFoundStatus: Int32 = 44
 
     public init(service: String = "claude-secrets") {
         self.service = service
@@ -86,18 +124,21 @@ public final class KeychainSecretStore: SecretStore {
 
     public func value(for name: String) throws -> String {
         guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
-        let (status, out, _) = Self.run(
+        let (status, out, err) = Self.run(
             arguments: ["find-generic-password", "-s", service, "-a", name, "-w"],
             stdin: nil
         )
-        guard status == 0 else { throw SecretStoreError.notFound(name) }
-        // `security -w` terminates its output with a newline that is not
-        // part of the stored value.
-        return out.hasSuffix("\n") ? String(out.dropLast()) : out
+        if status == 0 {
+            // `security -w` terminates its output with a newline that is
+            // not part of the stored value.
+            return out.hasSuffix("\n") ? String(out.dropLast()) : out
+        }
+        if status == Self.itemNotFoundStatus { throw SecretStoreError.notFound(name) }
+        throw SecretStoreError.commandFailed(err)
     }
 
     public func put(name: String, value: String) throws {
-        guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
+        try SecretValueValidator.validate(name: name, value: value)
         // -U updates in place when the item already exists. -w with no
         // argument reads the value from stdin; the tool asks twice, so the
         // value is fed twice.
@@ -110,11 +151,13 @@ public final class KeychainSecretStore: SecretStore {
 
     public func remove(name: String) throws {
         guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
-        let (status, _, _) = Self.run(
+        let (status, _, err) = Self.run(
             arguments: ["delete-generic-password", "-s", service, "-a", name],
             stdin: nil
         )
-        guard status == 0 else { throw SecretStoreError.notFound(name) }
+        if status == 0 { return }
+        if status == Self.itemNotFoundStatus { throw SecretStoreError.notFound(name) }
+        throw SecretStoreError.commandFailed(err)
     }
 
     private static func run(arguments: [String], stdin: String?) -> (Int32, String, String) {
