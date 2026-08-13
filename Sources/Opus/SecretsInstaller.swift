@@ -39,9 +39,28 @@ enum SecretsInstaller {
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json.opus-bak")
     }
 
-    /// Returns nil on success, or a message describing what could not be done.
+    /// The message from the most recently completed `install()` call, or
+    /// nil when that attempt found nothing to report. `install()` runs
+    /// unconditionally on every Opus launch (see main.swift) and used to
+    /// send this string only to NSLog — nobody but the owner tailing Console.app
+    /// would ever see it. A malformed ~/.claude/settings.json means NO
+    /// hooks get registered, so every later `{{secret:...}}` placeholder
+    /// travels to a provider as a literal string with the redaction net
+    /// also off, while the panel that ostensibly just "rangé" a secret
+    /// showed nothing wrong. SecretsPanel reads this on open so that
+    /// failure is visible somewhere a user might actually be looking.
+    static private(set) var lastProblem: String?
+
+    /// Returns nil on success, or a message describing what could not be
+    /// done. Also caches that message in `lastProblem` for SecretsPanel.
     @discardableResult
     static func install() -> String? {
+        let problem = performInstall()
+        lastProblem = problem
+        return problem
+    }
+
+    private static func performInstall() -> String? {
         let fm = FileManager.default
 
         if let source = bundledBinaryPath {
@@ -109,8 +128,19 @@ enum SecretsInstaller {
             // Existence and readability are different questions. `try?` alone
             // collapses them, and falling through on an unreadable file would
             // overwrite something Opus did not write, which is the one thing
-            // this function promises never to do.
-            guard let existing = try? String(contentsOfFile: path, encoding: .utf8) else {
+            // this function promises never to do. Reading the DATA first
+            // (rather than `String(contentsOfFile:encoding:)` under a single
+            // `try?`) is what lets a permission failure be reported as
+            // itself instead of being folded into "not readable as UTF-8" —
+            // same split ClaudeSettingsMerger already makes between
+            // unreadableExistingFile and malformedExistingFile.
+            let data: Data
+            do {
+                data = try Data(contentsOf: URL(fileURLWithPath: path))
+            } catch {
+                return "~/bin/secret existe mais n'a pas pu être lu (\(error)). Laissé intact, le shim n'est pas installé."
+            }
+            guard let existing = String(data: data, encoding: .utf8) else {
                 return "~/bin/secret existe mais n'est pas lisible en UTF-8. Laissé intact, le shim n'est pas installé."
             }
             guard existing.contains("opus-secrets") else {
