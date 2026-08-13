@@ -2,8 +2,9 @@ import XCTest
 @testable import OpusSecretsKit
 
 /// A store whose every read fails with a chosen error. `InMemorySecretStore`
-/// can only produce `.notFound`, so it cannot express "the Keychain is
-/// locked", which is exactly the case `runPre` must report differently.
+/// always returns successfully from `names()` — an empty or populated list,
+/// never a throw — so it cannot express "the Keychain is locked", which is
+/// exactly the case `runPre` must report differently from "name not found".
 private final class FailingSecretStore: SecretStore {
     private let error: SecretStoreError
     init(error: SecretStoreError) { self.error = error }
@@ -12,6 +13,15 @@ private final class FailingSecretStore: SecretStore {
     func put(name: String, value: String) throws { throw error }
     func remove(name: String) throws { throw error }
 }
+
+/// Fixed rather than `CommandLine.arguments[0]`, so an assertion on the
+/// rewritten command text is checking a known string, not a machine- and
+/// build-directory-dependent one.
+private let testBinaryPath = "/usr/local/bin/opus-secrets"
+
+/// `'\(testBinaryPath)'` — the exact form CommandSubstitutionRewriter emits
+/// via its own copy of the repo's shellQuote idiom.
+private let quotedTestBinaryPath = "'\(testBinaryPath)'"
 
 final class HookRunnerTests: XCTestCase {
     private var dir: URL!
@@ -27,8 +37,8 @@ final class HookRunnerTests: XCTestCase {
         super.tearDown()
     }
 
-    private func runner(_ seed: [String: String] = [:]) -> HookRunner {
-        HookRunner(store: InMemorySecretStore(seed), usage: SessionUsage(directory: dir))
+    private func runner(_ seed: [String: String] = [:], binaryPath: String = testBinaryPath) -> HookRunner {
+        HookRunner(store: InMemorySecretStore(seed), usage: SessionUsage(directory: dir), binaryPath: binaryPath)
     }
 
     private func json(_ object: [String: Any]) -> Data {
@@ -48,22 +58,112 @@ final class HookRunnerTests: XCTestCase {
         ])
     }
 
+    /// Runs `runPre` and returns the rewritten `command` from a successful
+    /// response, failing the test if the response was a refusal or malformed.
+    private func rewrittenCommand(_ runner: HookRunner, command: String, sessionID: String = "s1") throws -> String {
+        let out = try XCTUnwrap(runner.runPre(input: preInput(command: command, sessionID: sessionID)))
+        let root = try decode(out)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
+        XCTAssertNil(specific["permissionDecision"], "expected success, got a refusal")
+        let updated = try XCTUnwrap(specific["updatedInput"] as? [String: Any])
+        return try XCTUnwrap(updated["command"] as? String)
+    }
+
     func testNoPlaceholderProducesNoOutput() {
         XCTAssertNil(runner().runPre(input: preInput(command: "ls -la")))
     }
 
-    func testSubstitutesOnlyTheCommandField() throws {
+    // MARK: Command substitution rewrite — quote contexts
+
+    func testPlaceholderOutsideAnyQuotesBecomesAQuotedCommandSubstitution() throws {
         let out = try XCTUnwrap(runner(["k": "VALUE"]).runPre(input: preInput(command: "echo {{secret:k}}")))
         let root = try decode(out)
         XCTAssertEqual(root["suppressOutput"] as? Bool, true,
-                       "without this, Claude Code writes this stdout (the substituted secret) into the transcript")
+                       "without this, Claude Code writes this stdout into the transcript")
         let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["hookEventName"] as? String, "PreToolUse")
         let updated = try XCTUnwrap(specific["updatedInput"] as? [String: Any])
-        XCTAssertEqual(updated["command"] as? String, "echo VALUE")
+        XCTAssertEqual(updated["command"] as? String, "echo \"$(\(quotedTestBinaryPath) get k)\"",
+                       "outside any quotes, the splice must add its OWN double quotes: unquoted $(...) word-splits")
         XCTAssertEqual(updated["description"] as? String, "does a thing",
                        "non-command fields must survive verbatim: updatedInput replaces the whole object")
     }
+
+    func testPlaceholderInsideDoubleQuotesBecomesABareCommandSubstitution() throws {
+        let runner = self.runner(["k": "VALUE"])
+        let command = try rewrittenCommand(runner, command: "curl -H \"Auth: Bearer {{secret:k}}\"")
+        XCTAssertEqual(command, "curl -H \"Auth: Bearer $(\(quotedTestBinaryPath) get k)\"",
+                       "already inside double quotes, so no extra pair is added — that would nest incorrectly")
+    }
+
+    func testPlaceholderInsideSingleQuotesIsRefused() throws {
+        let out = try XCTUnwrap(runner(["k": "VALUE"]).runPre(input: preInput(command: "curl -H 'Auth: Bearer {{secret:k}}'")))
+        let root = try decode(out)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
+        XCTAssertNil(specific["updatedInput"])
+        let reason = try XCTUnwrap(specific["permissionDecisionReason"] as? String)
+        XCTAssertTrue(reason.contains("k"), "the reason must name the offending secret; got: \(reason)")
+        XCTAssertTrue(reason.contains("guillemets simples"), "must explain WHY: $(...) does not expand in '...'; got: \(reason)")
+    }
+
+    func testTwoPlaceholdersInDifferentQuoteContextsAreEachHandledCorrectly() throws {
+        let runner = self.runner(["a": "A", "b": "B"])
+        let command = try rewrittenCommand(
+            runner, command: "echo {{secret:a}} && curl -H \"X: {{secret:b}}\""
+        )
+        XCTAssertEqual(
+            command,
+            "echo \"$(\(quotedTestBinaryPath) get a)\" && curl -H \"X: $(\(quotedTestBinaryPath) get b)\""
+        )
+    }
+
+    func testEscapedDoubleQuoteOutsideQuotesDoesNotOpenARegion() throws {
+        // Shell text: echo \" {{secret:k}}  — an escaped, literal quote
+        // outside any quoted region. It must not be mistaken for an opener,
+        // which would leave the scanner thinking the placeholder sits
+        // inside double quotes and wrongly emit a bare (unquoted)
+        // substitution.
+        let runner = self.runner(["k": "V"])
+        let command = try rewrittenCommand(runner, command: "echo \\\" {{secret:k}}")
+        XCTAssertEqual(command, "echo \\\" \"$(\(quotedTestBinaryPath) get k)\"")
+    }
+
+    func testSingleQuoteInsideADoubleQuotedRegionDoesNotCloseIt() throws {
+        // Shell text: curl -H "It's {{secret:k}}"  — the apostrophe has no
+        // special meaning inside double quotes. If the scanner mistook it
+        // for a quote character, it would think it left the double-quoted
+        // region and (depending on what followed) either wrap with an extra
+        // pair of quotes or refuse the command outright.
+        let runner = self.runner(["k": "V"])
+        let command = try rewrittenCommand(runner, command: "curl -H \"It's {{secret:k}}\"")
+        XCTAssertEqual(command, "curl -H \"It's $(\(quotedTestBinaryPath) get k)\"")
+    }
+
+    func testBackslashInsideSingleQuotesDoesNotEscapeTheClosingQuote() throws {
+        // Shell text: echo '\' {{secret:k}}  — POSIX single quotes give NO
+        // special meaning to backslash, so '\' is a COMPLETE, already-closed
+        // three-character single-quoted region containing one backslash.
+        // The placeholder that follows sits outside any quotes. A scanner
+        // that wrongly let backslash escape here would treat the region as
+        // never closing, and the placeholder would be refused as if it were
+        // single-quoted — which it is not.
+        let runner = self.runner(["k": "V"])
+        let command = try rewrittenCommand(runner, command: "echo '\\' {{secret:k}}")
+        XCTAssertEqual(command, "echo '\\' \"$(\(quotedTestBinaryPath) get k)\"")
+    }
+
+    func testEmittedCommandContainsTheSecretNameAndNeverAValue() throws {
+        let runner = self.runner(["k": "SUPER-SECRET-DO-NOT-LEAK"])
+        let out = try XCTUnwrap(runner.runPre(input: preInput(command: "echo {{secret:k}}")))
+        let raw = try XCTUnwrap(String(data: out, encoding: .utf8))
+        XCTAssertFalse(raw.contains("SUPER-SECRET-DO-NOT-LEAK"),
+                       "the hook's own stdout is what Claude Code writes to the transcript, so it must never carry a value")
+        let command = try rewrittenCommand(runner, command: "echo {{secret:k}}")
+        XCTAssertTrue(command.contains("get k)"), "must reference the secret by NAME")
+    }
+
+    // MARK: Existence checks (unchanged behaviour, now backed by store.names())
 
     func testUnknownNameDeniesAndNeverSubstitutes() throws {
         let out = try XCTUnwrap(runner(["known": "V"]).runPre(input: preInput(command: "echo {{secret:typo}}")))
@@ -84,26 +184,13 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
     }
 
-    func testSuccessfulSubstitutionRecordsUsage() throws {
-        let usage = SessionUsage(directory: dir)
-        let runner = HookRunner(store: InMemorySecretStore(["k": "VALUE"]), usage: usage)
-        _ = runner.runPre(input: preInput(command: "echo {{secret:k}}", sessionID: "sess-42"))
-        XCTAssertEqual(usage.names(sessionID: "sess-42"), ["k"])
-    }
-
-    func testDeniedCommandRecordsNothing() {
-        let usage = SessionUsage(directory: dir)
-        let runner = HookRunner(store: InMemorySecretStore(), usage: usage)
-        _ = runner.runPre(input: preInput(command: "echo {{secret:nope}}", sessionID: "sess-42"))
-        XCTAssertFalse(usage.hasAny(sessionID: "sess-42"))
-    }
-
     func testKeychainFailureIsReportedAsSuchNotAsAMissingSecret() throws {
         // A locked Keychain must not be reported as "secret introuvable":
-        // the store distinguishes .commandFailed from .notFound precisely so
-        // this message can be truthful, and `try?` would throw that away.
+        // the store distinguishes a store-wide throw from a name simply
+        // being absent from a successful `names()` listing, precisely so
+        // this message can be truthful.
         let store = FailingSecretStore(error: .commandFailed("keychain is locked"))
-        let runner = HookRunner(store: store, usage: SessionUsage(directory: dir))
+        let runner = HookRunner(store: store, usage: SessionUsage(directory: dir), binaryPath: testBinaryPath)
         let out = try XCTUnwrap(runner.runPre(input: preInput(command: "echo {{secret:k}}")))
         let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
@@ -124,6 +211,30 @@ final class HookRunnerTests: XCTestCase {
         ])
         XCTAssertNil(runner(["k": "V"]).runPre(input: input),
                      "substitution is Bash-only by design (spec section 5.4)")
+    }
+
+    // MARK: Usage recording
+
+    func testSuccessfulRewriteRecordsUsage() throws {
+        let usage = SessionUsage(directory: dir)
+        let runner = HookRunner(store: InMemorySecretStore(["k": "VALUE"]), usage: usage, binaryPath: testBinaryPath)
+        _ = runner.runPre(input: preInput(command: "echo {{secret:k}}", sessionID: "sess-42"))
+        XCTAssertEqual(usage.names(sessionID: "sess-42"), ["k"])
+    }
+
+    func testDeniedCommandRecordsNothing() {
+        let usage = SessionUsage(directory: dir)
+        let runner = HookRunner(store: InMemorySecretStore(), usage: usage, binaryPath: testBinaryPath)
+        _ = runner.runPre(input: preInput(command: "echo {{secret:nope}}", sessionID: "sess-42"))
+        XCTAssertFalse(usage.hasAny(sessionID: "sess-42"))
+    }
+
+    func testRefusalForSingleQuotesRecordsNothing() {
+        let usage = SessionUsage(directory: dir)
+        let runner = HookRunner(store: InMemorySecretStore(["k": "V"]), usage: usage, binaryPath: testBinaryPath)
+        _ = runner.runPre(input: preInput(command: "echo '{{secret:k}}'", sessionID: "sess-77"))
+        XCTAssertFalse(usage.hasAny(sessionID: "sess-77"),
+                       "the command never runs (it is refused), so recording it as used would be a lie")
     }
 
     // MARK: PostToolUse
