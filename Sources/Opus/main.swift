@@ -1043,6 +1043,7 @@ private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
         case 2: MainTerminalWindow.shared.toggle()
         case 3: AppDelegate.shared?.restartSessionRequested()
         case 4: AppDelegate.shared?.sendClipboardToClaude()
+        case 5: SecretsPanel.shared.toggle()
         default: break
         }
     }
@@ -1058,6 +1059,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyRefMain: EventHotKeyRef?
     private var hotKeyRefRestart: EventHotKeyRef?
     private var hotKeyRefSend: EventHotKeyRef?
+    private var hotKeyRefSecrets: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     private var nativePanel: QuickTerminalPanel?
@@ -1312,6 +1314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let ref = hotKeyRefMain    { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefSend    { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefSecrets { UnregisterEventHotKey(ref) }
         if let ref = handlerRef       { RemoveEventHandler(ref) }
     }
 
@@ -1712,6 +1715,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             idS, GetApplicationEventTarget(), 0, &hotKeyRefSend
         )
         NSLog("Opus hotkey Cmd+Ctrl+S registered (status=\(statusS))")
+
+        // Cmd+Ctrl+K → the secrets deposit panel. kVK_ANSI_K = 40. Id 5 is
+        // the first free slot (1=T, 2=M, 3=R, 4=S). Unconditional like
+        // T/R/S: depositing a key has nothing to do with display mode.
+        let idK = EventHotKeyID(signature: OSType(0x4F505553), id: 5)
+        let statusK = RegisterEventHotKey(
+            40,                                    // kVK_ANSI_K
+            UInt32(cmdKey | controlKey),
+            idK, GetApplicationEventTarget(), 0, &hotKeyRefSecrets
+        )
+        NSLog("Opus hotkey Cmd+Ctrl+K registered (status=\(statusK))")
     }
 }
 
