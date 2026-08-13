@@ -49,8 +49,13 @@ final class SecretRedactorTests: XCTestCase {
             "xoxb-1234567890-abc",
             "xoxp-1234567890-abc",
             "hooks.slack.com/services/T00/B00/XXXXXXXX",
-            "eyJhbGciOiJIUzI1NiJ9.payload",
-            "-----BEGIN RSA PRIVATE KEY-----"
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            """
+            -----BEGIN RSA PRIVATE KEY-----
+            MIIEowIBAAKCAQEAxGgVsecretbodyline1
+            Ahk9secretbodyline2==
+            -----END RSA PRIVATE KEY-----
+            """
         ]
         for sample in samples {
             let out = SecretRedactor.redactCredentialPatterns("prefix \(sample) suffix")
@@ -88,5 +93,39 @@ final class SecretRedactorTests: XCTestCase {
         let deep = try XCTUnwrap(nested["deep"] as? [Any])
         XCTAssertEqual(deep[0] as? String, "X")
         XCTAssertEqual(deep[1] as? Int, 42)
+    }
+
+    func testPEMPrivateKeyIsRedactedWholeNotJustItsBanner() {
+        // The banner-only pattern this replaced left the key body and the
+        // footer in the clear while the output still showed [redacted].
+        let pem = """
+        -----BEGIN RSA PRIVATE KEY-----
+        MIIEowIBAAKCAQEAxGgVsecretbodyline1
+        Ahk9secretbodyline2==
+        -----END RSA PRIVATE KEY-----
+        """
+        let out = SecretRedactor.redactCredentialPatterns("before\n\(pem)\nafter")
+        XCTAssertEqual(out, "before\n[redacted]\nafter")
+        XCTAssertFalse(out.contains("secretbodyline1"))
+        XCTAssertFalse(out.contains("END RSA PRIVATE KEY"))
+    }
+
+    func testTruncatedPEMWithoutEndMarkerIsStillRedacted() {
+        // Fail-safe: a key body cut off mid-stream must not escape because
+        // its footer never arrived.
+        let out = SecretRedactor.redactCredentialPatterns("x\n-----BEGIN PRIVATE KEY-----\nMIIEbodylinehere\n")
+        XCTAssertFalse(out.contains("MIIEbodylinehere"))
+        XCTAssertTrue(out.contains("[redacted]"))
+    }
+
+    func testThreeSegmentJWTIsRedactedIncludingItsSignature() {
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        let out = SecretRedactor.redactCredentialPatterns("Bearer \(jwt) end")
+        XCTAssertEqual(out, "Bearer [redacted] end")
+    }
+
+    func testUnsignedJWTWithEmptyThirdSegmentIsRedacted() {
+        XCTAssertEqual(SecretRedactor.redactCredentialPatterns("eyJhbGciOiJub25lIn0.eyJhIjoxfQ. rest"),
+                       "[redacted] rest")
     }
 }
