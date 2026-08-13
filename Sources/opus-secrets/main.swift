@@ -29,6 +29,27 @@ func emit(_ data: Data?) -> Never {
     exit(0)
 }
 
+/// Reads the macOS clipboard by shelling out to `/usr/bin/pbpaste`,
+/// deliberately not linking AppKit for it: this binary sits on the
+/// critical path of every tool call via `hook-pre` / `hook-post`, and
+/// pulling in AppKit (for NSPasteboard) would add launch cost there for
+/// the sake of one `put` code path. Same Process/Pipe shape as
+/// `KeychainSecretStore.run`. Any failure to launch or decode reads as an
+/// empty clipboard rather than a crash; `put` treats that the same way it
+/// treats a genuinely empty clipboard.
+func readPasteboard() -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pbpaste")
+    let outPipe = Pipe()
+    process.standardOutput = outPipe
+    process.standardError = Pipe()
+
+    do { try process.run() } catch { return "" }
+    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(data: outData, encoding: .utf8) ?? ""
+}
+
 let store = KeychainSecretStore()
 let usage = SessionUsage()
 let runner = HookRunner(store: store, usage: usage)
@@ -54,18 +75,36 @@ case "hook-session":
     emit(runner.runSessionStart(input: FileHandle.standardInput.readDataToEndOfFile()))
 
 case "put":
-    guard arguments.count >= 2 else { fail("usage: opus-secrets put <nom>   (valeur sur stdin)") }
+    guard arguments.count >= 2 else {
+        fail("usage: opus-secrets put <nom>   (valeur sur stdin si pipé, presse-papier sinon)")
+    }
     let name = arguments[1]
     guard SecretName.isValid(name) else {
         fail("nom invalide : \(name)\nattendu : \(SecretName.grammar)")
     }
-    let raw = FileHandle.standardInput.readDataToEndOfFile()
-    let value = (String(data: raw, encoding: .utf8) ?? "")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !value.isEmpty else { fail("valeur vide sur stdin") }
+    let isTTY = isatty(FileHandle.standardInput.fileDescriptor) == 1
+    let outcome = PutInputResolver.resolve(
+        isTTY: isTTY,
+        readStdin: {
+            let raw = FileHandle.standardInput.readDataToEndOfFile()
+            return String(data: raw, encoding: .utf8) ?? ""
+        },
+        readClipboard: readPasteboard
+    )
+    let value: String
+    let sourceLabel: String
+    switch outcome {
+    case .value(let v, let source):
+        value = v
+        sourceLabel = source == .clipboard ? "lu depuis le presse-papier" : "lu depuis stdin"
+    case .emptyStdin:
+        fail("valeur vide sur stdin")
+    case .emptyClipboard:
+        fail("valeur vide sur le presse-papier")
+    }
     do {
         try store.put(name: name, value: value)
-        print("rangé : \(name) (\(value.count) caractères)")
+        print("rangé : \(name) (\(value.count) caractères, \(sourceLabel))")
         if SecretExtractor.isShellHostile(value) {
             print("attention : cette valeur contient des caractères que le shell interprète.")
             print("            préférer « opus-secrets run \(name)=VAR -- commande ».")
@@ -151,7 +190,7 @@ default:
     print("""
     opus-secrets — passe-plat de secrets entre the owner et Claude Code.
 
-      put <nom>              range la valeur lue sur stdin
+      put <nom>              range la valeur (stdin si pipé, presse-papier sinon)
       get <nom>              ressort la valeur (à piper, pas à afficher)
       ls                     liste les noms rangés
       rm <nom>               supprime
