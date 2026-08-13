@@ -81,6 +81,28 @@ final class ClaudeSettingsMergerTests: XCTestCase {
         XCTAssertEqual(commands(out, "PreToolUse"), ["'/Users/a b/opus-secrets' hook-pre"])
     }
 
+    func testAUserHookWithAStrayApostropheIsNotMistakenForOurs() {
+        // A blanket quote-strip turned this into a marker match and deleted a
+        // hook the user owns. Matching the forms we emit cannot do that.
+        let existing: [String: Any] = ["hooks": [
+            "PreToolUse": [["matcher": "Bash",
+                            "hooks": [["type": "command", "command": "run opus-secre'ts hook-x --foo"]]]]
+        ]]
+        let out = merge(existing)
+        XCTAssertEqual(commands(out, "PreToolUse"),
+                       ["run opus-secre'ts hook-x --foo", "'\(binary)' hook-pre"])
+    }
+
+    func testAPreQuotingRegistrationIsMigratedNotDuplicated() {
+        // An entry written before shell-quoting was added must be recognised
+        // and replaced, not left alongside a second one.
+        let existing: [String: Any] = ["hooks": [
+            "PreToolUse": [["matcher": "Bash",
+                            "hooks": [["type": "command", "command": "\(binary) hook-pre"]]]]
+        ]]
+        XCTAssertEqual(commands(merge(existing), "PreToolUse"), ["'\(binary)' hook-pre"])
+    }
+
     func testNoUnknownTopLevelKeyIsIntroduced() {
         let out = merge([:])
         XCTAssertEqual(Set(out.keys), ["hooks"],
