@@ -150,6 +150,39 @@ final class ClaudeSettingsMergerTests: XCTestCase {
                        "never clobber a settings file we cannot parse")
     }
 
+    func testApplyThrowsAndWritesNothingWhenTheExistingFileIsUnreadable() throws {
+        // Existence and readability are different questions: a `try?` around
+        // the initial read would treat a present-but-unreadable file as
+        // absent, merge into an empty base, skip the backup because there is
+        // "nothing" to back up, and replace the whole file with three hook
+        // entries. chmod 0o000 makes the file unreadable to its own owner
+        // (verified: non-root, permission bits are enforced even for the
+        // owning process), which is the cheapest reliable way to reproduce
+        // "present but unreadable" without needing root or another user.
+        let settings = dir.appendingPathComponent("unreadable.json")
+        let backup = dir.appendingPathComponent("unreadable.json.opus-bak")
+        let original = "{\"model\":\"opus\"}"
+        try Data(original.utf8).write(to: settings)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: settings.path)
+        // Safety net: restore permissions even if an assertion below fails,
+        // so tearDown's removeItem(at: dir) can still clean up.
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: settings.path) }
+
+        XCTAssertThrowsError(try ClaudeSettingsMerger.apply(
+            settingsURL: settings, backupURL: backup, binaryPath: binary, timeoutSeconds: 3
+        )) { error in
+            guard case ClaudeSettingsMergeError.unreadableExistingFile = error else {
+                return XCTFail("expected unreadableExistingFile, got \(error)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path),
+                        "never attempted: cannot back up what cannot be read")
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: settings.path)
+        XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), original,
+                       "never clobber a settings file we cannot read")
+    }
+
     func testApplyThrowsAndWritesNothingWhenTheBackupCannotBeWritten() throws {
         let settings = dir.appendingPathComponent("settings.json")
         let original = "{\"model\":\"opus\"}"

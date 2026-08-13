@@ -16,6 +16,7 @@ import Foundation
 
 public enum ClaudeSettingsMergeError: Error {
     case malformedExistingFile
+    case unreadableExistingFile(String)
     case backupFailed(String)
 }
 
@@ -97,7 +98,8 @@ public enum ClaudeSettingsMerger {
     }
 
     /// Returns true when the file was actually rewritten. Throws, and
-    /// writes nothing at all, when the existing file is not valid JSON.
+    /// writes nothing at all, when the existing file is not valid JSON, is
+    /// present but unreadable, or when a backup could not be secured.
     @discardableResult
     public static func apply(
         settingsURL: URL,
@@ -105,7 +107,18 @@ public enum ClaudeSettingsMerger {
         binaryPath: String,
         timeoutSeconds: Int
     ) throws -> Bool {
-        let existingData = try? Data(contentsOf: settingsURL)
+        // Existence and readability are different questions. Treating an
+        // unreadable file as absent would merge into an empty base, skip the
+        // backup because there is nothing to back up, and replace the user's
+        // entire settings file with three hook entries.
+        var existingData: Data?
+        if FileManager.default.fileExists(atPath: settingsURL.path) {
+            do {
+                existingData = try Data(contentsOf: settingsURL)
+            } catch {
+                throw ClaudeSettingsMergeError.unreadableExistingFile(String(describing: error))
+            }
+        }
 
         var existing: [String: Any] = [:]
         if let existingData, !existingData.isEmpty {
