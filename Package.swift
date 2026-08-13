@@ -11,24 +11,33 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "Opus", targets: ["Opus"]),
-        .executable(name: "opus-attach", targets: ["opus-attach"])
+        .executable(name: "opus-attach", targets: ["opus-attach"]),
+        .executable(name: "opus-secrets", targets: ["opus-secrets"])
     ],
     dependencies: [
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0")
     ],
     targets: [
+        .target(
+            name: "OpusSecretsKit"
+        ),
         .executableTarget(
             name: "Opus",
             dependencies: [
-                .product(name: "SwiftTerm", package: "SwiftTerm")
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                "OpusSecretsKit"
             ]
         ),
         .executableTarget(
             name: "opus-attach"
         ),
+        .executableTarget(
+            name: "opus-secrets",
+            dependencies: ["OpusSecretsKit"]
+        ),
         .testTarget(
             name: "OpusTests",
-            dependencies: ["Opus"]
+            dependencies: ["Opus", "OpusSecretsKit"]
         )
     ]
 )
