@@ -1,16 +1,22 @@
 // SecretName — the one place the secret-name grammar lives.
 //
 // The grammar is deliberately narrow: lowercase alphanumerics plus dot,
-// dash and underscore-free, first character alphanumeric, 64 max. That
-// keeps PlaceholderParser's regex tight enough that a name can never
-// contain a brace, a quote, or anything else that would let a crafted
-// name change the shape of the command it is substituted into.
+// dash and underscore, first character alphanumeric, 64 max. That keeps
+// PlaceholderParser's regex tight enough that a name can never contain a
+// brace, a quote, or anything else that would let a crafted name change
+// the shape of the command it is substituted into.
+//
+// Validation is deliberately MORE permissive than `slug`. They are
+// different jobs: slug picks one canonical form when deriving a name from
+// an env var (RESEND_API_KEY becomes resend-api-key), while a name typed
+// by hand may keep the underscore the typist is used to. Normalizing and
+// accepting are not the same question.
 
 import Foundation
 
 public enum SecretName {
     /// Regex body without anchors, so PlaceholderParser can embed it.
-    public static let grammar = "[a-z0-9][a-z0-9.-]{0,63}"
+    public static let grammar = "[a-z0-9][a-z0-9._-]{0,63}"
 
     public static func isValid(_ name: String) -> Bool {
         guard let re = try? NSRegularExpression(pattern: "^\(grammar)$") else { return false }
