@@ -20,6 +20,14 @@ final class ShellQuoteScannerTests: XCTestCase {
         return ShellQuoteScanner.context(in: fixture, at: markerIndex)
     }
 
+    private func position(_ fixture: String) -> ShellPosition {
+        guard let markerIndex = fixture.firstIndex(of: "@") else {
+            XCTFail("fixture must contain '@' marking the query position")
+            return ShellPosition(quoteContext: .outside, pendingEscape: false)
+        }
+        return ShellQuoteScanner.position(in: fixture, at: markerIndex)
+    }
+
     func testOutsideAnyQuotes() {
         XCTAssertEqual(context("echo @hi"), .outside)
     }
@@ -88,5 +96,58 @@ final class ShellQuoteScannerTests: XCTestCase {
         // still escapes the character right after it (here, another
         // backslash), so the region does not end early.
         XCTAssertEqual(context("echo \"a \\\\ @b\""), .doubleQuoted)
+    }
+
+    // MARK: pendingEscape — added after a review caught a splice landing
+    // right on top of a live, unconsumed backslash (see
+    // CommandSubstitutionRewriterTests for the real-shell proof of the bug
+    // this exists to prevent).
+
+    func testPendingEscapeIsTrueImmediatelyAfterABackslashOutsideQuotes() {
+        // Shell text: echo \@after — zero gap between the backslash and the
+        // query position, so whatever sits there is the escape's target.
+        let p = position("echo \\@after")
+        XCTAssertEqual(p.quoteContext, .outside)
+        XCTAssertTrue(p.pendingEscape)
+    }
+
+    func testPendingEscapeIsFalseWhenASpaceSeparatesTheBackslashFromTheQuery() {
+        // Shell text: echo \ @after — the space is what the backslash
+        // escapes; the position after it is a clean boundary.
+        let p = position("echo \\ @after")
+        XCTAssertEqual(p.quoteContext, .outside)
+        XCTAssertFalse(p.pendingEscape)
+    }
+
+    func testPendingEscapeIsFalseAfterAnEvenNumberOfBackslashes() {
+        // Shell text: echo \\@after — the pair cancels: the first
+        // backslash's target IS the second one, so nothing is left pending.
+        let p = position("echo \\\\@after")
+        XCTAssertEqual(p.quoteContext, .outside)
+        XCTAssertFalse(p.pendingEscape)
+    }
+
+    func testPendingEscapeIsTrueAfterAnOddNumberOfBackslashes() {
+        // Shell text: echo \\\@after — three backslashes: the first pair
+        // cancels, the third is live.
+        let p = position("echo \\\\\\@after")
+        XCTAssertEqual(p.quoteContext, .outside)
+        XCTAssertTrue(p.pendingEscape)
+    }
+
+    func testPendingEscapeIsTrueImmediatelyAfterABackslashInsideDoubleQuotes() {
+        // Shell text: echo "a\@b" — same zero-gap escape, this time inside
+        // a double-quoted region.
+        let p = position("echo \"a\\@b\"")
+        XCTAssertEqual(p.quoteContext, .doubleQuoted)
+        XCTAssertTrue(p.pendingEscape)
+    }
+
+    func testPendingEscapeIsAlwaysFalseInsideSingleQuotesEvenRightAfterABackslash() {
+        // Shell text: echo '\@b' — backslash has no meaning inside single
+        // quotes at all, so it can never leave anything pending there.
+        let p = position("echo '\\@b'")
+        XCTAssertEqual(p.quoteContext, .singleQuoted)
+        XCTAssertFalse(p.pendingEscape)
     }
 }

@@ -45,27 +45,59 @@
 //                         credential. Not hypothetical: the project's own
 //                         documentation examples wrote this pattern with
 //                         single quotes.
+//
+//   a live pending escape → ALSO REFUSED, regardless of quote context.
+//                         Found by an end-to-end review that ran the
+//                         generated commands through a real shell rather
+//                         than reasoning about them: `\{{secret:k}}`, zero
+//                         characters between the backslash and the
+//                         placeholder, means whatever we splice in lands as
+//                         the ESCAPED character instead of being
+//                         interpreted normally, in BOTH directions —
+//                           outside quotes: our own opening `"` gets eaten
+//                           as a literal quote character, so the
+//                           substitution runs UNQUOTED (defeating the exact
+//                           protection that branch exists to add) and a
+//                           stray closing `"` is left dangling in the rest
+//                           of the command;
+//                           inside double quotes: our splice starts with
+//                           `$`, and `\$` is POSIX's own canonical
+//                           escape-the-dollar, so the substitution never
+//                           runs AT ALL — the literal text "$(path get
+//                           name)" reaches the argument, unexecuted, with
+//                           no refusal and no error. That is exactly the
+//                           "literal string sent as if it were the
+//                           credential" outcome the single-quote refusal
+//                           exists to prevent, surfacing in a context that
+//                           is supposed to be safe.
+//                         There is no new syntax that composes safely onto
+//                         a pre-existing unconsumed escape at that exact
+//                         position, so this is refused exactly like the
+//                         single-quote case rather than worked around.
+//                         (Backslash has no meaning inside single quotes at
+//                         all, so this can never fire there — that case is
+//                         always reported as refusedInsideSingleQuotes.)
 import Foundation
 
 enum CommandSubstitutionRewrite {
     case rewritten(String)
     case refusedInsideSingleQuotes(name: String)
+    case refusedPendingEscape(name: String)
 }
 
 enum CommandSubstitutionRewriter {
     // Same pattern PlaceholderParser uses, kept as a private copy here
     // rather than a shared dependency: this type needs the match ranges to
-    // feed ShellQuoteScanner, which is a different job from
-    // PlaceholderParser's own (substituting a resolved VALUE), and the two
-    // must not become coupled just because they currently share a regex.
+    // feed ShellQuoteScanner, which PlaceholderParser has no reason to know
+    // about, and the two must not become coupled just because they
+    // currently share a regex.
     private static let regex = try! NSRegularExpression(
         pattern: "\\{\\{secret:(\(SecretName.grammar))\\}\\}"
     )
 
-    /// Single left-to-right pass over the matches in the ORIGINAL string,
-    /// same discipline as PlaceholderParser.substitute: it does not rescan
-    /// what it just inserted, so a rewritten `$(...)` cannot itself be
-    /// mistaken for a second placeholder.
+    /// Single left-to-right pass over the matches in the ORIGINAL string:
+    /// it does not rescan what it just inserted, so a rewritten `$(...)`
+    /// cannot itself be mistaken for a second placeholder.
     static func rewrite(_ command: String, binaryPath: String) -> CommandSubstitutionRewrite {
         let range = NSRange(command.startIndex..<command.endIndex, in: command)
         let matches = regex.matches(in: command, options: [], range: range)
@@ -78,16 +110,25 @@ enum CommandSubstitutionRewriter {
             else { continue }
 
             let name = String(command[nameRange])
-            let context = ShellQuoteScanner.context(in: command, at: whole.lowerBound)
+            let position = ShellQuoteScanner.position(in: command, at: whole.lowerBound)
+
             // $(...) does not expand inside single quotes at all, so there
             // is no safe rewrite to fall back to here — the whole command
             // must be refused rather than let the literal text through.
-            guard context != .singleQuoted else {
+            guard position.quoteContext != .singleQuoted else {
                 return .refusedInsideSingleQuotes(name: name)
+            }
+            // A live backslash sitting immediately before the placeholder,
+            // with nothing between them, would consume the FIRST character
+            // of whatever we splice in instead of leaving it to act
+            // normally — unsafe in both remaining contexts (see the file
+            // header for the two concrete failure modes).
+            guard !position.pendingEscape else {
+                return .refusedPendingEscape(name: name)
             }
 
             let substitution = "$(\(shellQuote(binaryPath)) get \(name))"
-            let replacement = context == .doubleQuoted ? substitution : "\"\(substitution)\""
+            let replacement = position.quoteContext == .doubleQuoted ? substitution : "\"\(substitution)\""
 
             out += command[cursor..<whole.lowerBound]
             out += replacement

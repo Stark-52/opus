@@ -28,30 +28,5 @@ final class PlaceholderParserTests: XCTestCase {
         // The underscore IS in SecretName.grammar. This is the detail the
         // plan got wrong twice, so it gets an assertion rather than trust.
         XCTAssertEqual(PlaceholderParser.names(in: "{{secret:my_key}}"), ["my_key"])
-        XCTAssertEqual(PlaceholderParser.substitute("{{secret:my_key}}", values: ["my_key": "V"]), "V")
-    }
-
-    func testSubstituteReplacesEveryOccurrence() {
-        let cmd = "A={{secret:alpha}} B={{secret:alpha}}"
-        let out = PlaceholderParser.substitute(cmd, values: ["alpha": "V"])
-        XCTAssertEqual(out, "A=V B=V")
-    }
-
-    func testSubstituteLeavesUnknownPlaceholdersAlone() {
-        // hook-pre refuses before ever calling this with a missing name, but
-        // the function must not invent an empty string if it ever happens.
-        let out = PlaceholderParser.substitute("{{secret:known}} {{secret:other}}", values: ["known": "V"])
-        XCTAssertEqual(out, "V {{secret:other}}")
-    }
-
-    func testSubstituteDoesNotRescanInsertedValues() {
-        // A value that itself looks like a placeholder must NOT be expanded
-        // a second time. One pass, left to right.
-        let out = PlaceholderParser.substitute("{{secret:a}}", values: ["a": "{{secret:b}}", "b": "LEAKED"])
-        XCTAssertEqual(out, "{{secret:b}}")
-    }
-
-    func testSubstituteOnTextWithNoPlaceholdersIsIdentity() {
-        XCTAssertEqual(PlaceholderParser.substitute("ls -la", values: ["a": "V"]), "ls -la")
     }
 }

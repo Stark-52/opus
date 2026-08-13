@@ -92,6 +92,10 @@ public struct HookRunner {
             return refusal(
                 "Secret « \(name) » utilisé entre guillemets simples : le shell n'y développe pas $(...), donc la substitution y placerait le texte littéral au lieu de la valeur. Utiliser des guillemets doubles ou aucun guillemet autour de {{secret:\(name)}}."
             )
+        case .refusedPendingEscape(let name):
+            return refusal(
+                "Secret « \(name) » précédé d'un antislash collé, sans aucun espace : la substitution ne peut pas s'insérer en sécurité à cet endroit, l'antislash s'appliquerait au premier caractère ajouté au lieu de rester sur ce qu'il précédait. Ajouter un espace avant {{secret:\(name)}}, ou retirer l'antislash."
+            )
         case .rewritten(let rewrittenCommand):
             rewritten = rewrittenCommand
         }

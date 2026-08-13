@@ -107,6 +107,23 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertTrue(reason.contains("guillemets simples"), "must explain WHY: $(...) does not expand in '...'; got: \(reason)")
     }
 
+    func testPlaceholderImmediatelyPrecededByABackslashIsRefusedWithADistinctMessage() throws {
+        // printf %s \{{secret:k}} — zero gap. See CommandSubstitutionRewriterTests
+        // for real-shell proof of why this cannot be rewritten safely in
+        // either quote context; here we only need HookRunner to surface a
+        // refusal, and a DIFFERENT reason than the single-quote one.
+        let out = try XCTUnwrap(runner(["k": "VALUE"]).runPre(input: preInput(command: "printf %s \\{{secret:k}}")))
+        let root = try decode(out)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
+        XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
+        XCTAssertNil(specific["updatedInput"])
+        let reason = try XCTUnwrap(specific["permissionDecisionReason"] as? String)
+        XCTAssertTrue(reason.contains("k"), "the reason must name the offending secret; got: \(reason)")
+        XCTAssertTrue(reason.contains("antislash"), "must explain WHY: a live backslash precedes it; got: \(reason)")
+        XCTAssertFalse(reason.contains("guillemets simples"),
+                       "this is a different failure than the single-quote one and must not reuse its wording")
+    }
+
     func testTwoPlaceholdersInDifferentQuoteContextsAreEachHandledCorrectly() throws {
         let runner = self.runner(["a": "A", "b": "B"])
         let command = try rewrittenCommand(
@@ -234,6 +251,14 @@ final class HookRunnerTests: XCTestCase {
         let runner = HookRunner(store: InMemorySecretStore(["k": "V"]), usage: usage, binaryPath: testBinaryPath)
         _ = runner.runPre(input: preInput(command: "echo '{{secret:k}}'", sessionID: "sess-77"))
         XCTAssertFalse(usage.hasAny(sessionID: "sess-77"),
+                       "the command never runs (it is refused), so recording it as used would be a lie")
+    }
+
+    func testRefusalForAPendingEscapeRecordsNothing() {
+        let usage = SessionUsage(directory: dir)
+        let runner = HookRunner(store: InMemorySecretStore(["k": "V"]), usage: usage, binaryPath: testBinaryPath)
+        _ = runner.runPre(input: preInput(command: "printf %s \\{{secret:k}}", sessionID: "sess-88"))
+        XCTAssertFalse(usage.hasAny(sessionID: "sess-88"),
                        "the command never runs (it is refused), so recording it as used would be a lie")
     }
 
