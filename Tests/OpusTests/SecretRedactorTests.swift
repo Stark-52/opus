@@ -95,6 +95,19 @@ final class SecretRedactorTests: XCTestCase {
         XCTAssertEqual(deep[1] as? Int, 42)
     }
 
+    func testDeepWalkAlsoTransformsDictionaryKeysNotJustValues() throws {
+        // Inert for Bash/Read tool output, but an MCP tool returning an
+        // object KEYED by a token would otherwise leak it: "every string in
+        // the response" has to include keys, not just values.
+        let input: [String: Any] = ["abcdefghij": "leaf"]
+        let out = try XCTUnwrap(
+            SecretRedactor.redactStrings(in: input, using: { $0.replacingOccurrences(of: "abcdefghij", with: "X") })
+            as? [String: Any]
+        )
+        XCTAssertNil(out["abcdefghij"], "the original key must not survive untransformed")
+        XCTAssertEqual(out["X"] as? String, "leaf")
+    }
+
     func testPEMPrivateKeyIsRedactedWholeNotJustItsBanner() {
         // The banner-only pattern this replaced left the key body and the
         // footer in the clear while the output still showed [redacted].

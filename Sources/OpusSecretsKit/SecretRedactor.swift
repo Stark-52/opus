@@ -96,17 +96,36 @@ public struct SecretRedactor {
         return out
     }
 
-    /// Rebuild a decoded JSON value with every string leaf transformed and
-    /// every other leaf untouched. Preserving the exact shape is what makes
-    /// the result pass Claude Code's `updatedToolOutput` schema check, which
-    /// rejects anything that "does not match the tool's output shape".
+    /// Rebuild a decoded JSON value with every string transformed — leaf
+    /// VALUES and dictionary KEYS alike — and every non-string leaf (Bool,
+    /// Int, NSNull, ...) untouched. A tool's own stdout/stderr never puts a
+    /// secret in a KEY, but a generic MCP tool returning an object keyed by
+    /// a caller-supplied token is exactly a shape where it could — "every
+    /// string in the response" has to mean every string, not every string
+    /// found in the values.
+    ///
+    /// Preserving the exact shape (transform in place, rebuild the same
+    /// container types, never drop or reorder a leaf) is not a style choice
+    /// — it is what makes the result pass Claude Code's `updatedToolOutput`
+    /// schema check, which validates against the ORIGINAL tool's output
+    /// shape. A response that fails that check is not rejected outright:
+    /// Claude Code silently falls back to the RAW, unredacted tool output
+    /// plus an error attachment describing the schema mismatch — the exact
+    /// "secret reaches the model" outcome this whole hook exists to
+    /// prevent, and one no unit test here can catch, because a unit test
+    /// only ever inspects this function's return value, never what the
+    /// host does with it afterward (the same blind spot recorded on
+    /// `HookRunner.encode`'s `suppressOutput` comment). A future rewrite
+    /// that reconstructs the response by hand instead of walking the
+    /// original structure would fail OPEN silently the moment it produces
+    /// a shape Claude Code's validator rejects.
     public static func redactStrings(in object: Any, using transform: (String) -> String) -> Any {
         if let s = object as? String { return transform(s) }
         if let array = object as? [Any] { return array.map { redactStrings(in: $0, using: transform) } }
         if let dict = object as? [String: Any] {
             var out: [String: Any] = [:]
             out.reserveCapacity(dict.count)
-            for (key, value) in dict { out[key] = redactStrings(in: value, using: transform) }
+            for (key, value) in dict { out[transform(key)] = redactStrings(in: value, using: transform) }
             return out
         }
         return object
