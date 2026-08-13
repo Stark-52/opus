@@ -46,23 +46,28 @@ enum SecretsInstaller {
 
         if let source = bundledBinaryPath {
             let destination = installedBinaryPath
-            try? fm.createDirectory(
-                atPath: (destination as NSString).deletingLastPathComponent,
-                withIntermediateDirectories: true
-            )
+            try? fm.createDirectory(atPath: (destination as NSString).deletingLastPathComponent,
+                                    withIntermediateDirectories: true)
             let sourceData = try? Data(contentsOf: URL(fileURLWithPath: source))
             let destinationData = try? Data(contentsOf: URL(fileURLWithPath: destination))
-            if sourceData != destinationData, let sourceData {
-                try? fm.removeItem(atPath: destination)
-                fm.createFile(atPath: destination, contents: sourceData,
-                              attributes: [.posixPermissions: 0o755])
+            if let sourceData, sourceData != destinationData {
+                do {
+                    try sourceData.write(to: URL(fileURLWithPath: destination), options: .atomic)
+                    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: destination)
+                    NSLog("Opus: installed opus-secrets to \(destination)")
+                } catch {
+                    // Do not register hooks pointing at a binary that is not
+                    // there. Returning here leaves whatever was already
+                    // installed, and the settings untouched.
+                    return "impossible d'installer opus-secrets : \(error.localizedDescription). Les hooks ne sont pas enregistrés."
+                }
             }
         }
 
-        var problems: [String] = []
-        if let shimProblem = installShim() {
-            problems.append(shimProblem)
-        }
+        // A conflicting ~/bin/secret is a note for the user, not a reason to
+        // skip installing the hooks: it only affects the interactive shim,
+        // not hook substitution/redaction, which use the binary directly.
+        let shimProblem = installShim()
 
         do {
             let changed = try ClaudeSettingsMerger.apply(
@@ -75,38 +80,54 @@ enum SecretsInstaller {
                 NSLog("Opus: secrets hooks registered in ~/.claude/settings.json")
             }
         } catch ClaudeSettingsMergeError.malformedExistingFile {
-            problems.append("~/.claude/settings.json n'est pas du JSON valide. Les hooks de secrets ne sont pas installés et le fichier n'a pas été touché.")
+            return "~/.claude/settings.json n'est pas du JSON valide. Les hooks de secrets ne sont pas installés et le fichier n'a pas été touché."
+        } catch ClaudeSettingsMergeError.unreadableExistingFile(let reason) {
+            return "~/.claude/settings.json existe mais n'est pas lisible (\(reason)). Les hooks de secrets ne sont pas installés et le fichier n'a pas été touché."
         } catch ClaudeSettingsMergeError.backupFailed(let reason) {
             // A failed backup is a hard precondition failure, not malformed
             // JSON: apply() throws this BEFORE writing anything, specifically
             // because it refuses to touch the file without a safety copy.
-            problems.append("Impossible de sauvegarder ~/.claude/settings.json avant modification (\(reason)). Les hooks de secrets ne sont pas installés et le fichier n'a pas été touché.")
+            return "Impossible de sauvegarder ~/.claude/settings.json avant modification (\(reason)). Les hooks de secrets ne sont pas installés et le fichier n'a pas été touché."
         } catch {
-            problems.append("Échec inattendu lors de l'installation des hooks de secrets (\(error)). Le fichier n'a pas été touché.")
+            return "Échec inattendu lors de l'installation des hooks de secrets (\(error)). Le fichier n'a pas été touché."
         }
 
-        return problems.isEmpty ? nil : problems.joined(separator: " ")
+        // The merge succeeded (or was already a no-op): a shim conflict, if
+        // any, is the only thing left to tell the user about.
+        return shimProblem
     }
 
     /// Returns nil once ~/bin/secret is in place (written now, or already
-    /// ours from a previous run), or a message when an unrecognised file
-    /// there was left untouched. Never overwrites anything it did not write.
+    /// ours from a previous run), or a message when an unrecognised or
+    /// unreadable file there was left untouched. Never overwrites anything
+    /// it did not write.
     private static func installShim() -> String? {
         let fm = FileManager.default
         let path = NSHomeDirectory() + "/bin/secret"
 
-        if let existing = try? String(contentsOfFile: path, encoding: .utf8) {
-            // Only ever replace a shim we recognise as ours.
+        if fm.fileExists(atPath: path) {
+            // Existence and readability are different questions. `try?` alone
+            // collapses them, and falling through on an unreadable file would
+            // overwrite something Opus did not write, which is the one thing
+            // this function promises never to do.
+            guard let existing = try? String(contentsOfFile: path, encoding: .utf8) else {
+                return "~/bin/secret existe mais n'est pas lisible en UTF-8. Laissé intact, le shim n'est pas installé."
+            }
             guard existing.contains("opus-secrets") else {
-                return "~/bin/secret existe déjà et ne vient pas d'Opus : laissé inchangé. La commande `secret` n'utilisera pas opus-secrets tant que ce fichier occupe le chemin."
+                return "~/bin/secret existe et n'a pas été écrit par Opus. Laissé intact, utiliser opus-secrets directement."
             }
             guard existing != shimBody else { return nil }
         }
 
         try? fm.createDirectory(atPath: NSHomeDirectory() + "/bin", withIntermediateDirectories: true)
-        try? fm.removeItem(atPath: path)
-        fm.createFile(atPath: path, contents: Data(shimBody.utf8),
-                      attributes: [.posixPermissions: 0o755])
+        do {
+            // Atomic write, never removeItem-then-create: a failed write must
+            // not leave nothing where a working shim used to be.
+            try Data(shimBody.utf8).write(to: URL(fileURLWithPath: path), options: .atomic)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        } catch {
+            return "impossible d'écrire ~/bin/secret : \(error.localizedDescription)"
+        }
         return nil
     }
 }
