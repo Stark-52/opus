@@ -41,7 +41,19 @@ public struct SessionUsage {
     }
 
     public func names(sessionID: String) -> [String] {
-        guard let text = try? String(contentsOf: fileURL(sessionID: sessionID), encoding: .utf8) else { return [] }
+        let url = fileURL(sessionID: sessionID)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            // hasAny() already told the caller this session HAS recorded
+            // usage (it only checks existence), so a read failure here is
+            // not "nothing was ever substituted" — it is the redaction net
+            // going dark for the rest of this session with no signal at
+            // all, unless this warns. `record()` already warns on its own
+            // failure to write; this is the read-side twin of that.
+            if FileManager.default.fileExists(atPath: url.path) {
+                Self.warn("cannot read the session file at \(url.path); the redaction net is off for the rest of this session")
+            }
+            return []
+        }
         var seen = Set<String>()
         return text
             .split(whereSeparator: { $0.isNewline })
