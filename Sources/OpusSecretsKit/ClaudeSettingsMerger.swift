@@ -20,10 +20,25 @@ public enum ClaudeSettingsMergeError: Error {
 }
 
 public enum ClaudeSettingsMerger {
-    /// Any hook command containing this substring is considered ours and is
+    /// Any hook command matching one of these is considered ours and is
     /// replaced rather than appended to, which is what makes a rerun
     /// idempotent and a moved binary self-healing.
-    public static let commandMarker = "opus-secrets hook-"
+    ///
+    /// Two forms, because the emitted command changed shape: the current one
+    /// quotes the path, so the marker text is interrupted by the closing
+    /// quote (`'…/opus-secrets' hook-pre`), while an entry written before
+    /// quoting was added reads `…/opus-secrets hook-pre`. Matching both keeps
+    /// a pre-existing installation migrating cleanly instead of duplicating.
+    ///
+    /// Matching the emitted forms rather than stripping quotes out of the
+    /// input matters: a blanket strip also transforms the user's OWN hook
+    /// commands, and an unrelated command carrying an apostrophe in the wrong
+    /// place would be silently deleted as if it were ours.
+    static let commandMarkers = ["opus-secrets' hook-", "opus-secrets hook-"]
+
+    private static func isOurs(_ command: String) -> Bool {
+        commandMarkers.contains { command.contains($0) }
+    }
 
     /// Single-quote a POSIX path so it survives `sh -c` verbatim. A hook entry
     /// with no `args` key is SHELL form: Claude Code passes the command string
@@ -58,16 +73,10 @@ public enum ClaudeSettingsMerger {
             var entries = (hooks[registration.event] as? [[String: Any]]) ?? []
 
             // Drop any previous registration of ours, at any binary path.
-            // Commands are shell-quoted (see shellQuote), which puts a "'"
-            // directly between the binary path and the subcommand — strip
-            // quotes before the containment check so commandMarker still
-            // matches the quoted form, not just the raw unquoted one.
             entries.removeAll { entry in
                 let commands = (entry["hooks"] as? [[String: Any]] ?? [])
                     .compactMap { $0["command"] as? String }
-                return commands.contains {
-                    $0.replacingOccurrences(of: "'", with: "").contains(commandMarker)
-                }
+                return commands.contains { isOurs($0) }
             }
 
             var entry: [String: Any] = [
