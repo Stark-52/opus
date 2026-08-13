@@ -29,7 +29,7 @@ public enum SecretExtractor {
     // degrade every line to the bare-token path, turning `KEY=value` into a
     // candidate whose value is the whole line.
     private static let assignment = try! NSRegularExpression(
-        pattern: "^\\s*(?:export\\s+)?[\"']?([A-Za-z0-9_.-]+)[\"']?\\s*[=:]\\s*(.+?)\\s*,?\\s*$"
+        pattern: "^\\s*(?:export\\s+)?[\"']?([A-Za-z0-9_.-]+)[\"']?\\s*([=:])\\s*(.+?)\\s*,?\\s*$"
     )
 
     public static func candidates(from blob: String) -> [SecretCandidate] {
@@ -52,17 +52,30 @@ public enum SecretExtractor {
         let range = NSRange(line.startIndex..<line.endIndex, in: line)
         if let m = assignment.firstMatch(in: line, options: [], range: range),
            let keyRange = Range(m.range(at: 1), in: line),
-           let valRange = Range(m.range(at: 2), in: line) {
+           let sepRange = Range(m.range(at: 2), in: line),
+           let valRange = Range(m.range(at: 3), in: line) {
             let key = String(line[keyRange])
+            let separator = String(line[sepRange])
             var value = unquote(String(line[valRange]))
-            // "Authorization: Bearer <token>" — the scheme word is not part
-            // of the credential.
-            for scheme in ["Bearer ", "Token ", "Basic "] where value.hasPrefix(scheme) {
-                value = String(value.dropFirst(scheme.count))
+
+            // A colon does not always mean an assignment. `https://host/path`
+            // would otherwise be filed as the name "https" with its scheme
+            // stripped off the value, and `C:\Users\...` as the name "c".
+            // Both are realistic pastes. Gate on the separator that actually
+            // matched, so `PATH_PREFIX=//shared` stays a genuine assignment.
+            let isURI = separator == ":" && value.hasPrefix("//")
+            let isWindowsPath = separator == ":" && key.count == 1 && value.hasPrefix("\\")
+            if !isURI && !isWindowsPath {
+                // "Authorization: Bearer <token>" — the scheme word is not
+                // part of the credential. Strip at most one.
+                for scheme in ["Bearer ", "Token ", "Basic "] where value.hasPrefix(scheme) {
+                    value = String(value.dropFirst(scheme.count))
+                    break
+                }
+                value = value.trimmingCharacters(in: .whitespaces)
+                guard !value.isEmpty else { return nil }
+                return SecretCandidate(suggestedName: SecretName.slug(key), value: value)
             }
-            value = value.trimmingCharacters(in: .whitespaces)
-            guard !value.isEmpty else { return nil }
-            return SecretCandidate(suggestedName: SecretName.slug(key), value: value)
         }
         // Bare token: one whitespace-free run on its own line. Prose has
         // spaces, so requiring none is what keeps a sentence from becoming
