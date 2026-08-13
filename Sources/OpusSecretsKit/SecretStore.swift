@@ -52,7 +52,14 @@ public enum SecretValueValidator {
         // `security -w` reads the value line by line, so a newline would
         // truncate it and desynchronise the confirmation prompt. Refuse it
         // here rather than let `security` fail with "passwords don't match".
-        guard !value.contains("\n"), !value.contains("\r") else {
+        //
+        // Byte-level on purpose. Swift groups CR+LF into ONE extended
+        // grapheme cluster, so `value.contains("\n")` is FALSE for a CRLF
+        // string even though its UTF-8 carries 0x0A. Verified:
+        // "a\r\nb".contains("\n") == false, "a\r\nb".utf8.contains(0x0A) == true.
+        // `security` reads the value line by line and sees the bytes, not
+        // Swift's graphemes, so the bytes are what must be checked.
+        guard !value.utf8.contains(0x0A), !value.utf8.contains(0x0D) else {
             throw SecretStoreError.invalidValue(
                 "valeur multi-ligne : le Trousseau est mono-ligne ici. Une clé PEM (.p8) reste dans un fichier."
             )
