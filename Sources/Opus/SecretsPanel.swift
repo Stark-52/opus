@@ -35,6 +35,11 @@ final class SecretsPanel: NSObject {
 
     private let store = KeychainSecretStore()
     private var visible = false
+    /// Bumped on every open() — a background store.names() load from an
+    /// abandoned earlier open (rapid close/reopen) is dropped if it lands
+    /// after a newer one has already started. Same pattern as
+    /// PromptPalettePanel.scanGeneration.
+    private var scanGeneration = 0
     private var keyMonitor: Any?
     private weak var previousKeyWindow: NSWindow?
 
@@ -185,7 +190,8 @@ final class SecretsPanel: NSObject {
         candidateIndex = 0
 
         captureClipboard()
-        refreshExistingNames()
+        scanGeneration += 1
+        refreshExistingNames(generation: scanGeneration)
 
         previousKeyWindow = NSApp.keyWindow
         panel.orderFrontRegardless()
@@ -228,6 +234,10 @@ final class SecretsPanel: NSObject {
     }
 
     private func applyCandidate() {
+        // Setting stringValue programmatically does not fire the delegate, so
+        // a confirmation armed for an earlier candidate would survive a Tab
+        // cycle and let Return overwrite with no warning shown.
+        pendingOverwrite = nil
         let candidate = candidates[candidateIndex]
         nameField.stringValue = candidate.suggestedName
         valueField.stringValue = candidate.value
@@ -251,12 +261,13 @@ final class SecretsPanel: NSObject {
         }
     }
 
-    private func refreshExistingNames() {
+    private func refreshExistingNames(generation: Int) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let names = (try? self.store.names()) ?? []
             DispatchQueue.main.async { [weak self] in
-                self?.existingLabel.stringValue = names.isEmpty
+                guard let self, self.visible, self.scanGeneration == generation else { return }
+                self.existingLabel.stringValue = names.isEmpty
                     ? "aucun secret rangé"
                     : "déjà rangés : " + names.joined(separator: ", ")
             }
@@ -280,7 +291,17 @@ final class SecretsPanel: NSObject {
             return
         }
 
-        let existing = (try? store.names()) ?? []
+        let existing: [String]
+        do {
+            existing = try store.names()
+        } catch {
+            // Fail CLOSED. Without the name list there is no way to tell an
+            // overwrite from a first write, and `put` uses -U so it would
+            // replace in place with no warning at all. Refusing is annoying
+            // and recoverable; a silent overwrite is neither.
+            statusLabel.stringValue = "\(error)"
+            return
+        }
         if existing.contains(name), pendingOverwrite != name {
             pendingOverwrite = name
             statusLabel.stringValue = "« \(name) » existe déjà. Entrée à nouveau pour écraser."
@@ -308,6 +329,7 @@ extension SecretsPanel: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         guard (obj.object as? NSTextField) === valueField else {
             pendingOverwrite = nil
+            statusLabel.stringValue = ""
             return
         }
         updatePreview()
