@@ -75,9 +75,40 @@ public struct SessionUsage {
         // write-then-chmod left open on every session's first record.
         guard let data = (valid.joined(separator: "\n") + "\n").data(using: .utf8) else { return }
         let fd = open(fileURL(sessionID: sessionID).path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            // Nothing recorded means hook-post will not redact these secrets.
+            // Nothing can be returned (the interface is void) and stdout
+            // carries the hook's JSON protocol, so stderr is the only honest
+            // channel — the same reasoning opus-attach uses.
+            Self.warn("cannot open the session file (errno \(errno)); \(valid.count) secret name(s) unrecorded, redaction will be incomplete")
+            return
+        }
         defer { close(fd) }
-        _ = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+
+        // write(2) may return a short count on ENOSPC or EDQUOT. Dropping the
+        // tail would leave a line with no terminating newline, so the NEXT
+        // append would merge into it and both names would be lost on read.
+        // Loop to completion rather than trusting one call.
+        var written = 0
+        data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            while written < raw.count {
+                let n = write(fd, base + written, raw.count - written)
+                if n > 0 { written += n; continue }
+                if n < 0 && errno == EINTR { continue }
+                break
+            }
+        }
+        if written != data.count {
+            Self.warn("short write recording secret names (\(written)/\(data.count) bytes); redaction may be incomplete")
+        }
+    }
+
+    /// Diagnostics go to stderr, never stdout: this type runs inside Claude
+    /// Code hooks whose stdout carries the JSON hook protocol, and anything
+    /// written there would corrupt it. Same convention as opus-attach.
+    private static func warn(_ message: String) {
+        FileHandle.standardError.write(Data("opus-secrets: \(message)\n".utf8))
     }
 
     /// `createDirectory(withIntermediateDirectories:attributes:)` silently
