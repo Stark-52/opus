@@ -1086,6 +1086,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // preset always points --settings at this path (see HookSettingsWriter).
         // Idempotent: cheap to call unconditionally on every launch.
         HookSettingsWriter.ensureSettingsFile()
+        // Installs opus-secrets to ~/.local/bin, the `secret` shim to ~/bin,
+        // and merges the three hooks into the user's OWN ~/.claude/settings.json
+        // (not the --settings file above, which only covers Opus-launched
+        // sessions). Idempotent: cheap to call unconditionally on every launch.
+        if let problem = SecretsInstaller.install() {
+            NSLog("Opus secrets installer: \(problem)")
+        }
         // Force ClaudeStateStore's singleton (and its .opusClaudeEvent
         // observer) into existence now, before nativePanel/MainTerminalWindow
         // below can spawn the first claude process. `static let shared` only
