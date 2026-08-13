@@ -262,16 +262,56 @@ final class SecretsPanel: NSObject {
     }
 
     private func refreshExistingNames(generation: Int) {
+        // Snapshot now, not inside the background block: install() runs
+        // once at launch (main.swift), so lastProblem is already settled by
+        // the time the panel can open, and reading it here keeps this
+        // function's two problem sources (installer, Keychain read) beside
+        // each other instead of split across queues.
+        let installerProblem = SecretsInstaller.lastProblem
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let names = (try? self.store.names()) ?? []
+            // Never report a failed read as an empty store: this is the
+            // exact lie already fixed for `opus-secrets ls` (a locked
+            // Keychain must not render as "rien n'est rangé"), and the
+            // panel that just says "rangé" showing nothing wrong here would
+            // be the same failure with a different audience.
+            var namesProblem: String?
+            let names: [String]
+            do {
+                names = try self.store.names()
+            } catch {
+                names = []
+                namesProblem = "\(error)"
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.visible, self.scanGeneration == generation else { return }
-                self.existingLabel.stringValue = names.isEmpty
-                    ? "aucun secret rangé"
-                    : "déjà rangés : " + names.joined(separator: ", ")
+                self.renderExistingNames(names: names, installerProblem: installerProblem, namesProblem: namesProblem)
             }
         }
+    }
+
+    /// Two independent problems can coexist (hooks never installed AND a
+    /// locked Keychain), so both are shown, stacked, in OpusTheme.red —
+    /// unmissable, and distinct from the dim cream this label otherwise
+    /// uses for the ordinary "déjà rangés" list.
+    private func renderExistingNames(names: [String], installerProblem: String?, namesProblem: String?) {
+        var problems: [String] = []
+        if let installerProblem {
+            problems.append("hooks de secrets non installés : \(installerProblem)")
+        }
+        if let namesProblem {
+            problems.append("Trousseau illisible : \(namesProblem)")
+        }
+        guard problems.isEmpty else {
+            existingLabel.textColor = OpusTheme.red
+            existingLabel.stringValue = problems.joined(separator: "\n")
+            return
+        }
+        existingLabel.textColor = OpusTheme.cream(0.5)
+        existingLabel.stringValue = names.isEmpty
+            ? "aucun secret rangé"
+            : "déjà rangés : " + names.joined(separator: ", ")
     }
 
     // MARK: Commit
@@ -327,10 +367,16 @@ final class SecretsPanel: NSObject {
 
 extension SecretsPanel: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
-        guard (obj.object as? NSTextField) === valueField else {
+        // Editing the name only ever invalidates the "« name » existe déjà"
+        // overwrite prompt, which is tied to the specific name it warned
+        // about — never the value's own shell-hostility/too-short warning,
+        // which has nothing to do with the name and used to be wiped out by
+        // this same branch, silently dropping the one signal that a value
+        // will break its command. updatePreview() recomputes statusLabel
+        // from the CURRENT value either way, so it both restores a live
+        // value warning and clears a now-stale overwrite prompt.
+        if (obj.object as? NSTextField) !== valueField {
             pendingOverwrite = nil
-            statusLabel.stringValue = ""
-            return
         }
         updatePreview()
     }
