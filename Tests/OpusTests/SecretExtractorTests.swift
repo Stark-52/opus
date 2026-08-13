@@ -113,6 +113,18 @@ final class SecretExtractorTests: XCTestCase {
                        [SecretCandidate(suggestedName: "authorization", value: "Token abc123")])
     }
 
+    func testAnEmptyAssignmentValueIsSkippedNotFiledAsABareToken() {
+        // FOO= (nothing after the =) used to fail the assignment regex
+        // (which required 1+ characters for the value), fall through to the
+        // bare-token path, and get filed as a NAMELESS candidate whose
+        // value was the literal string "FOO=".
+        XCTAssertEqual(SecretExtractor.candidates(from: "FOO="), [])
+    }
+
+    func testAnEmptyColonFormValueIsAlsoSkipped() {
+        XCTAssertEqual(SecretExtractor.candidates(from: "api_key:"), [])
+    }
+
     func testShellHostileDetection() {
         XCTAssertFalse(SecretExtractor.isShellHostile("re_live_abc-123.XYZ"))
         XCTAssertTrue(SecretExtractor.isShellHostile("has'quote"))
