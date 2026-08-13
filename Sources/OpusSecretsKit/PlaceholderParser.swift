@@ -22,8 +22,18 @@ public enum PlaceholderParser {
     // SecretName.grammar, so it cannot fail on any input — a failure could
     // only mean a future edit to the grammar broke it. `try?` would return
     // nil and make names() report "no placeholders", which would let a
-    // literal {{secret:x}} run as if it were the credential. Crashing in CI
-    // beats silently disabling the control in production.
+    // literal {{secret:x}} run as if it were the credential.
+    //
+    // This is NOT "fail closed so the command does not run": a hook that
+    // traps exits with a status other than 2, which Claude Code treats as a
+    // non-blocking error and proceeds with the ORIGINAL, unmodified input —
+    // so a runtime crash here would be fail-OPEN, letting the literal
+    // placeholder straight through with no substitution and no refusal.
+    // The reason to keep try! anyway is narrower: this can only trap if a
+    // future edit breaks a compile-time constant, and a broken constant
+    // pattern must surface immediately and loudly in CI (a crashing test
+    // run) rather than as a silently disabled control that only fails open
+    // once it reaches production.
     private static let regex = try! NSRegularExpression(
         pattern: "\\{\\{secret:(\(SecretName.grammar))\\}\\}"
     )
