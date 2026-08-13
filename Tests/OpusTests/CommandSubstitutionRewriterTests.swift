@@ -104,7 +104,7 @@ final class CommandSubstitutionRewriterTests: XCTestCase {
         // the boundary at the placeholder is clean: no PENDING escape.
         // Proved by actually running it: the resolved sentinel must appear
         // in real bash's stdout, glued to one literal backslash.
-        guard case .rewritten(let command) = rewrite("echo \\\\{{secret:k}}") else {
+        guard case .rewritten(let command, _) = rewrite("echo \\\\{{secret:k}}") else {
             return XCTFail("expected a rewrite")
         }
         // `echo` appends its own trailing newline; every raw-stdout
@@ -115,7 +115,7 @@ final class CommandSubstitutionRewriterTests: XCTestCase {
     }
 
     func testASpacedPlaceholderOutsideQuotesStillRunsCorrectlyInRealBash() throws {
-        guard case .rewritten(let command) = rewrite("echo {{secret:k}}") else {
+        guard case .rewritten(let command, _) = rewrite("echo {{secret:k}}") else {
             return XCTFail("expected a rewrite")
         }
         let output = try runInBash(command)
@@ -127,7 +127,7 @@ final class CommandSubstitutionRewriterTests: XCTestCase {
         // escaping effect on anything past the space (space is not one of
         // POSIX's escapable characters there), so the placeholder itself
         // sits at a clean boundary and must still be rewritten and run.
-        guard case .rewritten(let command) = rewrite("echo \"x \\ {{secret:k}}\"") else {
+        guard case .rewritten(let command, _) = rewrite("echo \"x \\ {{secret:k}}\"") else {
             return XCTFail("expected a rewrite")
         }
         let output = try runInBash(command)
@@ -146,7 +146,7 @@ final class CommandSubstitutionRewriterTests: XCTestCase {
         try! "#!/bin/sh\nprintf '%s' 'two words'\n".write(to: spaced, atomically: true, encoding: .utf8)
         try! FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: spaced.path)
 
-        guard case .rewritten(let substitution) = CommandSubstitutionRewriter.rewrite(
+        guard case .rewritten(let substitution, _) = CommandSubstitutionRewriter.rewrite(
             "{{secret:k}}", binaryPath: spaced.path
         ) else {
             return XCTFail("expected a rewrite")
@@ -158,10 +158,93 @@ final class CommandSubstitutionRewriterTests: XCTestCase {
     // MARK: Two placeholders, mixed contexts, both real
 
     func testTwoPlaceholdersInDifferentContextsBothResolveInRealBash() throws {
-        guard case .rewritten(let command) = rewrite("echo {{secret:a}} && echo \"X: {{secret:b}}\"") else {
+        guard case .rewritten(let command, let consumed) = rewrite("echo {{secret:a}} && echo \"X: {{secret:b}}\"") else {
             return XCTFail("expected a rewrite")
         }
+        XCTAssertEqual(consumed, 2, "two distinct names, both spliced")
         let output = try runInBash(command)
         XCTAssertEqual(output, "SENTINEL-a\nX: SENTINEL-b\n")
+    }
+
+    func testTheSameNameReferencedTwiceIsNotOverRefusedAndCountsAsOneConsumedName() throws {
+        // `consumed` is a count of DISTINCT names, not raw occurrences —
+        // this is the case that would matter if it were counted as raw
+        // occurrences instead: runPre compares it against the number of
+        // DISTINCT names it requested, and a legitimate command referencing
+        // the same secret twice must not trip that check.
+        guard case .rewritten(let command, let consumed) = rewrite("echo {{secret:k}} {{secret:k}}") else {
+            return XCTFail("expected a rewrite")
+        }
+        XCTAssertEqual(consumed, 1)
+        let output = try runInBash(command)
+        XCTAssertEqual(output, "SENTINEL-k SENTINEL-k\n")
+    }
+
+    // MARK: Heredoc bodies — refused, not silently made literal
+    //
+    // Verified through real bash before this refusal existed: a heredoc
+    // body reads to ShellQuoteScanner as plain "outside quotes" (it knows
+    // nothing about `<<` redirection), so `cat > .env <<'EOF'` /
+    // `API_KEY={{secret:k}}` / `EOF` wrote the LITERAL string
+    // `API_KEY="$(<path> get k)"` into the file — no refusal, nothing
+    // wrong-looking in the output, and a later `source .env` or deploy step
+    // would send that text as the credential.
+
+    func testAPlaceholderInsideASingleQuotedDelimiterHeredocBodyIsRefused() {
+        let command = "cat > .env <<'EOF'\nAPI_KEY={{secret:k}}\nEOF\n"
+        guard case .refusedInsideHeredoc(let name) = rewrite(command) else {
+            return XCTFail("expected refusedInsideHeredoc")
+        }
+        XCTAssertEqual(name, "k")
+    }
+
+    func testAPlaceholderInsideADoubleQuotedDelimiterHeredocBodyIsRefused() {
+        let command = "cat > .env <<\"EOF\"\nAPI_KEY={{secret:k}}\nEOF\n"
+        guard case .refusedInsideHeredoc(let name) = rewrite(command) else {
+            return XCTFail("expected refusedInsideHeredoc")
+        }
+        XCTAssertEqual(name, "k")
+    }
+
+    func testAPlaceholderInsideAnUnquotedDelimiterHeredocBodyIsRefused() {
+        // An unquoted delimiter DOES let the shell run $(...) inside the
+        // body, but this rewriter also adds its OWN double quotes in the
+        // outside-quotes branch, and those have no syntactic meaning inside
+        // a heredoc body — they would land as two literal `"` characters in
+        // the file rather than as quoting. Refused for the same reason as
+        // the quoted-delimiter cases, not treated as a safe special case.
+        let command = "cat > .env <<EOF\nAPI_KEY={{secret:k}}\nEOF\n"
+        guard case .refusedInsideHeredoc(let name) = rewrite(command) else {
+            return XCTFail("expected refusedInsideHeredoc")
+        }
+        XCTAssertEqual(name, "k")
+    }
+
+    func testADashedHeredocWithATabIndentedBodyIsAlsoRefused() {
+        let command = "cat > .env <<-EOF\n\tAPI_KEY={{secret:k}}\nEOF\n"
+        guard case .refusedInsideHeredoc(let name) = rewrite(command) else {
+            return XCTFail("expected refusedInsideHeredoc")
+        }
+        XCTAssertEqual(name, "k")
+    }
+
+    func testAHereStringStillWorksAndIsNotRefused() throws {
+        // <<< is a here-string, not a heredoc — the placeholder here sits
+        // in ordinary double quotes and must be rewritten and run exactly
+        // as it would be anywhere else.
+        guard case .rewritten(let command, _) = rewrite("cat <<< \"{{secret:k}}\"") else {
+            return XCTFail("expected a rewrite, not a refusal")
+        }
+        let output = try runInBash(command)
+        XCTAssertEqual(output, "SENTINEL-k\n")
+    }
+
+    func testAPlaceholderAfterAHeredocHasClosedIsStillRewrittenNormally() throws {
+        let command = "cat <<'EOF'\nbody\nEOF\necho {{secret:k}}"
+        guard case .rewritten(let rewritten, _) = rewrite(command) else {
+            return XCTFail("expected a rewrite, not a refusal")
+        }
+        let output = try runInBash(rewritten)
+        XCTAssertEqual(output, "body\nSENTINEL-k\n")
     }
 }

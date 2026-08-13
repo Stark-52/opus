@@ -73,8 +73,14 @@ public struct HookRunner {
         do {
             available = try store.names()
         } catch {
+            // `error` here is a SecretStoreError, which already conforms to
+            // CustomStringConvertible with a full French sentence of its
+            // own ("Trousseau inaccessible : ...") — string-interpolating
+            // it (rather than `String(describing:)`, which would print the
+            // enum case instead) is what keeps this from doubling up into
+            // "Trousseau inaccessible (Trousseau inaccessible : ...)".
             return refusal(
-                "Trousseau inaccessible (\(String(describing: error))). Aucune substitution effectuée. Déverrouiller le Trousseau puis réessayer."
+                "Trousseau inaccessible (\(error)). Aucune substitution effectuée. Déverrouiller le Trousseau puis réessayer."
             )
         }
 
@@ -96,7 +102,28 @@ public struct HookRunner {
             return refusal(
                 "Secret « \(name) » précédé d'un antislash collé, sans aucun espace : la substitution ne peut pas s'insérer en sécurité à cet endroit, l'antislash s'appliquerait au premier caractère ajouté au lieu de rester sur ce qu'il précédait. Ajouter un espace avant {{secret:\(name)}}, ou retirer l'antislash."
             )
-        case .rewritten(let rewrittenCommand):
+        case .refusedInsideHeredoc(let name):
+            return refusal(
+                "Secret « \(name) » à l'intérieur d'un heredoc (<<...) : le corps d'un heredoc ne développe pas notre substitution en sécurité, avec un délimiteur cité comme sans — écrire {{secret:\(name)}} en dehors du heredoc, ou utiliser opus-secrets run."
+            )
+        case .rewritten(let rewrittenCommand, let consumed):
+            // Fail closed rather than trust that this count always equals
+            // `requested.count`: it is computed by a SECOND, independent
+            // copy of PlaceholderParser's own regex (see
+            // CommandSubstitutionRewriter's own comment on why it keeps its
+            // own copy), so the two agreeing today is an invariant that
+            // holds by coincidence, not by construction. If a future edit
+            // ever makes them diverge, or the Range(...) conversion inside
+            // rewrite's loop ever silently skips a match, the alternative
+            // to this guard is reporting success while a placeholder sits
+            // untouched in the command that is about to run — the literal
+            // string then travels to a provider as if it were the
+            // credential.
+            guard consumed == requested.count else {
+                return refusal(
+                    "Substitution interne incohérente (\(consumed) secret(s) traité(s) sur \(requested.count) demandé(s)). Aucune substitution effectuée par précaution."
+                )
+            }
             rewritten = rewrittenCommand
         }
         toolInput["command"] = rewritten
