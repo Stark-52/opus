@@ -62,8 +62,20 @@ public struct SecretRedactor {
         "xoxb-[A-Za-z0-9-]{10,}",
         "xoxp-[A-Za-z0-9-]{10,}",
         "hooks\\.slack\\.com/services/[A-Za-z0-9/]+",
-        "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+",
-        "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+        // Three segments, and the third may be empty (an unsigned alg=none
+        // token ends in a bare dot). The previous pattern stopped at the
+        // second dot and left the signature in the clear. The third segment
+        // is optional so a two-segment token is still consumed whole rather
+        // than not at all.
+        "eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]*)?",
+        // The whole block, not the banner. The previous pattern matched only
+        // -----BEGIN ...----- and left the key body and footer in the clear
+        // while the output still showed [redacted], which is worse than no
+        // redaction at all because nothing signals a problem. The trailing
+        // `|$` is a deliberate fail-safe: a PEM whose END marker was cut off
+        // by a truncated buffer is consumed to the end of the text rather
+        // than escaping entirely.
+        "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
     ]
 
     // map + try!, never compactMap + try?. A compactMap would silently DROP
