@@ -16,6 +16,7 @@
 // SessionIndex: a pure per-record parser plus a `load` that owns all the
 // filesystem/dedup policy.
 import Foundation
+import OpusSecretsKit
 
 struct PromptEntry: Equatable {
     let text: String
@@ -34,7 +35,13 @@ enum PromptHistory {
     /// Parse one line of history.jsonl. `nil` on malformed JSON or an empty
     /// (and nothing-pasted) `display`. `project` is optional in the wild —
     /// falls back to `""`.
-    static func parse(line: Data) -> PromptEntry? {
+    ///
+    /// `redactor` defaults to a pattern-only redactor: history.jsonl keeps
+    /// pasted content verbatim (see this file's header) and the palette
+    /// re-inserts it, so a key pasted once was, until this change, a
+    /// searchable and re-insertable row. The file is left alone, since it
+    /// belongs to Claude Code; only what Opus SHOWS is filtered.
+    static func parse(line: Data, redactor: SecretRedactor = SecretRedactor(secrets: [])) -> PromptEntry? {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
             return nil
         }
@@ -57,6 +64,15 @@ enum PromptHistory {
                 text = contents.joined(separator: "\n")
             }
         }
+
+        text = redactor.redact(text)
+
+        // A prompt that was nothing but a credential is now nothing but a
+        // marker. Dropping it keeps the palette free of dead rows.
+        let residue = text.replacingOccurrences(of: "[redacted]", with: "")
+            .replacingOccurrences(of: "[secret:", with: "")
+            .trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        if residue.isEmpty { return nil }
 
         let project = obj["project"] as? String ?? ""
         return PromptEntry(text: text, project: project, timestamp: Date(timeIntervalSince1970: millis / 1000))
@@ -92,7 +108,7 @@ enum PromptHistory {
     /// raw, still-truncated tail instead, which fails `parse(line:)` as
     /// malformed JSON and is dropped in the loop below instead — same net
     /// result, one prompt silently missing from the returned list.
-    static func load(url: URL, limit: Int = 300) -> [PromptEntry] {
+    static func load(url: URL, limit: Int = 300, redactor: SecretRedactor = SecretRedactor(secrets: [])) -> [PromptEntry] {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return [] }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return [] }
@@ -111,7 +127,7 @@ enum PromptHistory {
 
         var entries: [PromptEntry] = []
         for lineData in body.split(separator: 0x0A, omittingEmptySubsequences: true) {
-            if let entry = parse(line: Data(lineData)) {
+            if let entry = parse(line: Data(lineData), redactor: redactor) {
                 entries.append(entry)
             }
         }
