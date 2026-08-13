@@ -186,8 +186,24 @@ public struct HookRunner {
         ])
     }
 
+    // suppressOutput is a TOP-LEVEL field on the hook output object (per
+    // `claude --help`: "suppressOutput - Hide stdout from transcript
+    // (default: false)"), sitting alongside stopReason/decision, not inside
+    // hookSpecificOutput. Without it, Claude Code writes this hook's own
+    // stdout verbatim into the session transcript as a `hook_success`
+    // attachment. For hook-pre that stdout IS updatedInput, which for a
+    // substituted secret contains the real value — so the mechanism that
+    // exists to keep a secret out of the transcript would otherwise put it
+    // there itself. Found by an end-to-end canary test (a disposable secret
+    // turned up in the transcript file on disk); no unit test caught it
+    // because unit tests only ever look at this function's return value,
+    // never at what Claude Code does with it afterward. Applied here, in the
+    // one shared encoder, so every hook response gets it and nothing added
+    // later can forget it.
     fileprivate func encode(_ object: [String: Any]) -> Data? {
-        try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])
+        var withSuppressedOutput = object
+        withSuppressedOutput["suppressOutput"] = true
+        return try? JSONSerialization.data(withJSONObject: withSuppressedOutput, options: [.withoutEscapingSlashes])
     }
 
     /// Diagnostics go to stderr, never stdout: stdout carries the hook's JSON

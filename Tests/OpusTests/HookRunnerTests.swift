@@ -55,6 +55,8 @@ final class HookRunnerTests: XCTestCase {
     func testSubstitutesOnlyTheCommandField() throws {
         let out = try XCTUnwrap(runner(["k": "VALUE"]).runPre(input: preInput(command: "echo {{secret:k}}")))
         let root = try decode(out)
+        XCTAssertEqual(root["suppressOutput"] as? Bool, true,
+                       "without this, Claude Code writes this stdout (the substituted secret) into the transcript")
         let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["hookEventName"] as? String, "PreToolUse")
         let updated = try XCTUnwrap(specific["updatedInput"] as? [String: Any])
@@ -65,7 +67,9 @@ final class HookRunnerTests: XCTestCase {
 
     func testUnknownNameDeniesAndNeverSubstitutes() throws {
         let out = try XCTUnwrap(runner(["known": "V"]).runPre(input: preInput(command: "echo {{secret:typo}}")))
-        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        let root = try decode(out)
+        XCTAssertEqual(root["suppressOutput"] as? Bool, true, "a refusal must be suppressed too, like every other response")
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["permissionDecision"] as? String, "deny")
         XCTAssertNil(specific["updatedInput"])
         let reason = try XCTUnwrap(specific["permissionDecisionReason"] as? String)
@@ -146,7 +150,9 @@ final class HookRunnerTests: XCTestCase {
 
         let input = postInput(response: ["stdout": "KEY=re_live_abc123\n", "stderr": "", "interrupted": false])
         let out = try XCTUnwrap(runner.runPost(input: input))
-        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        let root = try decode(out)
+        XCTAssertEqual(root["suppressOutput"] as? Bool, true)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["hookEventName"] as? String, "PostToolUse")
 
         let updated = try XCTUnwrap(specific["updatedToolOutput"] as? [String: Any])
@@ -231,7 +237,9 @@ final class HookRunnerTests: XCTestCase {
     func testSessionStartListsNamesOnly() throws {
         let runner = self.runner(["resend-landing": "V1", "asc-key-id": "V2"])
         let out = try XCTUnwrap(runner.runSessionStart(input: json(["hook_event_name": "SessionStart"])))
-        let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+        let root = try decode(out)
+        XCTAssertEqual(root["suppressOutput"] as? Bool, true)
+        let specific = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
         XCTAssertEqual(specific["hookEventName"] as? String, "SessionStart")
 
         let context = try XCTUnwrap(specific["additionalContext"] as? String)
