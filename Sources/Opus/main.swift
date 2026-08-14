@@ -1044,6 +1044,7 @@ private let hotkeyCallback: EventHandlerUPP = { (_, event, _) -> OSStatus in
         case 3: AppDelegate.shared?.restartSessionRequested()
         case 4: AppDelegate.shared?.sendClipboardToClaude()
         case 5: SecretsPanel.shared.toggle()
+        case 6: ScriptsPanel.shared.toggle()
         default: break
         }
     }
@@ -1060,6 +1061,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyRefRestart: EventHotKeyRef?
     private var hotKeyRefSend: EventHotKeyRef?
     private var hotKeyRefSecrets: EventHotKeyRef?
+    private var hotKeyRefScripts: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
     private var nativePanel: QuickTerminalPanel?
@@ -1315,6 +1317,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefSend    { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefSecrets { UnregisterEventHotKey(ref) }
+        if let ref = hotKeyRefScripts { UnregisterEventHotKey(ref) }
+        // Background scripts are Opus's children. Leaving them running
+        // after the panel that knows about them is gone would strand
+        // processes the user has no way to find again.
+        ScriptRunner.shared.stopAll()
         if let ref = handlerRef       { RemoveEventHandler(ref) }
     }
 
@@ -1753,6 +1760,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             idK, GetApplicationEventTarget(), 0, &hotKeyRefSecrets
         )
         NSLog("Opus hotkey Cmd+Ctrl+K registered (status=\(statusK))")
+
+        // Cmd+Ctrl+E → the scripts panel. kVK_ANSI_E = 14, chosen because E
+        // sits in the same physical spot on AZERTY and QWERTY (A and Q swap,
+        // which is why the obvious "A for Actions" was not used). Id 6 is the
+        // next free slot.
+        let idE = EventHotKeyID(signature: OSType(0x4F505553), id: 6)
+        let statusE = RegisterEventHotKey(
+            14,                                    // kVK_ANSI_E
+            UInt32(cmdKey | controlKey),
+            idE, GetApplicationEventTarget(), 0, &hotKeyRefScripts
+        )
+        NSLog("Opus hotkey Cmd+Ctrl+E registered (status=\(statusE))")
     }
 }
 

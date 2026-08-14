@@ -21,11 +21,15 @@ let package = Package(
         .target(
             name: "OpusSecretsKit"
         ),
+        .target(
+            name: "OpusScriptsKit"
+        ),
         .executableTarget(
             name: "Opus",
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
-                "OpusSecretsKit"
+                "OpusSecretsKit",
+                "OpusScriptsKit"
             ]
         ),
         .executableTarget(
@@ -37,7 +41,7 @@ let package = Package(
         ),
         .testTarget(
             name: "OpusTests",
-            dependencies: ["Opus", "OpusSecretsKit"]
+            dependencies: ["Opus", "OpusSecretsKit", "OpusScriptsKit"]
         )
     ]
 )
