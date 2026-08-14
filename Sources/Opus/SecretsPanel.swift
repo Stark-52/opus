@@ -15,21 +15,24 @@
 // on screen for 90ms after focus has already gone home.
 //
 // The value field is an NSSecureTextField and, by default, the row list
-// below it shows only SecretExtractor.maskedValue output. Cmd+R reveals
-// exactly one thing at a time — the selected row, or the deposit field
-// when nothing is selected — never the whole list at once; see
-// toggleReveal() for how the two stay mutually exclusive and
-// tableViewSelectionDidChange() for how a revealed row is hidden the
-// moment selection moves elsewhere.
+// below it shows only SecretExtractor.maskedValue output. Cmd+R (or a
+// row's eye button — see HoverIconButton) reveals exactly one thing at a
+// time — the selected row, or the deposit field when nothing is selected
+// — never the whole list at once; see toggleReveal() for how the two stay
+// mutually exclusive and tableViewSelectionDidChange() for how a revealed
+// row is hidden the moment selection moves elsewhere.
 //
 // The list exists because depositing blind, with several keys already
 // stored, invites near-duplicates ("stripe-key" vs "stripe-live") that are
 // only noticed later. It lives at the bottom of THIS panel rather than a
 // second one so it is visible at the exact moment it matters: while typing
 // the new name. Up/Down browse it without stealing focus from the name
-// field (see moveSecretSelection) — there is deliberately no Enter-on-row
-// action, no delete, no rename; this is read-only company for typing, not
-// a second management surface (those already exist: `secret rm`/`rename`).
+// field (see moveSecretSelection).
+//
+// Every keyboard shortcut here (Cmd+R, Cmd+Delete, Cmd+F, arrows) has a
+// clickable equivalent — this is a graphical panel, not a keyboard-only
+// one, and a control the user cannot see is a control they don't know
+// exists. The shortcuts stay as the SECOND way to do each thing.
 //
 // commit() closes the panel only once there is no more clipboard candidate
 // left to walk through — see the MARK: Commit section. Escape is
@@ -73,27 +76,127 @@ private final class SecretRowBackground: NSTableRowView {
     }
 }
 
-/// Three left-aligned, fixed-width columns: name, then the masked-or-
-/// revealed value in a monospaced font, then its length. Value and length
-/// are pinned tight to each other (10pt gap, both fixed width, neither
-/// stretches) so the eye can connect "8X…p9" to "10 car." without
-/// crossing the row; whatever space is left over in the row falls AFTER
-/// the length column, not between it and the value. Name and value each
-/// get a hard width via NSLayoutConstraint (not intrinsic sizing), so a
-/// long value truncates inside its own lane and can never borrow space
-/// from — or squeeze — the name column. The name is what's being scanned
-/// for; it is the one thing here that must stay readable.
+/// A borderless, template-image icon button: every clickable control this
+/// panel adds (a row's eye and trash, the deposit field's eye) is one of
+/// these, so they share one look, one hit-target size, and — more
+/// importantly — three behaviours that are easy to get wrong on a
+/// non-activating panel:
+///
+///  - `refusesFirstResponder = true`: the whole panel's design keeps focus
+///    in the name field so the user can keep typing while browsing or
+///    clicking. A button that could take first responder would break that
+///    the instant it's clicked.
+///  - `acceptsFirstMouse(for:)` returns true: NSPanel is non-activating,
+///    but the FIRST click into it while some other app is frontmost is
+///    still normally swallowed as an activation click. Without this
+///    override, the user's first click does nothing and only a second
+///    click on the same button fires the action — dangerous for the trash
+///    button specifically, since "nothing happened, click again" is
+///    exactly the gesture that arms a delete.
+///  - hover brightening: a resting tint that brightens on mouseEntered,
+///    via an NSTrackingArea, so a control that's meant to be always
+///    visible (not hover-only — see this file's header) still gives some
+///    feedback that it's interactive.
+private final class HoverIconButton: NSButton {
+    var restingTint: NSColor = OpusTheme.cream(0.55) {
+        didSet {
+            hoverTint = restingTint.blended(withFraction: 0.35, of: .white) ?? restingTint
+            updateTint()
+        }
+    }
+    private var hoverTint: NSColor = OpusTheme.cream(0.9)
+    private var isHovering = false
+    private var trackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isBordered = false
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        refusesFirstResponder = true
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        updateTint()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        updateTint()
+    }
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        updateTint()
+    }
+
+    private func updateTint() {
+        contentTintColor = isHovering ? hoverTint : restingTint
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Builds one HoverIconButton at the shared 20×20 hit target, sized and
+/// tinted, with no target/action yet — callers wire those once `self`
+/// exists (SecretRowCellView needs its buttons before `self` is valid;
+/// SecretsPanel wires row buttons once per reused cell, not per row — see
+/// tableView(_:viewFor:)).
+private func makeIconButton(symbolName: String, tint: NSColor, accessibilityLabel: String, toolTip: String) -> HoverIconButton {
+    let button = HoverIconButton(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+    let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
+    image?.isTemplate = true
+    button.image = image
+    button.restingTint = tint
+    button.setAccessibilityLabel(accessibilityLabel)
+    button.toolTip = toolTip
+    NSLayoutConstraint.activate([
+        button.widthAnchor.constraint(equalToConstant: 20),
+        button.heightAnchor.constraint(equalToConstant: 20),
+    ])
+    return button
+}
+
+/// Three left-aligned columns — name (fixed width), the masked-or-revealed
+/// value in a monospaced font, its length — followed by two always-visible
+/// buttons (eye, trash) pinned to the row's trailing edge. Value and
+/// length are pinned tight to each other (8pt gap, neither stretches) so
+/// the eye can connect "8X…p9" to "10 car." without crossing the row.
+/// Both buttons are a FIXED 20×20 regardless of content — if space is
+/// tight, it is the value column (see valueColumnWidth's clamp in
+/// SecretsPanel.measuredValueColumnWidth) that shrinks, never the
+/// controls. The name column's width is likewise a hard NSLayoutConstraint
+/// (not intrinsic sizing), so a long value truncates inside its own lane
+/// and can never borrow space from — or squeeze — the name column, the one
+/// thing here that must stay readable.
 private final class SecretRowCellView: NSTableCellView {
     static let nameColumnWidth: CGFloat = 150
-    static let valueColumnWidth: CGFloat = 190
-    static let lengthColumnWidth: CGFloat = 60
+    static let lengthColumnWidth: CGFloat = 55
+    /// Only used until the first configure() call supplies a real,
+    /// content-measured width.
+    static let defaultValueColumnWidth: CGFloat = 80
 
     private let nameLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
     private let lengthLabel = NSTextField(labelWithString: "")
+    private var valueWidthConstraint: NSLayoutConstraint!
+    let eyeButton: HoverIconButton
+    let trashButton: HoverIconButton
 
     override init(frame frameRect: NSRect) {
+        eyeButton = makeIconButton(symbolName: "eye", tint: OpusTheme.cream(0.55),
+                                    accessibilityLabel: "révéler la valeur", toolTip: "Révéler (⌘R)")
+        trashButton = makeIconButton(symbolName: "trash", tint: OpusTheme.red,
+                                      accessibilityLabel: "supprimer ce secret", toolTip: "Supprimer (⌘⌫)")
         super.init(frame: frameRect)
+
         nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         nameLabel.textColor = OpusTheme.cream(0.85)
         nameLabel.alignment = .left
@@ -121,30 +224,64 @@ private final class SecretRowCellView: NSTableCellView {
         addSubview(nameLabel)
         addSubview(valueLabel)
         addSubview(lengthLabel)
+        addSubview(eyeButton)
+        addSubview(trashButton)
+
+        let valueWidth = valueLabel.widthAnchor.constraint(equalToConstant: Self.defaultValueColumnWidth)
+        valueWidthConstraint = valueWidth
+
         NSLayoutConstraint.activate([
             nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             nameLabel.widthAnchor.constraint(equalToConstant: Self.nameColumnWidth),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             valueLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
-            valueLabel.widthAnchor.constraint(equalToConstant: Self.valueColumnWidth),
+            valueWidth,
             valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            // No trailing constraint: a fixed width here, right after the
-            // value with nothing pulling it wider, is what keeps this
-            // column from being distributed across the row's remaining
-            // width — the leftover space simply falls after it, unused.
-            lengthLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 10),
+            // No trailing constraint on length: a width here, right after
+            // the value with nothing pulling it wider, is what keeps this
+            // column from being distributed across the row — the leftover
+            // space falls after it, unused. A defensive `<=` against the
+            // eye button's leading edge costs nothing when the value
+            // column's own clamp already leaves room (it does — see
+            // measuredValueColumnWidth), and turns any future budget
+            // mistake into a visible Auto Layout conflict instead of a
+            // silent overlap.
+            lengthLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 8),
             lengthLabel.widthAnchor.constraint(equalToConstant: Self.lengthColumnWidth),
             lengthLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            lengthLabel.trailingAnchor.constraint(lessThanOrEqualTo: eyeButton.leadingAnchor, constant: -6),
+
+            trashButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            trashButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            eyeButton.trailingAnchor.constraint(equalTo: trashButton.leadingAnchor, constant: -4),
+            eyeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(name: String, displayValue: String, length: String) {
+    func configure(name: String, displayValue: String, length: String, valueColumnWidth: CGFloat,
+                    revealed: Bool, deleteArmed: Bool) {
         nameLabel.stringValue = name
         valueLabel.stringValue = displayValue
         lengthLabel.stringValue = length
+        valueWidthConstraint.constant = valueColumnWidth
+
+        let eyeSymbol = revealed ? "eye.slash" : "eye"
+        let eyeLabel = revealed ? "masquer la valeur" : "révéler la valeur"
+        let eyeImage = NSImage(systemSymbolName: eyeSymbol, accessibilityDescription: eyeLabel)
+        eyeImage?.isTemplate = true
+        eyeButton.image = eyeImage
+        eyeButton.setAccessibilityLabel(eyeLabel)
+        eyeButton.toolTip = revealed ? "Masquer (⌘R)" : "Révéler (⌘R)"
+
+        let trashSymbol = deleteArmed ? "trash.fill" : "trash"
+        let trashImage = NSImage(systemSymbolName: trashSymbol, accessibilityDescription: "supprimer ce secret")
+        trashImage?.isTemplate = true
+        trashButton.image = trashImage
+        trashButton.toolTip = deleteArmed ? "Confirmer la suppression (⌘⌫)" : "Supprimer (⌘⌫)"
     }
 }
 
@@ -156,19 +293,29 @@ final class SecretsPanel: NSObject {
     /// list grows or shrinks.
     private static let width: CGFloat = 520
     private static let topMargin: CGFloat = 24
+    /// keyCode 51 is Delete (labelled "Delete" on a Mac keyboard, and what
+    /// most apps call Backspace) — the physical key Cmd+Delete pairs with.
+    private static let deleteKeyCode: UInt16 = 51
 
     private let panel: SecretsPanelWindow
     private let titleLabel = NSTextField(labelWithString: "Ranger un secret")
     private let nameField = NSTextField()
     private let valueField = NSSecureTextField()
     /// Stacked in the exact same frame as valueField, hidden unless Cmd+R
-    /// is on. NSSecureTextField cannot be switched to plain text in place,
-    /// so this is the usual AppKit workaround: two fields, one frame, only
-    /// one ever visible. Kept mirrored with valueField on every keystroke
-    /// (see controlTextDidChange) so toggling never drops or duplicates
-    /// what's been typed, and both are wiped on close() regardless of
-    /// which was showing.
+    /// (or its own eye button) is on. NSSecureTextField cannot be switched
+    /// to plain text in place, so this is the usual AppKit workaround: two
+    /// fields, one frame, only one ever visible. Kept mirrored with
+    /// valueField on every keystroke (see controlTextDidChange) so
+    /// toggling never drops or duplicates what's been typed, and both are
+    /// wiped on close() regardless of which was showing.
     private let valueFieldPlain = NSTextField()
+    /// Unlike a row's eye (which lives inside SecretRowCellView, built
+    /// fresh per cell), this one is a permanent fixture of the panel
+    /// itself, positioned in relayout() at the trailing edge of the value
+    /// field's own row — narrower than the panel's other full-width rows
+    /// to make room for it.
+    private let depositEyeButton = makeIconButton(symbolName: "eye", tint: OpusTheme.cream(0.55),
+                                                   accessibilityLabel: "révéler la valeur", toolTip: "Révéler (⌘R)")
     /// previewLabel and statusLabel each have a fixed frame height (18pt)
     /// that never changes with their content — empty string still reserves
     /// the row — so nothing below them shifts as the user types.
@@ -188,15 +335,14 @@ final class SecretsPanel: NSObject {
     private let listHeaderLabel = NSTextField(labelWithString: "")
     private let scrollView = NSScrollView()
     private let tableView = NSTableView(frame: .zero)
-    /// State-aware, not a static legend: "⌘R révéler" in the dim
-    /// treatment, "⌘R masquer" in OpusTheme.amber once something is
-    /// actually revealed, so a panel left open with a value showing keeps
-    /// announcing it.
+    /// State-aware, not a static legend: reflects exactly what's currently
+    /// clickable/exposed, not a fixed set of instructions — see
+    /// updateHint().
     private let hintLabel = NSTextField(labelWithString: "")
 
     private let store = KeychainSecretStore()
     private var visible = false
-    /// Bumped on every open() AND on every successful commit() that
+    /// Bumped on every open() AND on every successful commit()/delete that
     /// refreshes the list — a background store read from an abandoned
     /// earlier request (rapid close/reopen, or a second deposit made
     /// before the first read landed) is dropped if it resolves after a
@@ -219,13 +365,14 @@ final class SecretsPanel: NSObject {
     /// Every secret loaded from the Keychain, name-sorted.
     private var rows: [SecretRow] = []
     /// `rows` narrowed by searchField's text — what actually backs the
-    /// table and what Up/Down browse.
+    /// table and what Up/Down browse, and the one array row-identity
+    /// resolution (a click, an arrow move) is ever allowed to index into.
     private var filteredSecrets: [SecretRow] = []
     /// Set by the most recent renderSecrets(); overrides the count in
     /// listHeaderLabel with the problem text, in red, until a read
     /// succeeds cleanly again.
     private var storeProblem: String?
-    /// Cmd+R reveals ONE thing at a time — the deposit field, or a single
+    /// Reveal shows ONE thing at a time — the deposit field, or a single
     /// selected row — never both, and never the whole list at once: six
     /// values on screen because the user wanted to check one is exactly
     /// the exposure this is meant to avoid. Both reset on open()/close();
@@ -234,6 +381,27 @@ final class SecretsPanel: NSObject {
     /// moment selection moves elsewhere.
     private var revealedValueField = false
     private var revealedRowName: String?
+    /// Armed by a first Cmd+Delete or trash-button click on this name; a
+    /// second, matching one deletes. Mirrors pendingOverwrite's own
+    /// two-step pattern above. Cleared by ANY other interaction —
+    /// cancelPendingDelete() is the one place that happens, called from
+    /// the keyDown monitor's general "any other key" rule and from every
+    /// mouse action that doesn't itself confirm this exact name.
+    private var pendingDeleteName: String?
+    /// Set right before a delete's refreshSecrets() call; consumed once by
+    /// the renderSecrets() that follows to select whatever row now sits at
+    /// the deleted one's old index (or clear selection if the list is now
+    /// empty), rather than leaving the selection pointing at an index that
+    /// no longer exists, or forcing a selection after every OTHER kind of
+    /// refresh (a deposit, a filter) where nothing asked for one.
+    private var pendingSelectionIndex: Int?
+    /// The list's value column width, recomputed by
+    /// measuredValueColumnWidth() alongside every reloadTableContent()
+    /// call — sized to the widest value actually displayed right now
+    /// (masked text for every row except one revealed row, if any) rather
+    /// than a fixed guess, so short values don't leave the length column
+    /// stranded far to their right.
+    private var valueColumnWidth: CGFloat = SecretRowCellView.defaultValueColumnWidth
     /// Screen-space Y of the panel's top edge, set whenever relayout()
     /// centers the panel (open()) and preserved across every subsequent
     /// relayout() so the deposit block above the list never itself moves
@@ -297,6 +465,10 @@ final class SecretsPanel: NSObject {
         valueFieldPlain.isHidden = true
         blur.addSubview(valueFieldPlain)
 
+        depositEyeButton.target = self
+        depositEyeButton.action = #selector(depositEyeButtonClicked(_:))
+        blur.addSubview(depositEyeButton)
+
         previewLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         previewLabel.textColor = OpusTheme.cyan
         blur.addSubview(previewLabel)
@@ -350,6 +522,32 @@ final class SecretsPanel: NSObject {
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
             guard let self, ev.window === self.panel else { return ev }
+
+            // Cmd+Delete is handled before the general "any other key
+            // cancels a pending delete" rule below, since CONFIRMING a
+            // pending delete is itself a second Cmd+Delete. With no row
+            // selected this returns false and the event passes through
+            // unconsumed, so Cmd+Delete keeps its normal text-editing
+            // meaning in whichever field has focus — same as before this
+            // feature existed; it is never given a new meaning there.
+            if KeyMods.shortcutMods(ev.modifierFlags) == .command, ev.keyCode == Self.deleteKeyCode {
+                return self.handleDeleteKeyboardShortcut() ? nil : ev
+            }
+
+            // Any OTHER key cancels a pending delete confirmation —
+            // typing a name, moving the selection, opening the filter,
+            // Escape, all of it. A confirmation that survives the user
+            // moving on to something else is how accidents happen. This is
+            // a top-level call (not reentrant with any table machinery),
+            // so reloading immediately — to un-arm the row's trash icon —
+            // is safe here, unlike inside tableViewSelectionDidChange.
+            // (Mouse-driven cancellation — a click on a different row's
+            // button — is handled separately, in cancelPendingDelete()'s
+            // other call sites, since this monitor only ever sees keys.)
+            if self.cancelPendingDelete() {
+                self.reloadTableContent()
+            }
+
             // Letter shortcuts matched by character, not keyCode — same
             // convention as main.swift's Cmd+letter handling and
             // FindBarView's own Cmd+F (AZERTY etc. put letters in the same
@@ -460,7 +658,21 @@ final class SecretsPanel: NSObject {
         for (view, y0, height) in stacked {
             view.frame = NSRect(x: inset, y: newHeight - y0 - height, width: fieldWidth, height: height)
         }
+
+        // The value field's row is narrower than the panel's other
+        // full-width rows, to leave room for its own eye button pinned to
+        // the trailing edge — same "fixed control, shrinking field" idea
+        // as the list rows, just with one field instead of a value column.
+        let depositEyeSize: CGFloat = 20
+        let depositFieldWidth = fieldWidth - depositEyeSize - 8
+        let valueFrame = valueField.frame
+        valueField.frame = NSRect(x: inset, y: valueFrame.origin.y, width: depositFieldWidth, height: valueFrame.height)
         valueFieldPlain.frame = valueField.frame
+        depositEyeButton.frame = NSRect(
+            x: inset + depositFieldWidth + 8,
+            y: valueFrame.origin.y + (valueFrame.height - depositEyeSize) / 2,
+            width: depositEyeSize, height: depositEyeSize
+        )
 
         let originX: CGFloat
         let originY: CGFloat
@@ -490,6 +702,7 @@ final class SecretsPanel: NSObject {
         previewLabel.stringValue = ""
         statusLabel.stringValue = ""
         pendingOverwrite = nil
+        pendingDeleteName = nil
         candidateIndex = 0
 
         // Reveal always starts OFF, regardless of how it was left before —
@@ -500,6 +713,7 @@ final class SecretsPanel: NSObject {
         revealedRowName = nil
         valueField.isHidden = false
         valueFieldPlain.isHidden = true
+        updateDepositEyeButton()
         rows = []
         storeProblem = nil
         searchField.stringValue = ""
@@ -528,15 +742,18 @@ final class SecretsPanel: NSObject {
         capturedClipboard = nil
         candidates = []
         candidateIndex = 0
+        pendingDeleteName = nil
+        pendingSelectionIndex = nil
         revealedValueField = false
         revealedRowName = nil
         valueField.isHidden = false
         valueFieldPlain.isHidden = true
+        updateDepositEyeButton()
         rows = []
         filteredSecrets = []
         storeProblem = nil
         searchField.stringValue = ""
-        tableView.reloadData()
+        reloadTableContent()
 
         // Hand focus back FIRST, synchronously, never gated behind the
         // dismiss animation below. The window is free to keep fading on
@@ -634,7 +851,8 @@ final class SecretsPanel: NSObject {
     /// If the filter has text, Escape clears it and returns focus to the
     /// name field — one gesture to get back to a clean deposit, not two.
     /// Only an EMPTY filter lets Escape close the panel, matching how it
-    /// always has.
+    /// always has. (A pending delete confirmation is cancelled by the
+    /// keyDown monitor's general rule before this even runs.)
     private func handleEscape() {
         guard searchField.stringValue.isEmpty else {
             searchField.stringValue = ""
@@ -677,6 +895,13 @@ final class SecretsPanel: NSObject {
     }
 
     private func updatePreview() {
+        // Any normal preview recompute reasserts the amber tone — the only
+        // other color statusLabel ever takes is OpusTheme.red, for a
+        // delete confirmation or a delete/store failure, and those are
+        // meant to be transient: the next normal update (this function)
+        // clears them back to amber, same as it already clears their TEXT.
+        statusLabel.textColor = OpusTheme.amber
+
         let value = valueField.stringValue
         guard !value.isEmpty else { previewLabel.stringValue = ""; return }
 
@@ -782,6 +1007,23 @@ final class SecretsPanel: NSObject {
 
         applyFilter()
         relayout(recenter: false)
+
+        // Consumed once: a delete sets this right before calling
+        // refreshSecrets() so the row that "took the deleted one's place"
+        // (same index, in the fresh list) ends up selected instead of the
+        // selection just vanishing or pointing at an index that no longer
+        // exists. Every other refresh (a deposit, a filter edit) leaves
+        // this nil and therefore leaves selection exactly as it was.
+        if let index = pendingSelectionIndex {
+            pendingSelectionIndex = nil
+            if filteredSecrets.isEmpty {
+                tableView.deselectAll(nil)
+            } else {
+                let clamped = min(index, filteredSecrets.count - 1)
+                tableView.selectRowIndexes(IndexSet(integer: clamped), byExtendingSelection: false)
+                tableView.scrollRowToVisible(clamped)
+            }
+        }
     }
 
     /// Recomputes filteredSecrets from `rows` and searchField's text (name
@@ -800,9 +1042,48 @@ final class SecretsPanel: NSObject {
         if let revealedRowName, !filteredSecrets.contains(where: { $0.name == revealedRowName }) {
             self.revealedRowName = nil
         }
-        tableView.reloadData()
+        // Same idea for a pending delete confirmation on a row that just
+        // filtered out of view.
+        if let pendingDeleteName, !filteredSecrets.contains(where: { $0.name == pendingDeleteName }) {
+            self.pendingDeleteName = nil
+        }
+        reloadTableContent()
         updateListHeader(filterActive: !query.isEmpty)
         updateHint()
+    }
+
+    /// Sized to the widest value actually on screen right now (masked text
+    /// for every row except one revealed row, if any), not a fixed guess —
+    /// so a list of short values doesn't leave the length column stranded
+    /// far to the right of short text, and a long revealed value still
+    /// gets real room before truncating. Clamped so neither an empty list
+    /// nor an extremely long revealed value can distort the row layout —
+    /// the upper bound leaves enough room, ahead of it, for the fixed-size
+    /// length column and the eye/trash buttons that never shrink.
+    private func measuredValueColumnWidth() -> CGFloat {
+        let minimum: CGFloat = 60
+        let maximum: CGFloat = 170
+        guard !filteredSecrets.isEmpty else { return minimum }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        ]
+        let widest = filteredSecrets.reduce(into: CGFloat(0)) { widest, secret in
+            let text = secret.name == revealedRowName ? secret.value : SecretExtractor.maskedValue(secret.value)
+            widest = max(widest, (text as NSString).size(withAttributes: attributes).width)
+        }
+        return min(max(widest, minimum), maximum)
+    }
+
+    /// Recomputes the value column's width from what's about to be
+    /// displayed, THEN reloads. Every reloadData() that can change what's
+    /// shown in the value column (a filter, a reveal toggle, a fresh
+    /// Keychain read, closing) goes through this instead of calling
+    /// tableView.reloadData() directly, so the column never lags a frame
+    /// behind the content it's sized to.
+    private func reloadTableContent() {
+        valueColumnWidth = measuredValueColumnWidth()
+        tableView.reloadData()
     }
 
     private func updateListHeader(filterActive: Bool) {
@@ -821,18 +1102,20 @@ final class SecretsPanel: NSObject {
         }
     }
 
-    /// State-aware, not a static legend. "↑↓ parcourir" is only advertised
-    /// when there's something to browse (matches moveSecretSelection's own
-    /// guard); "⌘R révéler"/"⌘R masquer" swap text AND color depending on
+    /// State-aware, not a static legend. "↑↓ parcourir" and "⌘⌫ supprimer"
+    /// are only advertised when there's a row to act on (matching
+    /// moveSecretSelection's and handleDeleteKeyboardShortcut's own
+    /// guards); "⌘R révéler"/"⌘R masquer" swap text AND color depending on
     /// whether ANYTHING is currently exposed — the deposit field or a row,
-    /// never both — so this stays accurate about what's on screen right
-    /// now rather than describing a "mode."
+    /// never both — so this stays accurate about what's on screen and
+    /// clickable right now rather than describing a fixed "mode."
     private func updateHint() {
         let font = NSFont.systemFont(ofSize: 11)
         let dim: [NSAttributedString.Key: Any] = [.foregroundColor: OpusTheme.cream(0.5), .font: font]
         let warn: [NSAttributedString.Key: Any] = [.foregroundColor: OpusTheme.amber, .font: font]
 
         let somethingRevealed = revealedValueField || revealedRowName != nil
+        let rowSelected = filteredSecrets.indices.contains(tableView.selectedRow)
 
         let attr = NSMutableAttributedString()
         func addSegment(_ text: String, _ attrs: [NSAttributedString.Key: Any]) {
@@ -845,14 +1128,18 @@ final class SecretsPanel: NSObject {
             addSegment("↑↓ parcourir", dim)
         }
         addSegment("⌘F filtrer", dim)
+        if rowSelected {
+            addSegment("⌘⌫ supprimer", dim)
+        }
         addSegment(somethingRevealed ? "⌘R masquer" : "⌘R révéler", somethingRevealed ? warn : dim)
 
         hintLabel.attributedStringValue = attr
     }
 
-    /// Selection itself never reveals anything (see tableViewSelectionDidChange
-    /// for what DOES follow from it: hiding a revealed row once it's no
-    /// longer the selected one) — this just moves the highlight.
+    /// Selection itself never reveals or deletes anything (see
+    /// tableViewSelectionDidChange for what DOES follow from it: hiding a
+    /// revealed row, cancelling a pending delete) — this just moves the
+    /// highlight.
     private func moveSecretSelection(by delta: Int) {
         guard !filteredSecrets.isEmpty else { return }
         let current = tableView.selectedRow
@@ -863,30 +1150,41 @@ final class SecretsPanel: NSObject {
 
     /// Cmd+R acts on whatever the panel is currently pointing at, and only
     /// that one thing: the selected row if there is one, otherwise the
-    /// deposit field. Revealing a row masks the deposit field first
-    /// (maskDepositField()) so the two are never showing plaintext at the
-    /// same time; the deposit-field branch below only ever runs when no
-    /// row is selected, and tableViewSelectionDidChange()/applyFilter()
-    /// keep revealedRowName in sync with the actual selection the rest of
-    /// the time — so revealedRowName is already nil by the time that
-    /// branch is reached in practice, and the reset there is a cheap
-    /// belt-and-braces, not the primary mechanism. A hard swap, not a
-    /// cross-fade — see this file's report for why.
+    /// deposit field. A row's own eye button goes through
+    /// toggleRevealForSelectedRow() too (after first selecting that row —
+    /// see rowEyeButtonClicked), so a click and Cmd+R are the exact same
+    /// state machine, never two.
     private func toggleReveal() {
-        let selectedRow = tableView.selectedRow
-        if filteredSecrets.indices.contains(selectedRow) {
-            let name = filteredSecrets[selectedRow].name
-            if revealedRowName == name {
-                revealedRowName = nil
-            } else {
-                revealedRowName = name
-                maskDepositField()
-            }
-            tableView.reloadData()
-            updateHint()
-            return
+        if filteredSecrets.indices.contains(tableView.selectedRow) {
+            toggleRevealForSelectedRow()
+        } else {
+            toggleDepositFieldReveal()
         }
+    }
 
+    /// Reveals/masks whichever row is CURRENTLY selected. Revealing a row
+    /// masks the deposit field first (maskDepositField()) so the two are
+    /// never showing plaintext at the same time.
+    private func toggleRevealForSelectedRow() {
+        let selectedRow = tableView.selectedRow
+        guard filteredSecrets.indices.contains(selectedRow) else { return }
+        let name = filteredSecrets[selectedRow].name
+        if revealedRowName == name {
+            revealedRowName = nil
+        } else {
+            revealedRowName = name
+            maskDepositField()
+        }
+        reloadTableContent()
+        updateHint()
+    }
+
+    /// Reveals/masks the deposit field itself. Unlike toggleReveal(), this
+    /// is unconditional — the deposit eye button is physically attached to
+    /// the field it controls, so there's no "what does the user mean" to
+    /// resolve the way Cmd+R has to. Mutual exclusion still applies:
+    /// turning this on clears any revealed row.
+    private func toggleDepositFieldReveal() {
         revealedRowName = nil
         revealedValueField.toggle()
 
@@ -899,14 +1197,15 @@ final class SecretsPanel: NSObject {
         // If the value field itself had focus, hand it to whichever of the
         // pair is now visible so typing keeps working uninterrupted. If
         // focus was elsewhere (typically nameField), leave it there — this
-        // toggle never moves focus on its own.
+        // never moves focus on its own.
         if revealedValueField, wasEditingSecure {
             panel.makeFirstResponder(valueFieldPlain)
         } else if !revealedValueField, wasEditingPlain {
             panel.makeFirstResponder(valueField)
         }
 
-        tableView.reloadData()
+        updateDepositEyeButton()
+        reloadTableContent()
         updateHint()
     }
 
@@ -923,6 +1222,111 @@ final class SecretsPanel: NSObject {
         if wasEditingPlain {
             panel.makeFirstResponder(valueField)
         }
+        updateDepositEyeButton()
+    }
+
+    private func updateDepositEyeButton() {
+        let symbol = revealedValueField ? "eye.slash" : "eye"
+        let label = revealedValueField ? "masquer la valeur" : "révéler la valeur"
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+        image?.isTemplate = true
+        depositEyeButton.image = image
+        depositEyeButton.setAccessibilityLabel(label)
+        depositEyeButton.toolTip = revealedValueField ? "Masquer (⌘R)" : "Révéler (⌘R)"
+    }
+
+    // MARK: Delete
+
+    /// "Any other interaction cancels the arming" — the one place that
+    /// happens. Called from the keyDown monitor's general rule (covers
+    /// every key except the confirming Cmd+Delete) and from every mouse
+    /// action that doesn't itself confirm this exact name (a row's eye
+    /// button, the deposit eye button — a different row's trash button
+    /// doesn't need this, since armOrConfirmDelete already replaces
+    /// whatever name was pending when it arms a new one).
+    ///
+    /// Deliberately does NOT reload the table itself: a row's trash icon
+    /// needs to revert from its armed look, but a reload called
+    /// synchronously from INSIDE tableViewSelectionDidChange is reentrant
+    /// with NSTableView's own in-flight selection bookkeeping and was
+    /// found to corrupt it (see that method's own comment for the full
+    /// story — the same hazard that made revealedRowName's clear-then-
+    /// reload deferred). Callers outside that context may reload
+    /// immediately; tableViewSelectionDidChange defers. Returns whether
+    /// anything was actually cancelled, so callers don't reload for
+    /// nothing.
+    @discardableResult
+    private func cancelPendingDelete() -> Bool {
+        guard pendingDeleteName != nil else { return false }
+        pendingDeleteName = nil
+        updatePreview()
+        return true
+    }
+
+    /// Cmd+Delete resolves the name from the CURRENT SELECTION — there is
+    /// no clicked view to ask, unlike a button press. Returns whether a
+    /// row was selected at all: false means "nothing to do," which the
+    /// caller passes through to the field editor rather than treating as
+    /// anything to do with the panel.
+    private func handleDeleteKeyboardShortcut() -> Bool {
+        guard filteredSecrets.indices.contains(tableView.selectedRow) else { return false }
+        armOrConfirmDelete(name: filteredSecrets[tableView.selectedRow].name)
+        return true
+    }
+
+    /// The two-step delete itself, shared by Cmd+Delete (resolves the name
+    /// from selection) and a row's trash button (resolves it via
+    /// tableView.row(for:) — see rowTrashButtonClicked). Mirrors
+    /// pendingOverwrite's own confirm-then-act pattern for a store: one
+    /// call arms, naming the secret in the status line; the second, on the
+    /// SAME name, actually deletes.
+    private func armOrConfirmDelete(name: String) {
+        guard pendingDeleteName == name else {
+            pendingDeleteName = name
+            statusLabel.textColor = OpusTheme.red
+            statusLabel.stringValue = "supprimer « \(name) » ? ⌘⌫ à nouveau pour confirmer"
+            reloadTableContent()   // so the row's own trash button switches to its armed look
+            updateHint()
+            return
+        }
+
+        pendingDeleteName = nil
+        do {
+            try store.remove(name: name)
+        } catch {
+            // Same rule as everywhere else in this file: report the real
+            // error, in red, rather than silently doing nothing OR
+            // refreshing the list as though the delete had worked.
+            statusLabel.textColor = OpusTheme.red
+            statusLabel.stringValue = "échec de la suppression : \(error)"
+            reloadTableContent()
+            updateHint()
+            return
+        }
+
+        if revealedRowName == name { revealedRowName = nil }
+        statusLabel.textColor = OpusTheme.amber
+        statusLabel.stringValue = ""
+
+        pendingSelectionIndex = filteredSecrets.firstIndex { $0.name == name }
+        scanGeneration += 1
+        refreshSecrets(generation: scanGeneration)
+    }
+
+    /// Pure and file-visible so it's testable without a live table view:
+    /// given the row index AppKit resolves for a clicked button
+    /// (tableView.row(for:)) and the names of the secrets CURRENTLY
+    /// FILTERED into view (in display order), returns the name at that
+    /// index, or nil if it's out of range — e.g. a stale click racing a
+    /// filter change that shrank the list out from under it. This is the
+    /// one seam a click and a keyboard action share for "which secret is
+    /// this," so getting it wrong deletes a secret the user didn't point
+    /// at. Callers must pass filteredSecrets' names, never rows' (the full,
+    /// unfiltered set) — indexing the wrong one is exactly the bug this
+    /// exists to catch.
+    static func resolveRowName(at index: Int, filteredNames: [String]) -> String? {
+        guard filteredNames.indices.contains(index) else { return nil }
+        return filteredNames[index]
     }
 
     // MARK: Commit
@@ -999,6 +1403,33 @@ final class SecretsPanel: NSObject {
         scanGeneration += 1
         refreshSecrets(generation: scanGeneration)
     }
+
+    // MARK: Button actions
+
+    @objc private func depositEyeButtonClicked(_ sender: NSButton) {
+        cancelPendingDelete()
+        toggleDepositFieldReveal()
+    }
+
+    @objc private func rowEyeButtonClicked(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard Self.resolveRowName(at: row, filteredNames: filteredSecrets.map(\.name)) != nil else { return }
+        cancelPendingDelete()
+        // Clicking a row's eye also selects that row: mouse and keyboard
+        // converge on ONE notion of "which row," never two, so a
+        // following Cmd+R (or Cmd+Delete) acts on the same row the user
+        // just clicked. toggleRevealForSelectedRow() re-resolves the name
+        // from that selection, so this method never needs to carry it.
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        toggleRevealForSelectedRow()
+    }
+
+    @objc private func rowTrashButtonClicked(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard let name = Self.resolveRowName(at: row, filteredNames: filteredSecrets.map(\.name)) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        armOrConfirmDelete(name: name)
+    }
 }
 
 // NSSearchField's delegate type is NSSearchFieldDelegate, which is a
@@ -1056,9 +1487,20 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
         } else {
             cell = SecretRowCellView()
             cell.identifier = Self.rowCellID
+            // Wired ONCE per cell instance, never per row: both actions
+            // resolve the actual row fresh, via tableView.row(for:), at
+            // CLICK time — never from anything captured here — so cell
+            // reuse across a reload/filter can never fire on a stale row.
+            cell.eyeButton.target = self
+            cell.eyeButton.action = #selector(rowEyeButtonClicked(_:))
+            cell.trashButton.target = self
+            cell.trashButton.action = #selector(rowTrashButtonClicked(_:))
         }
         let displayValue = secret.name == revealedRowName ? secret.value : SecretExtractor.maskedValue(secret.value)
-        cell.configure(name: secret.name, displayValue: displayValue, length: "\(secret.value.count) car.")
+        cell.configure(name: secret.name, displayValue: displayValue, length: "\(secret.value.count) car.",
+                        valueColumnWidth: valueColumnWidth,
+                        revealed: secret.name == revealedRowName,
+                        deleteArmed: secret.name == pendingDeleteName)
         return cell
     }
 
@@ -1066,19 +1508,45 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
         SecretRowBackground()
     }
 
-    /// "Selecting a different row hides the previously revealed one" — the
-    /// direct implementation of that rule. Fires for both arrow-key
-    /// navigation (moveSecretSelection's selectRowIndexes) and a mouse
-    /// click on a row, so neither can leave a revealed row behind once
-    /// selection moves away from it.
+    /// "Selecting a different row hides the previously revealed one," and
+    /// cancels a pending delete confirmation too — the direct
+    /// implementation of both rules. Fires for arrow-key navigation
+    /// (moveSecretSelection's selectRowIndexes), a click anywhere on a row
+    /// (including a button, which also explicitly selects its row — see
+    /// rowEyeButtonClicked/rowTrashButtonClicked), so nothing mouse-driven
+    /// can leave a revealed row or an armed delete behind once selection
+    /// moves away from it.
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let revealedRowName else { return }
-        let selected = tableView.selectedRow
-        guard filteredSecrets.indices.contains(selected), filteredSecrets[selected].name == revealedRowName else {
-            self.revealedRowName = nil
-            tableView.reloadData()
-            updateHint()
-            return
+        // Both of these can flip a row's on-screen state (an armed trash
+        // icon, a revealed value) without changing anything ELSE about
+        // the row content, so both are collapsed into the SAME deferred
+        // reload below rather than each scheduling their own — see that
+        // reload's own comment for why it can't run synchronously here.
+        var needsReload = cancelPendingDelete()
+
+        if let revealedRowName {
+            let selected = tableView.selectedRow
+            if !filteredSecrets.indices.contains(selected) || filteredSecrets[selected].name != revealedRowName {
+                self.revealedRowName = nil
+                needsReload = true
+            }
+        }
+
+        updateHint()
+
+        guard needsReload else { return }
+        // Deferred, not synchronous. This delegate method is called BY
+        // NSTableView while it is still committing the very selection
+        // change it's announcing — reloading the table from inside that
+        // call stack is reentrant with AppKit's own in-flight bookkeeping
+        // and was found to corrupt it: Up/Down got stuck re-selecting row
+        // 0 because a reload fired from here raced a selection change
+        // AppKit hadn't finished committing yet. Waiting for the next run
+        // loop tick (still before this event's display flush, so nothing
+        // stale is visibly shown in the meantime) lets that commit finish
+        // first.
+        DispatchQueue.main.async { [weak self] in
+            self?.reloadTableContent()
         }
     }
 }
