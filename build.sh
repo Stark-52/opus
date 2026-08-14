@@ -58,14 +58,29 @@ if [ -f "Opus.icns" ]; then
 fi
 
 # A stable signing identity keeps TCC grants (Documents access etc.) across
-# rebuilds. Ad-hoc re-signing minted a NEW identity every build, so macOS
-# re-prompted for permissions after each install. Fall back to ad-hoc when
-# the certificate is unavailable.
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "[redacted]"; then
-    echo "→ signing with Apple Development identity"
-    codesign --force --sign an Apple Development certificate --deep Opus.app
+# rebuilds. Ad-hoc re-signing mints a NEW identity every build, so macOS
+# re-prompts for permissions after each install.
+#
+# This used to point at an Apple Development certificate,
+# which EXPIRED on 13 Aug 2026 (issued 13 Aug 2025, one year, as they all are).
+# Its silent expiry is what put every rebuild back on the ad-hoc path and
+# started the permission prompts again.
+#
+# It is replaced by a self-signed code-signing certificate created 14 Aug 2026
+# and valid to 2036. Opus is never distributed, so a certificate from Apple
+# buys nothing here: TCC keys on the DESIGNATED REQUIREMENT, and this one is
+# byte-identical across builds — verified as
+#   identifier "com.stark52.opus" and certificate leaf = H"66694a07…"
+# on two independent builds. No yearly renewal, no dependency on a team.
+#
+# The lookup deliberately omits -v: that flag lists only chain-trusted
+# identities, and a self-signed certificate is not one. codesign accepts it
+# regardless, which was verified before this change was made.
+if security find-identity -p codesigning 2>/dev/null | grep -q "Opus Local Signing"; then
+    echo "→ signing with the local Opus identity"
+    codesign --force --sign "Opus Local Signing" --deep Opus.app
 else
-    echo "→ ad-hoc signing (no stable identity found)"
+    echo "→ ad-hoc signing (no local identity — macOS will re-prompt for permissions)"
     codesign --force --sign - --deep Opus.app
 fi
 
