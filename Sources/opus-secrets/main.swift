@@ -154,6 +154,27 @@ case "rm":
     }
     exit(0)
 
+case "rename":
+    guard arguments.count >= 3 else { fail("usage: opus-secrets rename <ancien> <nouveau>") }
+    let oldName = arguments[1]
+    let rawNewName = arguments[2]
+    switch SecretRenamer.rename(store, from: oldName, toRaw: rawNewName) {
+    case .renamed(let newName):
+        print("renommé : \(oldName) → \(newName)")
+    case .invalidNewName:
+        fail("nom invalide : \(rawNewName)\nattendu : \(SecretName.grammar)")
+    case .oldNameNotFound(let available):
+        let known = available.isEmpty ? "aucun secret enregistré" : available.joined(separator: ", ")
+        fail("secret « \(oldName) » introuvable. Disponibles : \(known).")
+    case .newNameAlreadyExists(let newName):
+        fail("« \(newName) » existe déjà. Supprimer avec « opus-secrets rm \(newName) » d'abord.")
+    case .newWrittenOldRemains(let newName, let oldName, let removeError):
+        fail("rangé sous « \(newName) » mais l'ancien « \(oldName) » n'a pas pu être supprimé (\(removeError)). Le secret existe maintenant sous LES DEUX noms : supprimer « \(oldName) » manuellement.")
+    case .storeError(let message):
+        fail(message)
+    }
+    exit(0)
+
 case "run":
     // opus-secrets run name=VAR [name2=VAR2 ...] -- command args...
     guard let separator = arguments.firstIndex(of: "--"), separator > 1 else {
@@ -194,6 +215,7 @@ default:
       get <nom>              ressort la valeur (à piper, pas à afficher)
       ls                     liste les noms rangés
       rm <nom>               supprime
+      rename <ancien> <nouveau>  renomme (le nouveau nom passe par slug)
       run <nom>=<VAR> -- cmd exécute cmd avec VAR peuplée
 
     Dans une commande Bash, Claude écrit {{secret:<nom>}} et la valeur est

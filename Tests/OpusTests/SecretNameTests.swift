@@ -47,6 +47,16 @@ final class SecretNameTests: XCTestCase {
         XCTAssertEqual(SecretName.slug(String(repeating: "k", count: 100)).count, 64)
     }
 
+    func testSlugHandlesRoughlyTypedPanelNames() {
+        // SecretsPanel.commit() runs a hand-typed name through slug() rather
+        // than rejecting it outright, so these are exactly the fixtures the
+        // panel's friction complaint is about.
+        XCTAssertEqual(SecretName.slug("stripe key"), "stripe-key")
+        XCTAssertEqual(SecretName.slug("Stripe Key"), "stripe-key")
+        XCTAssertEqual(SecretName.slug("resend  key"), "resend-key", "double space collapses like any other run")
+        XCTAssertEqual(SecretName.slug("!!!"), "", "nothing usable survives: the panel must reject this, not store an empty name")
+    }
+
     func testSlugOutputIsAlwaysValidOrEmpty() {
         for raw in ["RESEND_API_KEY", "!!!", "___", "9lives", "-x-", String(repeating: "z", count: 200)] {
             let s = SecretName.slug(raw)
