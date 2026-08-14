@@ -175,18 +175,17 @@ final class SessionSwitcherPanel: NSObject {
 
         let field = NSSearchField(frame: NSRect(x: OpusTheme.insetPanel, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
-        // Same field styling as FindBarView (spec section 5: "strictement
-        // identique à celui de la barre de recherche").
-        field.placeholderAttributedString = NSAttributedString(
-            string: "Search conversations…",
-            attributes: [.foregroundColor: OpusTheme.cream(0.45)]
-        )
         field.toolTip = "Resumes in the shared session (tab 0); a private tab, if active, is left untouched."
-        field.font = NSFont.systemFont(ofSize: 14)
-        // Fix 4 (v1.4.1): explicit cream, not the adaptive control-text
-        // color — same rationale as titleLabel/subtitleLabel above.
-        field.textColor = OpusTheme.cream(0.95)
-        blur.addSubview(field)
+        // Wrapped rather than styled in place: FieldPlate owns the rounded
+        // background and, crucially, centres the field vertically. A
+        // bezel-less NSTextField left in a 28pt frame rides high in its box,
+        // and this panel previously kept the system bezel instead — a pale
+        // rounded control sitting on a dark panel.
+        let plate = FieldPlate(field: field, placeholder: "Rechercher une session…",
+                               iconSymbol: "magnifyingglass")
+        plate.frame = field.frame
+        plate.autoresizingMask = [.width, .minYMargin]
+        blur.addSubview(plate)
         searchField = field
 
         let table = NSTableView(frame: .zero)

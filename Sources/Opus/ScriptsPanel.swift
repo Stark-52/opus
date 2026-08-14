@@ -270,10 +270,11 @@ final class ScriptsPanel: NSObject {
     private let searchField = NSSearchField()
     /// Drawn behind searchField so the field can be bezel-less and still
     /// read as a control. Sized alongside it in relayout().
-    private let searchBackground = NSView()
-    /// Our own magnifier, positioned on the plate — see where the built-in
-    /// one is removed for why.
-    private let searchIcon = NSImageView()
+    /// Owns the field's look and its framing; see FieldPlate for why every
+    /// input in the app goes through it.
+    private lazy var searchPlate = FieldPlate(field: searchField,
+                                              placeholder: "filtrer les scripts",
+                                              iconSymbol: "magnifyingglass")
     private let headerLabel = NSTextField(labelWithString: "")
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -365,36 +366,8 @@ final class ScriptsPanel: NSObject {
         // custom dark panel: lighter than everything around it, with its own
         // corner radius. Stripping the bezel and drawing our own background
         // makes it part of the panel instead of a guest in it.
-        searchField.placeholderString = "filtrer les scripts"
-        searchField.font = NSFont.systemFont(ofSize: 12.5)
-        searchField.focusRingType = .none
-        searchField.isBezeled = false
-        searchField.drawsBackground = false
-        searchField.textColor = OpusTheme.cream(0.9)
         searchField.delegate = self
-        // The built-in magnifier is REMOVED, not restyled. Without a bezel,
-        // NSSearchFieldCell stops reserving space for it, so the button and
-        // the field editor both start at the field's left edge and the glyph
-        // lands on top of the first two letters. Dropping it and drawing our
-        // own on the plate puts the icon somewhere we control. The cancel
-        // button is left alone: it sits at the trailing edge, where nothing
-        // collides with it.
-        (searchField.cell as? NSSearchFieldCell)?.searchButtonCell = nil
-
-        let magnifier = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-        magnifier?.isTemplate = true
-        searchIcon.image = magnifier
-        searchIcon.contentTintColor = OpusTheme.cream(0.35)
-        searchIcon.imageScaling = .scaleProportionallyUpOrDown
-        searchIcon.refusesFirstResponder = true
-        searchBackground.wantsLayer = true
-        searchBackground.layer?.backgroundColor = OpusTheme.fieldBackground.withAlphaComponent(0.55).cgColor
-        searchBackground.layer?.cornerRadius = OpusTheme.radiusControl
-        searchBackground.layer?.borderWidth = 1
-        searchBackground.layer?.borderColor = OpusTheme.cream(0.07).cgColor
-        root.addSubview(searchBackground)
-        root.addSubview(searchIcon)
-        root.addSubview(searchField)
+        root.addSubview(searchPlate)
 
         headerLabel.font = NSFont.systemFont(ofSize: 11)
         headerLabel.textColor = OpusTheme.cream(0.5)
@@ -749,7 +722,7 @@ final class ScriptsPanel: NSObject {
         }
 
         stack(titleLabel, height: 20, gapAfter: 14)
-        stack(searchField, height: 30, gapAfter: 12)
+        stack(searchPlate, height: FieldPlate.height, gapAfter: 12)
         stack(scrollView, height: listHeight, gapAfter: showOutput ? 14 : 12)
         if showOutput {
             stack(separator, height: 1, gapAfter: 12)
@@ -777,22 +750,6 @@ final class ScriptsPanel: NSObject {
         // its own natural height. Stretching an NSSearchField to the plate's
         // full height does not centre its contents — the magnifier stays
         // pinned near the bottom and collides with the placeholder text.
-        let plate = searchField.frame
-        searchBackground.frame = plate
-        let iconSize: CGFloat = 13
-        let iconLeading: CGFloat = 10
-        searchIcon.frame = NSRect(x: plate.minX + iconLeading,
-                                  y: plate.midY - iconSize / 2,
-                                  width: iconSize, height: iconSize)
-        // The field starts after the icon plus a gap, so the caret and the
-        // first character can never sit under the glyph.
-        let textLeading = iconLeading + iconSize + 8
-        let fieldHeight: CGFloat = 20
-        searchField.frame = NSRect(x: plate.minX + textLeading,
-                                   y: plate.minY + (plate.height - fieldHeight) / 2,
-                                   width: plate.width - textLeading - 10,
-                                   height: fieldHeight)
-
         let screen = (NSScreen.main ?? NSScreen.screens[0]).frame
         let target = NSRect(x: screen.midX - Self.width / 2,
                             y: screen.midY - height / 2,
