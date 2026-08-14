@@ -1660,6 +1660,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         appMenu.addItem(quitItem)
 
+        // Cut/Copy/Paste/Select All are not built into AppKit's text
+        // fields: they are MENU items, and their key equivalents only fire
+        // if the menu exists. Opus had no Edit menu, so Cmd+V did nothing
+        // in every text field in the app — the secrets panel's value field
+        // most painfully, since pasting a key is the whole point of it.
+        // A nil target sends each action down the responder chain, which
+        // lands on whichever field editor is active.
+        let editMenuItem = NSMenuItem()
+        mainMenu.addItem(editMenuItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenuItem.submenu = editMenu
+        for (title, action, key) in [
+            ("Undo", #selector(UndoManager.undo), "z"),
+            ("Redo", #selector(UndoManager.redo), "Z"),
+        ] as [(String, Selector, String)] {
+            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
+        }
+        editMenu.addItem(NSMenuItem.separator())
+        for (title, action, key) in [
+            ("Cut", #selector(NSText.cut(_:)), "x"),
+            ("Copy", #selector(NSText.copy(_:)), "c"),
+            ("Paste", #selector(NSText.paste(_:)), "v"),
+            ("Select All", #selector(NSText.selectAll(_:)), "a"),
+        ] as [(String, Selector, String)] {
+            editMenu.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
+        }
+
         NSApp.mainMenu = mainMenu
     }
 
