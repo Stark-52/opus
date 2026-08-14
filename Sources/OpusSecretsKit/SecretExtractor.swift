@@ -99,13 +99,20 @@ public enum SecretExtractor {
         return s
     }
 
+    /// Just the masked characters, no length suffix — used wherever the
+    /// length is shown separately, such as its own table column. Values too
+    /// short to give away four characters show none.
+    public static func maskedValue(_ value: String) -> String {
+        guard value.count >= 8 else { return "……" }
+        return "\(value.prefix(2))…\(value.suffix(2))"
+    }
+
     /// Shows enough for the owner to recognise the value and confirm the
-    /// extraction was right, without printing it. Values too short to give
-    /// away four characters show none.
+    /// extraction was right, without printing it. Built from maskedValue
+    /// plus the length, so there is exactly one masking rule regardless of
+    /// how many places end up displaying it.
     public static func maskedPreview(_ value: String) -> String {
-        let unit = "car."
-        guard value.count >= 8 else { return "…… (\(value.count) \(unit))" }
-        return "\(value.prefix(2))…\(value.suffix(2)) (\(value.count) \(unit))"
+        "\(maskedValue(value)) (\(value.count) car.)"
     }
 
     /// Characters the shell interprets. A value containing any of these

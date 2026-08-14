@@ -82,6 +82,16 @@ final class SecretExtractorTests: XCTestCase {
         XCTAssertEqual(SecretExtractor.maskedPreview("abcd"), "…… (4 car.)")
     }
 
+    func testMaskedValueOmitsTheLengthSuffix() {
+        // maskedPreview is built from this plus " (<count> car.)" — a
+        // dedicated length column reuses this instead of parsing the
+        // suffix back out of maskedPreview's combined string.
+        XCTAssertEqual(SecretExtractor.maskedValue("re_live_abc123"), "re…23")
+        XCTAssertEqual(SecretExtractor.maskedValue("abcd"), "……")
+        XCTAssertTrue(SecretExtractor.maskedPreview("re_live_abc123")
+            .hasPrefix(SecretExtractor.maskedValue("re_live_abc123")))
+    }
+
     func testBareURLIsNotSplitIntoKeyAndValue() {
         // A Slack webhook is a realistic paste. Filing it as name "https"
         // with the scheme stripped off the value would corrupt it silently.
