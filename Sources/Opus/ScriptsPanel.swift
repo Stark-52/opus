@@ -816,54 +816,10 @@ final class ScriptsPanel: NSObject {
 
     // MARK: Animation
 
-    private func animateAppear() {
-        guard let layer = panel.contentView?.layer else {
-            panel.alphaValue = 1
-            panel.orderFrontRegardless()
-            panel.makeKey()
-            return
-        }
-        layer.removeAnimation(forKey: "dismissScale")
-        panel.alphaValue = 0
-        layer.transform = CATransform3DMakeScale(0.97, 0.97, 1)
-        panel.orderFrontRegardless()
-        panel.makeKey()
-
-        let scale = CABasicAnimation(keyPath: "transform")
-        scale.fromValue = CATransform3DMakeScale(0.97, 0.97, 1)
-        scale.toValue = CATransform3DIdentity
-        scale.duration = 0.14
-        scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer.transform = CATransform3DIdentity
-        layer.add(scale, forKey: "appearScale")
-
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.14
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().alphaValue = 1
-        }
-    }
+    private func animateAppear() { PanelPresentation.appear(panel) }
 
     private func animateDismiss(completion: @escaping () -> Void) {
-        guard let layer = panel.contentView?.layer else {
-            panel.alphaValue = 0
-            completion()
-            return
-        }
-        let scale = CABasicAnimation(keyPath: "transform")
-        scale.fromValue = CATransform3DIdentity
-        scale.toValue = CATransform3DMakeScale(0.98, 0.98, 1)
-        scale.duration = 0.09
-        scale.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        scale.fillMode = .forwards
-        scale.isRemovedOnCompletion = false
-        layer.add(scale, forKey: "dismissScale")
-
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.09
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().alphaValue = 0
-        }, completionHandler: completion)
+        PanelPresentation.dismiss(panel, completion: completion)
     }
 
     // MARK: Input

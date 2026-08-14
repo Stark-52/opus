@@ -260,8 +260,7 @@ final class PromptPalettePanel: NSObject {
         tableView.reloadData()
 
         previousKeyWindow = NSApp.keyWindow
-        panel.orderFrontRegardless()
-        panel.makeKey()
+        PanelPresentation.appear(panel)
         panel.makeFirstResponder(searchField)
         visible = true
 
@@ -306,7 +305,13 @@ final class PromptPalettePanel: NSObject {
 
     private func close() {
         visible = false
-        panel.orderOut(nil)
+        // Ordered out only once the fade has finished, and guarded against a
+        // rapid close-then-reopen: if the panel is visible again by the time
+        // this runs, hiding it now would hide the freshly reopened one.
+        PanelPresentation.dismiss(panel) { [weak self] in
+            guard let self, !self.visible else { return }
+            self.panel.orderOut(nil)
+        }
         // Hand key status back explicitly — ordering a non-activating panel
         // out does not do it on its own while Opus is a background app.
         // `openSelection` depends on this: it resolves its insertion target
