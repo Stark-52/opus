@@ -324,6 +324,12 @@ final class SecretsPanel: NSObject {
     /// reloadData() just cleared, so tableViewSelectionDidChange can tell
     /// that bookkeeping apart from the user actually moving off a row.
     private var isRestoringSelection = false
+    /// Dismisses the panel when it stops being the key window — see where
+    /// it is registered for why it must not restore focus.
+    private var resignObserver: NSObjectProtocol?
+    /// Complements resignObserver for the one case it cannot see: a click
+    /// on Opus's own terminal window, which never takes key from the panel.
+    private var clickAwayMonitor: Any?
     private let titleLabel = NSTextField(labelWithString: "Ranger un secret")
     private let nameField = NSTextField()
     private let valueField = NSSecureTextField()
@@ -624,6 +630,41 @@ final class SecretsPanel: NSObject {
                 return ev
             }
         }
+
+        // Click anywhere outside and the panel goes away, like every other
+        // transient panel on the system. Without this it floated above
+        // everything until Escape — a window full of secret names parked on
+        // top of whatever the user moved on to.
+        //
+        // restoringFocus: false is the whole point on this path. close()
+        // normally hands focus back to the window that had it before the
+        // panel opened; doing that here would rip focus away from whatever
+        // the user just clicked, which is the opposite of what dismissing
+        // by clicking elsewhere means.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.visible else { return }
+            self.close(restoringFocus: false)
+        }
+
+        // The notification above only fires when the panel actually loses
+        // key status, which covers switching apps but NOT clicking Opus's
+        // own terminal window behind it: that window does not take key from
+        // the panel, so the panel just sat there on top. Watching the click
+        // itself catches both, and catches the terminal case at the moment
+        // the user expects.
+        //
+        // The event is passed through untouched: the click the user made is
+        // theirs, not a dismiss gesture to be swallowed. Dismissing on the
+        // click AND letting it land is the behaviour of every menu-like
+        // panel that does this well.
+        clickAwayMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+            [weak self] ev in
+            guard let self, self.visible, ev.window !== self.panel else { return ev }
+            self.close(restoringFocus: false)
+            return ev
+        }
     }
 
     private func style(_ field: NSTextField, placeholder: String) {
@@ -773,7 +814,10 @@ final class SecretsPanel: NSObject {
         visible = true
     }
 
-    private func close() {
+    /// restoringFocus is false only when the panel is going away BECAUSE
+    /// focus moved somewhere else (see resignObserver); every other caller
+    /// wants the window that was key before the panel opened to get it back.
+    private func close(restoringFocus: Bool = true) {
         visible = false
         // Never leave a secret sitting in a text field for the next open.
         // The plain reveal field is exactly as sensitive as the secure one
@@ -803,7 +847,7 @@ final class SecretsPanel: NSObject {
         // screen for another 90ms; the surface the user is about to type
         // into again must be key the instant this runs, or keystrokes
         // typed right after are lost.
-        if let previous = previousKeyWindow, previous.isVisible { previous.makeKey() }
+        if restoringFocus, let previous = previousKeyWindow, previous.isVisible { previous.makeKey() }
         previousKeyWindow = nil
 
         animateDismiss { [weak self] in
