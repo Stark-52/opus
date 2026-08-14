@@ -188,11 +188,17 @@ private final class SecretRowCellView: NSTableCellView {
     private let lengthLabel = NSTextField(labelWithString: "")
     private var valueWidthConstraint: NSLayoutConstraint!
     let eyeButton: HoverIconButton
+    let copyButton: HoverIconButton
     let trashButton: HoverIconButton
 
     override init(frame frameRect: NSRect) {
         eyeButton = makeIconButton(symbolName: "eye", tint: OpusTheme.cream(0.55),
                                     accessibilityLabel: "révéler la valeur", toolTip: "Révéler (⌘R)")
+        // Revealing shows the value in a fixed-width column, so a long key
+        // is read truncated. Copying is the way to get the whole thing out
+        // without widening the row or growing its height.
+        copyButton = makeIconButton(symbolName: "doc.on.doc", tint: OpusTheme.cream(0.55),
+                                     accessibilityLabel: "copier la valeur", toolTip: "Copier la valeur")
         trashButton = makeIconButton(symbolName: "trash", tint: OpusTheme.red,
                                       accessibilityLabel: "supprimer ce secret", toolTip: "Supprimer (⌘⌫)")
         super.init(frame: frameRect)
@@ -225,6 +231,7 @@ private final class SecretRowCellView: NSTableCellView {
         addSubview(valueLabel)
         addSubview(lengthLabel)
         addSubview(eyeButton)
+        addSubview(copyButton)
         addSubview(trashButton)
 
         let valueWidth = valueLabel.widthAnchor.constraint(equalToConstant: Self.defaultValueColumnWidth)
@@ -253,10 +260,15 @@ private final class SecretRowCellView: NSTableCellView {
             lengthLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             lengthLabel.trailingAnchor.constraint(lessThanOrEqualTo: eyeButton.leadingAnchor, constant: -6),
 
+            // Ordered look, take, destroy — with the destructive one
+            // furthest from where the eye lands first.
             trashButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             trashButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            eyeButton.trailingAnchor.constraint(equalTo: trashButton.leadingAnchor, constant: -4),
+            copyButton.trailingAnchor.constraint(equalTo: trashButton.leadingAnchor, constant: -4),
+            copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            eyeButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -4),
             eyeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -298,6 +310,10 @@ final class SecretsPanel: NSObject {
     private static let deleteKeyCode: UInt16 = 51
 
     private let panel: SecretsPanelWindow
+    /// Set only while reloadTableContent() re-applies the selection a
+    /// reloadData() just cleared, so tableViewSelectionDidChange can tell
+    /// that bookkeeping apart from the user actually moving off a row.
+    private var isRestoringSelection = false
     private let titleLabel = NSTextField(labelWithString: "Ranger un secret")
     private let nameField = NSTextField()
     private let valueField = NSSecureTextField()
@@ -513,6 +529,15 @@ final class SecretsPanel: NSObject {
         hintLabel.lineBreakMode = .byTruncatingTail
         blur.addSubview(hintLabel)
 
+        // NSSecureTextField advertises itself as a password field, so macOS
+        // Password AutoFill attaches to it and injects its own "Passwords…"
+        // button INTO the panel: it landed on top of the filter row, hiding
+        // it, and took the keyboard focus ring on open. Clearing contentType
+        // withdraws that advertisement. The field still masks its text and
+        // still refuses to be read by other apps; we simply stop asking the
+        // system to offer saved passwords for a field that holds API keys.
+        valueField.contentType = nil
+
         nameField.delegate = self
         valueField.delegate = self
         valueFieldPlain.delegate = self
@@ -726,7 +751,15 @@ final class SecretsPanel: NSObject {
 
         previousKeyWindow = NSApp.keyWindow
         animateAppear()
-        panel.makeFirstResponder(candidates.isEmpty ? valueField : nameField)
+        // Always the name field, which is the panel's first row and the
+        // first thing a reader's eye lands on. This used to focus the value
+        // field whenever the clipboard yielded no candidate, on the theory
+        // that an empty value is the thing to fill first — but on screen
+        // that meant opening the panel and typing a name put the name into
+        // the VALUE field, masked, with the name field still showing its
+        // placeholder. Costing a Tab in the no-clipboard case is far
+        // cheaper than silently storing a name as if it were a secret.
+        panel.makeFirstResponder(nameField)
         visible = true
     }
 
@@ -1062,7 +1095,12 @@ final class SecretsPanel: NSObject {
     /// length column and the eye/trash buttons that never shrink.
     private func measuredValueColumnWidth() -> CGFloat {
         let minimum: CGFloat = 60
-        let maximum: CGFloat = 170
+        // 146, not 170: the copy button added a third fixed 20pt control
+        // (plus its 4pt gap) to the trailing edge, and the row's budget has
+        // to give that back from the one column that is allowed to shrink.
+        // Leaving it at 170 would push lengthLabel's `<=` constraint against
+        // the buttons into an Auto Layout conflict.
+        let maximum: CGFloat = 146
         guard !filteredSecrets.isEmpty else { return minimum }
 
         let attributes: [NSAttributedString.Key: Any] = [
@@ -1082,8 +1120,34 @@ final class SecretsPanel: NSObject {
     /// tableView.reloadData() directly, so the column never lags a frame
     /// behind the content it's sized to.
     private func reloadTableContent() {
+        // reloadData() drops the table's selection here, and everything in
+        // this panel that acts on "the current row" reads
+        // tableView.selectedRow: Cmd+Delete's guard, toggleReveal's choice
+        // between a row and the deposit field, the hint line's "⌘⌫
+        // supprimer" segment. Losing it silently is what made the panel
+        // unusable on screen — arming a delete reloaded, the reload cleared
+        // the selection, and the confirming Cmd+Delete then found nothing
+        // to confirm while a second trash click re-armed forever.
+        //
+        // Selection is preserved by NAME, not by index: a reload can follow
+        // a filter change or a delete, after which the old index points at
+        // a different secret (or past the end), and re-selecting an index
+        // blindly would silently move the user onto a row they never chose
+        // — with a delete possibly armed.
+        let keptName = filteredSecrets.indices.contains(tableView.selectedRow)
+            ? filteredSecrets[tableView.selectedRow].name
+            : nil
+
         valueColumnWidth = measuredValueColumnWidth()
         tableView.reloadData()
+
+        guard let keptName, let row = filteredSecrets.firstIndex(where: { $0.name == keptName }) else { return }
+        // Restoring is bookkeeping, not a user action: suppress the
+        // delegate so it doesn't read this as "the user moved off the row"
+        // and cancel a pending delete or mask a revealed value.
+        isRestoringSelection = true
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        isRestoringSelection = false
     }
 
     private func updateListHeader(filterActive: Bool) {
@@ -1424,6 +1488,33 @@ final class SecretsPanel: NSObject {
         toggleRevealForSelectedRow()
     }
 
+    /// Copying is the answer to "the revealed value is truncated": the row
+    /// shows as much as its column allows, this puts the whole thing on the
+    /// clipboard. Resolves the row at click time like every other row
+    /// button, and reads the value from filteredSecrets rather than from the
+    /// label, which may be showing the masked form.
+    @objc private func rowCopyButtonClicked(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard filteredSecrets.indices.contains(row) else { return }
+        cancelPendingDelete()
+        let secret = filteredSecrets[row]
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        // setString reports failure rather than throwing, and a silent
+        // failure here is the worst kind: the user pastes whatever was on
+        // the clipboard BEFORE, believing it is their key.
+        guard pasteboard.setString(secret.value, forType: .string) else {
+            statusLabel.textColor = OpusTheme.red
+            statusLabel.stringValue = "copie refusée par le presse-papier"
+            return
+        }
+        statusLabel.textColor = OpusTheme.cream(0.6)
+        statusLabel.stringValue = "« \(secret.name) » copiée dans le presse-papier"
+        reloadTableContent()
+        updateHint()
+    }
+
     @objc private func rowTrashButtonClicked(_ sender: NSButton) {
         let row = tableView.row(for: sender)
         guard let name = Self.resolveRowName(at: row, filteredNames: filteredSecrets.map(\.name)) else { return }
@@ -1493,6 +1584,8 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
             // reuse across a reload/filter can never fire on a stale row.
             cell.eyeButton.target = self
             cell.eyeButton.action = #selector(rowEyeButtonClicked(_:))
+            cell.copyButton.target = self
+            cell.copyButton.action = #selector(rowCopyButtonClicked(_:))
             cell.trashButton.target = self
             cell.trashButton.action = #selector(rowTrashButtonClicked(_:))
         }
@@ -1517,6 +1610,11 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
     /// can leave a revealed row or an armed delete behind once selection
     /// moves away from it.
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // reloadTableContent() re-applies the selection it just lost. That
+        // is not the user moving, so none of the "you left the row" rules
+        // below apply to it.
+        guard !isRestoringSelection else { return }
+
         // Both of these can flip a row's on-screen state (an armed trash
         // icon, a revealed value) without changing anything ELSE about
         // the row content, so both are collapsed into the SAME deferred
