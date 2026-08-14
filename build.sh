@@ -61,10 +61,10 @@ fi
 # rebuilds. Ad-hoc re-signing mints a NEW identity every build, so macOS
 # re-prompts for permissions after each install.
 #
-# This used to point at an Apple Development certificate,
-# which EXPIRED on 13 Aug 2026 (issued 13 Aug 2025, one year, as they all are).
-# Its silent expiry is what put every rebuild back on the ad-hoc path and
-# started the permission prompts again.
+# This used to point at an Apple Development certificate, which EXPIRED on
+# 13 Aug 2026 (issued 13 Aug 2025, one year, as they all are). Its silent
+# expiry is what put every rebuild back on the ad-hoc path and started the
+# permission prompts again.
 #
 # It is replaced by a self-signed code-signing certificate created 14 Aug 2026
 # and valid to 2036. Opus is never distributed, so a certificate from Apple
