@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// Finds the scripts on disk and turns them into rows.
 ///
@@ -45,7 +48,11 @@ public enum ScriptRegistry {
             return ScriptDefinition(
                 url: url,
                 displayName: parsed.name.isEmpty ? url.deletingPathExtension().lastPathComponent : parsed.name,
-                summary: parsed.summary
+                summary: parsed.summary,
+                // Validated here, not at draw time: a typo'd symbol name
+                // yields a nil NSImage, and a row with a hole where its glyph
+                // should be looks broken rather than plain.
+                iconName: resolvedIcon(parsed.icon)
             )
         }
 
@@ -64,6 +71,22 @@ public enum ScriptRegistry {
             $0.displayName.localizedCaseInsensitiveContains(needle)
                 || $0.summary.localizedCaseInsensitiveContains(needle)
         }
+    }
+
+    /// Falls back to the default glyph when a script declares nothing, or
+    /// declares a name that is not a real SF Symbol on this system.
+    static func resolvedIcon(_ declared: String) -> String {
+        guard !declared.isEmpty, isKnownSymbol(declared) else { return ScriptHeader.defaultIcon }
+        return declared
+    }
+
+    /// Overridden in tests, which run without AppKit's symbol catalogue.
+    static var isKnownSymbol: (String) -> Bool = { name in
+        #if canImport(AppKit)
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil
+        #else
+        return true
+        #endif
     }
 
     /// Reads only enough of the file to cover the header window. Scripts can

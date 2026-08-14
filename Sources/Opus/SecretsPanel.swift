@@ -39,9 +39,8 @@
 // progressive: it clears an active filter before it closes the panel.
 //
 // The panel is sized to its content (see relayout) rather than fixed, and
-// grows/shrinks instantly (no animation) as the filtered list changes
-// length; the only things that animate are the panel appearing and
-// disappearing as a whole (see animateAppear/animateDismiss).
+// EASES between heights as the filtered list changes length, alongside the
+// appear/dismiss motion of the panel as a whole.
 
 import AppKit
 import OpusSecretsKit
@@ -760,10 +759,28 @@ final class SecretsPanel: NSObject {
             originX = panel.frame.origin.x
             originY = panelTopY - newHeight
         }
-        // Never animated — only the panel appearing/disappearing as a
-        // whole does (see animateAppear/animateDismiss). A list that grows
-        // or shrinks as you type a filter should snap, not glide.
-        panel.setFrame(NSRect(x: originX, y: originY, width: Self.width, height: newHeight), display: true)
+        let target = NSRect(x: originX, y: originY, width: Self.width, height: newHeight)
+        // Eased while the panel is already on screen; set outright otherwise.
+        //
+        // The distinction matters. Animating a resize the user cannot see —
+        // the sizing pass that runs during open(), before the panel is
+        // ordered front — would race the appear animation and land the panel
+        // at the wrong size for a beat. Once it IS visible, a list that grows
+        // and shrinks as a filter is typed reads far better easing than
+        // jumping, which looks like the window flinching at each keystroke.
+        //
+        // 0.12s: shorter than the 0.14s appear, because this fires on
+        // keystrokes and anything slower feels like the panel lagging behind
+        // the typing.
+        if visible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(target, display: true)
+            }
+        } else {
+            panel.setFrame(target, display: true)
+        }
         panelTopY = originY + newHeight
     }
 
