@@ -397,7 +397,11 @@ final class HookRunnerTests: XCTestCase {
 
     // MARK: SessionStart
 
-    func testSessionStartListsNamesOnly() throws {
+    /// The session banner is a POINTER, not an inventory: it says a store
+    /// exists, how many are in it, and where to look. Listing every name
+    /// spent context on every session for something most sessions never
+    /// touch, and the cost grew with the store.
+    func testSessionStartPointsAtTheStoreWithoutListingIt() throws {
         let runner = self.runner(["resend-landing": "V1", "asc-key-id": "V2"])
         let out = try XCTUnwrap(runner.runSessionStart(input: json(["hook_event_name": "SessionStart"])))
         let root = try decode(out)
@@ -406,11 +410,29 @@ final class HookRunnerTests: XCTestCase {
         XCTAssertEqual(specific["hookEventName"] as? String, "SessionStart")
 
         let context = try XCTUnwrap(specific["additionalContext"] as? String)
-        XCTAssertTrue(context.contains("asc-key-id"))
-        XCTAssertTrue(context.contains("resend-landing"))
+        XCTAssertFalse(context.contains("asc-key-id"), "names are looked up on demand, not carried")
+        XCTAssertFalse(context.contains("resend-landing"))
+        XCTAssertTrue(context.contains("2 secret"), "the count is what makes the pointer worth reading")
+        XCTAssertTrue(context.contains("secret ls"), "Claude must be told where to look")
         XCTAssertTrue(context.contains("{{secret:"), "Claude must be told the calling convention")
         XCTAssertFalse(context.contains("V1"), "values must never appear")
         XCTAssertFalse(context.contains("V2"))
+    }
+
+    /// The banner's size must not grow with the store — that was the whole
+    /// point of replacing the inventory.
+    func testSessionStartBannerDoesNotGrowWithTheStore() throws {
+        func banner(_ store: [String: String]) throws -> String {
+            let out = try XCTUnwrap(self.runner(store)
+                .runSessionStart(input: json(["hook_event_name": "SessionStart"])))
+            let specific = try XCTUnwrap(try decode(out)["hookSpecificOutput"] as? [String: Any])
+            return try XCTUnwrap(specific["additionalContext"] as? String)
+        }
+        var many: [String: String] = [:]
+        for index in 0..<50 { many["projet-\(index)-service-avec-un-nom-long"] = "V\(index)" }
+
+        // Same length but for the count, which goes from one digit to two.
+        XCTAssertEqual(try banner(["a": "1"]).count + 1, try banner(many).count)
     }
 
     func testSessionStartWithAnEmptyStoreProducesNoOutput() {
