@@ -78,10 +78,10 @@ final class ScriptRunner {
     private func start(_ script: ScriptDefinition) -> String? {
         let process = Process()
         // Through zsh -l rather than executing the file directly: a login
-        // shell gives the script the same PATH and environment the owner gets in a
-        // terminal, so a script that calls `gh` or `ffmpeg` works here exactly
-        // as it does when he runs it himself. Executing the file directly
-        // would hand it Opus's own launch environment, where those are absent.
+        // shell gives the script the same PATH and environment a terminal
+        // would, so a script calling `gh` or `ffmpeg` works here exactly as it
+        // does when run by hand. Executing the file directly would hand it
+        // Opus's own launch environment, where those are absent.
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-l", "-c", shellQuoted(script.url.path)]
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser

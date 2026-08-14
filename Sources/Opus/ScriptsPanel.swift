@@ -6,8 +6,8 @@ import OpusScriptsKit
 //
 // Deliberately self-contained. An earlier design ran output-producing scripts
 // in a real Opus tab to inherit SwiftTerm's colours and scrollback, but that
-// meant reaching into TabPane and TerminalContainerView — the terminal the owner
-// uses all day. Risking his daily driver to gain ANSI colour in a log pane is
+// meant reaching into TabPane and TerminalContainerView — the terminal in
+// daily use. Risking that to gain ANSI colour in a log pane is
 // a bad trade, so this panel owns its own output view and touches nothing
 // outside itself. The cost, stated plainly: output here is plain text.
 //
