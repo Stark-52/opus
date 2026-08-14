@@ -4,7 +4,8 @@
 
 If you believe you've found a security issue in Opus, **please do not open a public issue**.
 
-Report it privately through GitHub's security advisory flow, including:
+Report it privately through GitHub: open a draft security advisory from the
+repository's **Security** tab (Report a vulnerability). Include:
 
 - A description of the issue and the impact you observed.
 - Steps to reproduce (a minimal repro is ideal).
