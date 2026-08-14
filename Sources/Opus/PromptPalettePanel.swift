@@ -159,20 +159,17 @@ final class PromptPalettePanel: NSObject {
 
         let field = NSSearchField(frame: NSRect(x: OpusTheme.insetPanel, y: height - 42, width: width - 28, height: 28))
         field.autoresizingMask = [.width, .minYMargin]
-        field.placeholderAttributedString = NSAttributedString(
-            string: "Search your prompts…",
-            attributes: [.foregroundColor: OpusTheme.cream(0.45)]
-        )
         field.toolTip = "Inserts the prompt without submitting it."
-        field.font = NSFont.systemFont(ofSize: 14)
-        field.textColor = OpusTheme.cream(0.95)
-        // Same field styling as FindBarView (own drawn background, no
-        // system bezel) so this survives Light mode the same way — see
-        // OpusTheme.fieldBackground's doc comment for the full story.
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = OpusTheme.fieldBackground
-        blur.addSubview(field)
+        // Wrapped rather than styled in place: FieldPlate owns the rounded
+        // background and, crucially, centres the field vertically. A
+        // bezel-less NSTextField left in a 28pt frame rides high in its box,
+        // and this panel previously kept the system bezel instead — a pale
+        // rounded control sitting on a dark panel.
+        let plate = FieldPlate(field: field, placeholder: "Rechercher un prompt…",
+                               iconSymbol: "magnifyingglass")
+        plate.frame = field.frame
+        plate.autoresizingMask = [.width, .minYMargin]
+        blur.addSubview(plate)
         searchField = field
 
         let table = NSTableView(frame: .zero)

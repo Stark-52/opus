@@ -331,6 +331,12 @@ final class SecretsPanel: NSObject {
     private var clickAwayMonitor: Any?
     private let titleLabel = NSTextField(labelWithString: "Ranger un secret")
     private let nameField = NSTextField()
+    private lazy var namePlate = FieldPlate(field: nameField,
+                                            placeholder: "nom du secret (ex : resend-landing)")
+    private lazy var valuePlate = FieldPlate(field: valueField, placeholder: "valeur",
+                                             trailingInset: 34)
+    private lazy var valuePlainPlate = FieldPlate(field: valueFieldPlain, placeholder: "valeur",
+                                                  trailingInset: 34)
     private let valueField = NSSecureTextField()
     /// Stacked in the exact same frame as valueField, hidden unless Cmd+R
     /// (or its own eye button) is on. NSSecureTextField cannot be switched
@@ -360,6 +366,8 @@ final class SecretsPanel: NSObject {
     /// make a search box behave differently depending on whether reveal is
     /// on, a surprising thing for a search box to do.
     private let searchField = NSSearchField()
+    private lazy var searchPlate = FieldPlate(field: searchField, placeholder: "filtrer",
+                                              iconSymbol: "magnifyingglass")
     /// "N secret(s)" or "F sur N" while filtering; the store's own problem
     /// text, in red, when names() or a value read failed — never silently
     /// rendered as an empty list.
@@ -486,15 +494,13 @@ final class SecretsPanel: NSObject {
         titleLabel.textColor = OpusTheme.cream(0.95)
         blur.addSubview(titleLabel)
 
-        style(nameField, placeholder: "nom du secret (ex : resend-landing)")
-        blur.addSubview(nameField)
-
-        style(valueField, placeholder: "valeur")
-        blur.addSubview(valueField)
-
-        style(valueFieldPlain, placeholder: "valeur")
-        valueFieldPlain.isHidden = true
-        blur.addSubview(valueFieldPlain)
+        blur.addSubview(namePlate)
+        // Both value plates occupy the same slot; only one is ever visible.
+        // The trailing inset leaves room for the reveal eye, which the panel
+        // positions on top of the plate rather than inside the field.
+        blur.addSubview(valuePlate)
+        valuePlainPlate.isHidden = true
+        blur.addSubview(valuePlainPlate)
 
         depositEyeButton.target = self
         depositEyeButton.action = #selector(depositEyeButtonClicked(_:))
@@ -513,8 +519,7 @@ final class SecretsPanel: NSObject {
         separator.layer?.backgroundColor = OpusTheme.cream(0.12).cgColor
         blur.addSubview(separator)
 
-        style(searchField, placeholder: "filtrer")
-        blur.addSubview(searchField)
+        blur.addSubview(searchPlate)
 
         listHeaderLabel.font = NSFont.systemFont(ofSize: 11)
         listHeaderLabel.textColor = OpusTheme.cream(0.5)
@@ -666,18 +671,6 @@ final class SecretsPanel: NSObject {
         }
     }
 
-    private func style(_ field: NSTextField, placeholder: String) {
-        field.font = NSFont.systemFont(ofSize: 13)
-        field.textColor = OpusTheme.cream(0.95)
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = OpusTheme.fieldBackground
-        field.focusRingType = .none
-        field.placeholderAttributedString = NSAttributedString(
-            string: placeholder,
-            attributes: [.foregroundColor: OpusTheme.cream(0.4)]
-        )
-    }
 
     // MARK: Layout
 
@@ -713,17 +706,32 @@ final class SecretsPanel: NSObject {
         }
 
         stack(titleLabel, height: 20, gapAfter: 20)
-        stack(nameField, height: 26, gapAfter: 10)
-        stack(valueField, height: 26, gapAfter: 12)
-        stack(previewLabel, height: 18, gapAfter: 6)
+        stack(namePlate, height: FieldPlate.height, gapAfter: 10)
+        stack(valuePlate, height: FieldPlate.height, gapAfter: 12)
+        // Both lines take their slot only when they have something in them.
+        //
+        // They used to be reserved unconditionally so the panel would not jump
+        // when a preview appeared — which cost roughly 60pt of empty space
+        // whenever it had nothing to say, i.e. every time the panel opened.
+        // Now that the panel eases between heights, growing to make room IS
+        // the appearance of the preview, and the reservation buys nothing.
+        if !previewLabel.stringValue.isEmpty {
+            stack(previewLabel, height: 18, gapAfter: 6)
+        }
         // Both gaps framing statusLabel are the same tight 6pt (was 6/12)
         // — the reserved 18pt HEIGHT is untouched, it must never move
         // between an empty and a populated status line, but the extra
         // padding that made an EMPTY status line read as a hole between
         // the preview line and the separator is gone.
-        stack(statusLabel, height: 18, gapAfter: 6)
+        if !statusLabel.stringValue.isEmpty {
+            stack(statusLabel, height: 18, gapAfter: 6)
+        }
+        // Hidden when unstacked: a view left at a stale frame would sit on top
+        // of whatever moved up to take its place.
+        previewLabel.isHidden = previewLabel.stringValue.isEmpty
+        statusLabel.isHidden = statusLabel.stringValue.isEmpty
         stack(separator, height: 1, gapAfter: 12)
-        stack(searchField, height: 26, gapAfter: 8)
+        stack(searchPlate, height: FieldPlate.height, gapAfter: 8)
         stack(listHeaderLabel, height: 20, gapAfter: 8)
         stack(scrollView, height: listHeight, gapAfter: 8)
         stack(hintLabel, height: 18, gapAfter: 0)
@@ -734,17 +742,14 @@ final class SecretsPanel: NSObject {
             view.frame = NSRect(x: inset, y: newHeight - y0 - height, width: fieldWidth, height: height)
         }
 
-        // The value field's row is narrower than the panel's other
-        // full-width rows, to leave room for its own eye button pinned to
-        // the trailing edge — same "fixed control, shrinking field" idea
-        // as the list rows, just with one field instead of a value column.
+        // The eye sits ON the value plate at its trailing edge; the plate
+        // reserves the room for it via its trailingInset, so the text can
+        // never run under the glyph.
         let depositEyeSize: CGFloat = 20
-        let depositFieldWidth = fieldWidth - depositEyeSize - 8
-        let valueFrame = valueField.frame
-        valueField.frame = NSRect(x: inset, y: valueFrame.origin.y, width: depositFieldWidth, height: valueFrame.height)
-        valueFieldPlain.frame = valueField.frame
+        let valueFrame = valuePlate.frame
+        valuePlainPlate.frame = valueFrame
         depositEyeButton.frame = NSRect(
-            x: inset + depositFieldWidth + 8,
+            x: valueFrame.maxX - depositEyeSize - 8,
             y: valueFrame.origin.y + (valueFrame.height - depositEyeSize) / 2,
             width: depositEyeSize, height: depositEyeSize
         )
@@ -804,8 +809,8 @@ final class SecretsPanel: NSObject {
         // through close().
         revealedValueField = false
         revealedRowName = nil
-        valueField.isHidden = false
-        valueFieldPlain.isHidden = true
+        valuePlate.isHidden = false
+        valuePlainPlate.isHidden = true
         updateDepositEyeButton()
         rows = []
         storeProblem = nil
@@ -850,8 +855,8 @@ final class SecretsPanel: NSObject {
         pendingSelectionIndex = nil
         revealedValueField = false
         revealedRowName = nil
-        valueField.isHidden = false
-        valueFieldPlain.isHidden = true
+        valuePlate.isHidden = false
+        valuePlainPlate.isHidden = true
         updateDepositEyeButton()
         rows = []
         filteredSecrets = []
@@ -947,6 +952,17 @@ final class SecretsPanel: NSObject {
     }
 
     private func updatePreview() {
+        // Captured before, compared after: the two lines appearing or
+        // disappearing changes the panel's height, and relayout is what makes
+        // it ease to the new one instead of clipping them.
+        let hadPreview = !previewLabel.stringValue.isEmpty
+        let hadStatus = !statusLabel.stringValue.isEmpty
+        defer {
+            if hadPreview != !previewLabel.stringValue.isEmpty
+                || hadStatus != !statusLabel.stringValue.isEmpty {
+                relayout(recenter: false)
+            }
+        }
         // Any normal preview recompute reasserts the amber tone — the only
         // other color statusLabel ever takes is OpusTheme.red, for a
         // delete confirmation or a delete/store failure, and those are
@@ -1273,8 +1289,8 @@ final class SecretsPanel: NSObject {
         let wasEditingSecure = valueField.currentEditor() != nil
         let wasEditingPlain = valueFieldPlain.currentEditor() != nil
 
-        valueField.isHidden = revealedValueField
-        valueFieldPlain.isHidden = !revealedValueField
+        valuePlate.isHidden = revealedValueField
+        valuePlainPlate.isHidden = !revealedValueField
 
         // If the value field itself had focus, hand it to whichever of the
         // pair is now visible so typing keeps working uninterrupted. If
@@ -1299,8 +1315,8 @@ final class SecretsPanel: NSObject {
         guard revealedValueField else { return }
         revealedValueField = false
         let wasEditingPlain = valueFieldPlain.currentEditor() != nil
-        valueField.isHidden = false
-        valueFieldPlain.isHidden = true
+        valuePlate.isHidden = false
+        valuePlainPlate.isHidden = true
         if wasEditingPlain {
             panel.makeFirstResponder(valueField)
         }
