@@ -15,9 +15,12 @@
 // on screen for 90ms after focus has already gone home.
 //
 // The value field is an NSSecureTextField and, by default, the row list
-// below it shows only SecretExtractor.maskedValue output, so the panel
-// never renders a secret in full unless Cmd+R is held down to ask for it —
-// see toggleReveal().
+// below it shows only SecretExtractor.maskedValue output. Cmd+R reveals
+// exactly one thing at a time — the selected row, or the deposit field
+// when nothing is selected — never the whole list at once; see
+// toggleReveal() for how the two stay mutually exclusive and
+// tableViewSelectionDidChange() for how a revealed row is hidden the
+// moment selection moves elsewhere.
 //
 // The list exists because depositing blind, with several keys already
 // stored, invites near-duplicates ("stripe-key" vs "stripe-live") that are
@@ -71,14 +74,19 @@ private final class SecretRowBackground: NSTableRowView {
 }
 
 /// Three left-aligned, fixed-width columns: name, then the masked-or-
-/// revealed value in a monospaced font, then its length. Name and value
-/// each get a hard width via NSLayoutConstraint (not intrinsic sizing), so
-/// a long value truncates inside its own lane and can never borrow space
+/// revealed value in a monospaced font, then its length. Value and length
+/// are pinned tight to each other (10pt gap, both fixed width, neither
+/// stretches) so the eye can connect "8X…p9" to "10 car." without
+/// crossing the row; whatever space is left over in the row falls AFTER
+/// the length column, not between it and the value. Name and value each
+/// get a hard width via NSLayoutConstraint (not intrinsic sizing), so a
+/// long value truncates inside its own lane and can never borrow space
 /// from — or squeeze — the name column. The name is what's being scanned
 /// for; it is the one thing here that must stay readable.
 private final class SecretRowCellView: NSTableCellView {
     static let nameColumnWidth: CGFloat = 150
     static let valueColumnWidth: CGFloat = 190
+    static let lengthColumnWidth: CGFloat = 60
 
     private let nameLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
@@ -122,8 +130,12 @@ private final class SecretRowCellView: NSTableCellView {
             valueLabel.widthAnchor.constraint(equalToConstant: Self.valueColumnWidth),
             valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
 
+            // No trailing constraint: a fixed width here, right after the
+            // value with nothing pulling it wider, is what keeps this
+            // column from being distributed across the row's remaining
+            // width — the leftover space simply falls after it, unused.
             lengthLabel.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor, constant: 10),
-            lengthLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
+            lengthLabel.widthAnchor.constraint(equalToConstant: Self.lengthColumnWidth),
             lengthLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -177,8 +189,9 @@ final class SecretsPanel: NSObject {
     private let scrollView = NSScrollView()
     private let tableView = NSTableView(frame: .zero)
     /// State-aware, not a static legend: "⌘R révéler" in the dim
-    /// treatment, "⌘R masquer" in OpusTheme.amber once reveal is actually
-    /// on, so a panel left open with values showing keeps announcing it.
+    /// treatment, "⌘R masquer" in OpusTheme.amber once something is
+    /// actually revealed, so a panel left open with a value showing keeps
+    /// announcing it.
     private let hintLabel = NSTextField(labelWithString: "")
 
     private let store = KeychainSecretStore()
@@ -212,9 +225,15 @@ final class SecretsPanel: NSObject {
     /// listHeaderLabel with the problem text, in red, until a read
     /// succeeds cleanly again.
     private var storeProblem: String?
-    /// Cmd+R: off by default, always reset on open()/close(). When on, the
-    /// value field shows plain text and every row shows its full value.
-    private var revealed = false
+    /// Cmd+R reveals ONE thing at a time — the deposit field, or a single
+    /// selected row — never both, and never the whole list at once: six
+    /// values on screen because the user wanted to check one is exactly
+    /// the exposure this is meant to avoid. Both reset on open()/close();
+    /// see toggleReveal() for how they stay mutually exclusive and
+    /// tableViewSelectionDidChange() for how a revealed row is hidden the
+    /// moment selection moves elsewhere.
+    private var revealedValueField = false
+    private var revealedRowName: String?
     /// Screen-space Y of the panel's top edge, set whenever relayout()
     /// centers the panel (open()) and preserved across every subsequent
     /// relayout() so the deposit block above the list never itself moves
@@ -424,7 +443,12 @@ final class SecretsPanel: NSObject {
         stack(nameField, height: 26, gapAfter: 10)
         stack(valueField, height: 26, gapAfter: 12)
         stack(previewLabel, height: 18, gapAfter: 6)
-        stack(statusLabel, height: 18, gapAfter: 12)
+        // Both gaps framing statusLabel are the same tight 6pt (was 6/12)
+        // — the reserved 18pt HEIGHT is untouched, it must never move
+        // between an empty and a populated status line, but the extra
+        // padding that made an EMPTY status line read as a hole between
+        // the preview line and the separator is gone.
+        stack(statusLabel, height: 18, gapAfter: 6)
         stack(separator, height: 1, gapAfter: 12)
         stack(searchField, height: 26, gapAfter: 8)
         stack(listHeaderLabel, height: 20, gapAfter: 8)
@@ -472,7 +496,8 @@ final class SecretsPanel: NSObject {
         // close() already resets this, but a fresh open() asserts it too
         // rather than trusting that every path into "not visible" went
         // through close().
-        revealed = false
+        revealedValueField = false
+        revealedRowName = nil
         valueField.isHidden = false
         valueFieldPlain.isHidden = true
         rows = []
@@ -503,7 +528,8 @@ final class SecretsPanel: NSObject {
         capturedClipboard = nil
         candidates = []
         candidateIndex = 0
-        revealed = false
+        revealedValueField = false
+        revealedRowName = nil
         valueField.isHidden = false
         valueFieldPlain.isHidden = true
         rows = []
@@ -767,6 +793,13 @@ final class SecretsPanel: NSObject {
     private func applyFilter() {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         filteredSecrets = query.isEmpty ? rows : rows.filter { $0.name.lowercased().contains(query) }
+        // Defensive companion to tableViewSelectionDidChange: if the
+        // revealed row filtered out of view (or vanished from a fresh
+        // Keychain read) rather than simply losing selection, don't keep
+        // calling it "revealed" for a row that isn't shown anywhere.
+        if let revealedRowName, !filteredSecrets.contains(where: { $0.name == revealedRowName }) {
+            self.revealedRowName = nil
+        }
         tableView.reloadData()
         updateListHeader(filterActive: !query.isEmpty)
         updateHint()
@@ -791,13 +824,15 @@ final class SecretsPanel: NSObject {
     /// State-aware, not a static legend. "↑↓ parcourir" is only advertised
     /// when there's something to browse (matches moveSecretSelection's own
     /// guard); "⌘R révéler"/"⌘R masquer" swap text AND color depending on
-    /// whether values are currently showing, so a panel left open with
-    /// reveal on keeps announcing it rather than reading as a static
-    /// legend once the moment that mattered has passed.
+    /// whether ANYTHING is currently exposed — the deposit field or a row,
+    /// never both — so this stays accurate about what's on screen right
+    /// now rather than describing a "mode."
     private func updateHint() {
         let font = NSFont.systemFont(ofSize: 11)
         let dim: [NSAttributedString.Key: Any] = [.foregroundColor: OpusTheme.cream(0.5), .font: font]
         let warn: [NSAttributedString.Key: Any] = [.foregroundColor: OpusTheme.amber, .font: font]
+
+        let somethingRevealed = revealedValueField || revealedRowName != nil
 
         let attr = NSMutableAttributedString()
         func addSegment(_ text: String, _ attrs: [NSAttributedString.Key: Any]) {
@@ -810,11 +845,14 @@ final class SecretsPanel: NSObject {
             addSegment("↑↓ parcourir", dim)
         }
         addSegment("⌘F filtrer", dim)
-        addSegment(revealed ? "⌘R masquer" : "⌘R révéler", revealed ? warn : dim)
+        addSegment(somethingRevealed ? "⌘R masquer" : "⌘R révéler", somethingRevealed ? warn : dim)
 
         hintLabel.attributedStringValue = attr
     }
 
+    /// Selection itself never reveals anything (see tableViewSelectionDidChange
+    /// for what DOES follow from it: hiding a revealed row once it's no
+    /// longer the selected one) — this just moves the highlight.
     private func moveSecretSelection(by delta: Int) {
         guard !filteredSecrets.isEmpty else { return }
         let current = tableView.selectedRow
@@ -823,32 +861,68 @@ final class SecretsPanel: NSObject {
         tableView.scrollRowToVisible(next)
     }
 
-    /// Cmd+R: one key, one idea — show the values instead of dots/masks,
-    /// everywhere at once (the field being typed into AND every row
-    /// below). See valueFieldPlain's doc comment for why a second field
-    /// exists instead of reconfiguring valueField in place. A hard swap,
-    /// not a cross-fade — see this file's report for why.
+    /// Cmd+R acts on whatever the panel is currently pointing at, and only
+    /// that one thing: the selected row if there is one, otherwise the
+    /// deposit field. Revealing a row masks the deposit field first
+    /// (maskDepositField()) so the two are never showing plaintext at the
+    /// same time; the deposit-field branch below only ever runs when no
+    /// row is selected, and tableViewSelectionDidChange()/applyFilter()
+    /// keep revealedRowName in sync with the actual selection the rest of
+    /// the time — so revealedRowName is already nil by the time that
+    /// branch is reached in practice, and the reset there is a cheap
+    /// belt-and-braces, not the primary mechanism. A hard swap, not a
+    /// cross-fade — see this file's report for why.
     private func toggleReveal() {
-        revealed.toggle()
+        let selectedRow = tableView.selectedRow
+        if filteredSecrets.indices.contains(selectedRow) {
+            let name = filteredSecrets[selectedRow].name
+            if revealedRowName == name {
+                revealedRowName = nil
+            } else {
+                revealedRowName = name
+                maskDepositField()
+            }
+            tableView.reloadData()
+            updateHint()
+            return
+        }
+
+        revealedRowName = nil
+        revealedValueField.toggle()
 
         let wasEditingSecure = valueField.currentEditor() != nil
         let wasEditingPlain = valueFieldPlain.currentEditor() != nil
 
-        valueField.isHidden = revealed
-        valueFieldPlain.isHidden = !revealed
+        valueField.isHidden = revealedValueField
+        valueFieldPlain.isHidden = !revealedValueField
 
         // If the value field itself had focus, hand it to whichever of the
         // pair is now visible so typing keeps working uninterrupted. If
         // focus was elsewhere (typically nameField), leave it there — this
         // toggle never moves focus on its own.
-        if revealed, wasEditingSecure {
+        if revealedValueField, wasEditingSecure {
             panel.makeFirstResponder(valueFieldPlain)
-        } else if !revealed, wasEditingPlain {
+        } else if !revealedValueField, wasEditingPlain {
             panel.makeFirstResponder(valueField)
         }
 
         tableView.reloadData()
         updateHint()
+    }
+
+    /// Re-masks the deposit field if it's currently revealed, restoring
+    /// focus to the secure field if the plain one held it. Called right
+    /// before a row reveal turns on, so the deposit field and a row are
+    /// never both showing plaintext.
+    private func maskDepositField() {
+        guard revealedValueField else { return }
+        revealedValueField = false
+        let wasEditingPlain = valueFieldPlain.currentEditor() != nil
+        valueField.isHidden = false
+        valueFieldPlain.isHidden = true
+        if wasEditingPlain {
+            panel.makeFirstResponder(valueField)
+        }
     }
 
     // MARK: Commit
@@ -983,12 +1057,28 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
             cell = SecretRowCellView()
             cell.identifier = Self.rowCellID
         }
-        let displayValue = revealed ? secret.value : SecretExtractor.maskedValue(secret.value)
+        let displayValue = secret.name == revealedRowName ? secret.value : SecretExtractor.maskedValue(secret.value)
         cell.configure(name: secret.name, displayValue: displayValue, length: "\(secret.value.count) car.")
         return cell
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         SecretRowBackground()
+    }
+
+    /// "Selecting a different row hides the previously revealed one" — the
+    /// direct implementation of that rule. Fires for both arrow-key
+    /// navigation (moveSecretSelection's selectRowIndexes) and a mouse
+    /// click on a row, so neither can leave a revealed row behind once
+    /// selection moves away from it.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard let revealedRowName else { return }
+        let selected = tableView.selectedRow
+        guard filteredSecrets.indices.contains(selected), filteredSecrets[selected].name == revealedRowName else {
+            self.revealedRowName = nil
+            tableView.reloadData()
+            updateHint()
+            return
+        }
     }
 }
