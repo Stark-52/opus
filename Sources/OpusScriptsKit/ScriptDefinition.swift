@@ -14,12 +14,17 @@ public struct ScriptDefinition: Equatable, Identifiable, Sendable {
     public let url: URL
     public let displayName: String
     public let summary: String
+    /// An SF Symbol name. A list of identical rows is unscannable; a glyph
+    /// per script is what lets the eye find one without reading. Scripts
+    /// declare theirs with `# opus-icon:`; the rest get a sensible default.
+    public let iconName: String
 
-    public init(url: URL, displayName: String, summary: String) {
+    public init(url: URL, displayName: String, summary: String, iconName: String) {
         self.id = url.path
         self.url = url
         self.displayName = displayName
         self.summary = summary
+        self.iconName = iconName
     }
 }
 
@@ -31,6 +36,7 @@ public struct ScriptDefinition: Equatable, Identifiable, Sendable {
 public enum ScriptHeader {
     static let namePrefix = "# opus:"
     static let summaryPrefix = "# opus-desc:"
+    static let iconPrefix = "# opus-icon:"
 
     /// How far into the file a header may appear. Bounded on purpose: a line
     /// matching the syntax three hundred lines down is a coincidence inside
@@ -38,12 +44,17 @@ public enum ScriptHeader {
     /// would mean reading every script in the folder in full on every scan.
     static let maximumHeaderLines = 20
 
-    /// Returns (displayName, summary). Either may be empty, which the caller
-    /// resolves — the parser does not invent a fallback, so the fallback rule
-    /// lives in exactly one place.
-    public static func parse(_ contents: String) -> (name: String, summary: String) {
+    /// The glyph used when a script declares none. Neutral rather than
+    /// clever: a wrong-but-specific icon is worse than an honest generic one.
+    public static let defaultIcon = "terminal"
+
+    /// Returns the declared values. Any may be empty, which the caller
+    /// resolves — the parser invents no fallback, so each fallback rule lives
+    /// in exactly one place.
+    public static func parse(_ contents: String) -> (name: String, summary: String, icon: String) {
         var name = ""
         var summary = ""
+        var icon = ""
         for line in contents.split(separator: "\n", omittingEmptySubsequences: false)
                             .prefix(maximumHeaderLines) {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -53,11 +64,14 @@ public enum ScriptHeader {
             if trimmed.hasPrefix(summaryPrefix) {
                 let value = trimmed.dropFirst(summaryPrefix.count).trimmingCharacters(in: .whitespaces)
                 if summary.isEmpty { summary = value }
+            } else if trimmed.hasPrefix(iconPrefix) {
+                let value = trimmed.dropFirst(iconPrefix.count).trimmingCharacters(in: .whitespaces)
+                if icon.isEmpty { icon = value }
             } else if trimmed.hasPrefix(namePrefix) {
                 let value = trimmed.dropFirst(namePrefix.count).trimmingCharacters(in: .whitespaces)
                 if name.isEmpty { name = value }
             }
         }
-        return (name, summary)
+        return (name, summary, icon)
     }
 }

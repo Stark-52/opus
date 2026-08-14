@@ -23,15 +23,22 @@
 // task-2-report.md and task-3-report.md for the exact arithmetic
 // TerminalContainerView's constraints anchor to.
 //
-// Every setter below updates synchronously: it flips needsDisplay or sets
-// the label, with no animation in between.
+// The fill EASES to a new value (see animateFill) and the readout fades in
+// and out; the dot and the text itself change synchronously, because a
+// number sliding through values it never held would be a lie told for
+// decoration.
 //
-// That was once justified by a project-wide "no UI animation" rule. The
-// rule did not belong to this project — it came from an unrelated web
-// codebase and was applied here by mistake. Nothing about a status rail
-// requires it to be motionless; if animating a value change reads better,
-// animate it. What must stay true is that the rail never lies about the
-// state it is showing, so any animation has to finish at the real value.
+// This view used to forbid animation outright, on the authority of a
+// project-wide "no UI animation" rule. That rule was never this project's:
+// it came from an unrelated web codebase and was applied here by mistake,
+// then quoted in a design spec, then enforced here. Nothing about a status
+// rail requires it to be motionless.
+//
+// The one constraint that IS real, and that the animation is built around:
+// the rail must never lie about the state it shows. Hence displayedFraction
+// lands exactly on the target rather than near it, and the colour is
+// computed from the same eased value as the width, so the fill can never
+// show a length from one moment and a hue from another.
 
 import AppKit
 
@@ -43,6 +50,7 @@ final class StatusRailView: NSView {
     /// produced a usage fraction).
     var fraction: CGFloat? {
         didSet {
+            animateFill(to: fraction)
             updateVisibility()
             // Recompute here too (not just from `readout`'s didSet below) so
             // the label color is correct regardless of which property the
@@ -125,9 +133,104 @@ final class StatusRailView: NSView {
 
     private func updateVisibility() {
         let alpha: CGFloat = fraction == nil ? 0 : 1
-        label.alphaValue = alpha
+        guard label.alphaValue != alpha else { return }
+        // Faded rather than snapped: the readout appearing is the rail coming
+        // alive, and a hard cut there reads as a glitch next to a fill that
+        // eases. Short enough that nothing waits on it.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            label.animator().alphaValue = alpha
+        }
         // The rail itself is painted in draw(_:), not a subview — its alpha
         // is applied there via the same `fraction == nil` check.
+    }
+
+    // MARK: Fill animation
+
+    /// What the rail is CURRENTLY drawing, which lags `fraction` while a
+    /// change eases in. `fraction` remains the truth; this is only ever a
+    /// transient view of it, and `finish` below guarantees it lands exactly
+    /// on the real value rather than near it.
+    private var displayedFraction: CGFloat = 0
+    private var fillAnimation: (from: CGFloat, to: CGFloat, start: Date)?
+    private var fillTimer: Timer?
+
+    private static let fillDuration: TimeInterval = 0.28
+
+    /// Eases the drawn fill toward a new value.
+    ///
+    /// Starting from `displayedFraction` rather than from the previous target
+    /// matters: a second change arriving mid-animation continues from where
+    /// the bar actually is, instead of snapping back to where the last
+    /// animation began. Context usage updates every few seconds, so
+    /// mid-animation changes are the normal case, not the edge case.
+    private func animateFill(to target: CGFloat?) {
+        fillTimer?.invalidate()
+        fillTimer = nil
+
+        guard let target else {
+            // No data: nothing to ease toward. Reset so the next real value
+            // grows from empty rather than from a stale position.
+            fillAnimation = nil
+            displayedFraction = 0
+            return
+        }
+
+        let clamped = min(max(target, 0), 1)
+        guard abs(clamped - displayedFraction) > 0.0005 else {
+            displayedFraction = clamped
+            return
+        }
+
+        fillAnimation = (from: displayedFraction, to: clamped, start: Date())
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            self?.stepFill()
+        }
+        // .common, not the default mode: a timer in the default mode stops
+        // firing while a menu is open or a window is being resized, which
+        // would freeze the bar mid-animation and leave it showing a value
+        // that was never true.
+        RunLoop.main.add(timer, forMode: .common)
+        fillTimer = timer
+    }
+
+    private func stepFill() {
+        guard let animation = fillAnimation else {
+            fillTimer?.invalidate()
+            fillTimer = nil
+            return
+        }
+        let elapsed = Date().timeIntervalSince(animation.start)
+        let progress = min(max(elapsed / Self.fillDuration, 0), 1)
+        // easeOutCubic: quick off the mark, settling gently. Matches the
+        // panels' own easeOut curves so the app moves one way, not three.
+        let eased = 1 - pow(1 - progress, 3)
+        displayedFraction = animation.from + (animation.to - animation.from) * CGFloat(eased)
+
+        if progress >= 1 {
+            // Land on the exact target. Interpolation alone would leave a
+            // float epsilon behind, and the whole justification for animating
+            // this at all is that it still ends up telling the truth.
+            displayedFraction = animation.to
+            fillAnimation = nil
+            fillTimer?.invalidate()
+            fillTimer = nil
+        }
+        needsDisplay = true
+    }
+
+    /// A view removed from its window must not keep a run-loop timer alive.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window == nil else { return }
+        fillTimer?.invalidate()
+        fillTimer = nil
+        fillAnimation = nil
+    }
+
+    deinit {
+        fillTimer?.invalidate()
     }
 
     private func updateLabelColor() {
@@ -153,8 +256,12 @@ final class StatusRailView: NSView {
     /// on the label's row. Hidden (alpha 0) when `fraction == nil`, per the
     /// design spec's "Sans données" rule.
     private func drawRail() {
-        guard let fraction else { return }
-        let clamped = min(max(fraction, 0), 1)
+        // Presence still keys off `fraction` (no data means no rail), but the
+        // WIDTH comes from displayedFraction so a change eases in. The colour
+        // follows the same eased value, so the fill never shows a length and
+        // a hue from two different moments.
+        guard fraction != nil else { return }
+        let clamped = min(max(displayedFraction, 0), 1)
 
         let dotSize = OpusTheme.dotSize
         let gap = OpusTheme.controlGap

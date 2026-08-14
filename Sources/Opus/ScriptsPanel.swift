@@ -28,14 +28,66 @@ private final class ScriptsPanelWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Row background that draws the selection itself — the system's default
-/// highlight is a blue that belongs to no part of this app's palette.
+/// Row background: a soft fill plus a cyan bar down the leading edge.
+///
+/// The system highlight is a saturated blue that belongs to no part of this
+/// palette. The accent bar carries the app's own colour and, unlike a fill
+/// alone, survives being read at a glance — the eye finds a hard vertical
+/// edge faster than a change in background luminance.
 private final class ScriptRowBackground: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         guard selectionHighlightStyle != .none else { return }
-        OpusTheme.cream(0.10).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 1),
+        let body = bounds.insetBy(dx: 2, dy: 0)
+        OpusTheme.cream(0.09).setFill()
+        NSBezierPath(roundedRect: body,
                      xRadius: OpusTheme.radiusControl, yRadius: OpusTheme.radiusControl).fill()
+
+        let accent = NSRect(x: body.minX, y: body.minY + 3, width: 2.5, height: body.height - 6)
+        OpusTheme.cyan.withAlphaComponent(0.9).setFill()
+        NSBezierPath(roundedRect: accent, xRadius: 1.25, yRadius: 1.25).fill()
+    }
+}
+
+/// A small tinted capsule for a run state.
+///
+/// Plain grey text made "prêt" and "échec (code 3)" read as equally
+/// unremarkable. A capsule gives failure and activity a shape the eye catches
+/// before it reads any words, and gives idle the quiet it deserves.
+private final class StatePill: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private var fill: NSColor = .clear
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        label.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        label.alignment = .center
+        label.isSelectable = false
+        label.refusesFirstResponder = true
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// `emphasis` false is the idle case: text only, no capsule. Painting a
+    /// capsule around "prêt" would give the panel's most common and least
+    /// interesting state the loudest treatment on screen.
+    func configure(text: String, color: NSColor, emphasis: Bool) {
+        label.stringValue = text
+        label.textColor = emphasis ? color : OpusTheme.cream(0.35)
+        fill = emphasis ? color.withAlphaComponent(0.14) : .clear
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard fill != .clear else { return }
+        let box = bounds.insetBy(dx: 0, dy: 2)
+        fill.setFill()
+        NSBezierPath(roundedRect: box, xRadius: box.height / 2, yRadius: box.height / 2).fill()
     }
 }
 
@@ -97,19 +149,26 @@ private func makeScriptButton(symbol: String, tint: NSColor,
     return button
 }
 
-/// One row: name, summary, state, and a run/stop button.
+/// One row: glyph, name over summary, a state pill, and a run/stop button.
+///
+/// Two lines rather than one. A single line put the name and its description
+/// at the same optical weight, so the list read as a wall of text with no
+/// entry point. Stacking them makes the name the thing you scan and the
+/// summary the thing you read once you have stopped.
 ///
 /// Every column width here is a CONSTANT. Measuring them from the text on
 /// screen makes the whole list shift sideways the moment any row's state text
-/// changes from "prêt" to "en cours depuis 1 min", which happens once a second
+/// changes from "prêt" to "en cours · 1 min", which happens once a second
 /// while something runs.
 private final class ScriptRowCellView: NSTableCellView {
-    static let nameColumnWidth: CGFloat = 170
-    static let stateColumnWidth: CGFloat = 150
+    static let iconColumnWidth: CGFloat = 26
+    static let pillColumnWidth: CGFloat = 118
+    static let rowHeight: CGFloat = 42
 
+    private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let summaryLabel = NSTextField(labelWithString: "")
-    private let stateLabel = NSTextField(labelWithString: "")
+    private let pill = StatePill()
     let actionButton: ScriptIconButton
 
     override init(frame frameRect: NSRect) {
@@ -117,49 +176,75 @@ private final class ScriptRowCellView: NSTableCellView {
                                         label: "lancer ce script", toolTip: "Lancer (↩)")
         super.init(frame: frameRect)
 
-        for (label, font, color) in [
-            (nameLabel, NSFont.systemFont(ofSize: 12, weight: .medium), OpusTheme.cream(0.85)),
-            (summaryLabel, NSFont.systemFont(ofSize: 11), OpusTheme.cream(0.45)),
-            (stateLabel, NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), OpusTheme.cream(0.5)),
-        ] as [(NSTextField, NSFont, NSColor)] {
-            label.font = font
-            label.textColor = color
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.contentTintColor = OpusTheme.cream(0.5)
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.refusesFirstResponder = true
+
+        nameLabel.font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        nameLabel.textColor = OpusTheme.cream(0.92)
+
+        summaryLabel.font = NSFont.systemFont(ofSize: 10.5)
+        summaryLabel.textColor = OpusTheme.cream(0.38)
+
+        for label in [nameLabel, summaryLabel] {
             label.alignment = .left
             label.lineBreakMode = .byTruncatingTail
             label.translatesAutoresizingMaskIntoConstraints = false
             label.isSelectable = false
             label.refusesFirstResponder = true
-            addSubview(label)
         }
-        addSubview(actionButton)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+
+        for view in [iconView, nameLabel, summaryLabel, pill, actionButton] as [NSView] {
+            addSubview(view)
+        }
 
         NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            nameLabel.widthAnchor.constraint(equalToConstant: Self.nameColumnWidth),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            iconView.widthAnchor.constraint(equalToConstant: 17),
+            iconView.heightAnchor.constraint(equalToConstant: 17),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            summaryLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 10),
-            summaryLabel.trailingAnchor.constraint(equalTo: stateLabel.leadingAnchor, constant: -10),
-            summaryLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // The two labels are centred as a PAIR on the row's midline, with
+            // a tight 1pt gap, so they read as one block rather than two
+            // stacked rows that happen to be near each other.
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.iconColumnWidth + 12),
+            nameLabel.trailingAnchor.constraint(equalTo: pill.leadingAnchor, constant: -12),
+            nameLabel.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
 
-            stateLabel.widthAnchor.constraint(equalToConstant: Self.stateColumnWidth),
-            stateLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -8),
-            stateLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            summaryLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            summaryLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            summaryLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
 
-            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            pill.widthAnchor.constraint(equalToConstant: Self.pillColumnWidth),
+            pill.heightAnchor.constraint(equalToConstant: 19),
+            pill.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -10),
+            pill.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(name: String, summary: String, state: ScriptRunState) {
-        nameLabel.stringValue = name
-        summaryLabel.stringValue = summary
-        let described = ScriptsPanel.describe(state, now: Date())
-        stateLabel.stringValue = described.text
-        stateLabel.textColor = described.color
+    func configure(script: ScriptDefinition, state: ScriptRunState) {
+        nameLabel.stringValue = script.displayName
+        summaryLabel.stringValue = script.summary
+        summaryLabel.isHidden = script.summary.isEmpty
+
+        let icon = NSImage(systemSymbolName: script.iconName, accessibilityDescription: nil)
+        icon?.isTemplate = true
+        iconView.image = icon
 
         let running = state.isRunning
+        let described = ScriptsPanel.describe(state, now: Date())
+        pill.configure(text: described.text, color: described.color, emphasis: described.emphasis)
+        // The glyph itself picks up the run colour: with the pill sitting far
+        // to the right, tinting the leading icon is what makes a running
+        // script visible while scanning down the left edge of the list.
+        iconView.contentTintColor = running ? OpusTheme.green : OpusTheme.cream(0.5)
+
         let symbol = running ? "stop.fill" : "play.fill"
         let label = running ? "arrêter ce script" : "lancer ce script"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
@@ -183,6 +268,9 @@ final class ScriptsPanel: NSObject {
     private let panel: ScriptsPanelWindow
     private let titleLabel = NSTextField(labelWithString: "Scripts")
     private let searchField = NSSearchField()
+    /// Drawn behind searchField so the field can be bezel-less and still
+    /// read as a control. Sized alongside it in relayout().
+    private let searchBackground = NSView()
     private let headerLabel = NSTextField(labelWithString: "")
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -260,19 +348,38 @@ final class ScriptsPanel: NSObject {
     private func buildViews() {
         guard let root = panel.contentView else { return }
 
-        titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.textColor = OpusTheme.cream(0.9)
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.textColor = OpusTheme.cream(0.95)
         root.addSubview(titleLabel)
 
-        searchField.placeholderString = "filtrer"
-        searchField.font = NSFont.systemFont(ofSize: 12)
+        // Right-aligned on the title's own line rather than a row of its own.
+        // As a separate line it was a lone grey sentence floating between the
+        // filter and the list, which cost 24pt of height to say "3 scripts".
+        headerLabel.alignment = .right
+        root.addSubview(headerLabel)
+
+        // The stock NSSearchField bezel is a system control dropped onto a
+        // custom dark panel: lighter than everything around it, with its own
+        // corner radius. Stripping the bezel and drawing our own background
+        // makes it part of the panel instead of a guest in it.
+        searchField.placeholderString = "filtrer les scripts"
+        searchField.font = NSFont.systemFont(ofSize: 12.5)
         searchField.focusRingType = .none
+        searchField.isBezeled = false
+        searchField.drawsBackground = false
+        searchField.textColor = OpusTheme.cream(0.9)
         searchField.delegate = self
+        (searchField.cell as? NSSearchFieldCell)?.searchButtonCell?.image?.isTemplate = true
+        searchBackground.wantsLayer = true
+        searchBackground.layer?.backgroundColor = OpusTheme.fieldBackground.withAlphaComponent(0.55).cgColor
+        searchBackground.layer?.cornerRadius = OpusTheme.radiusControl
+        searchBackground.layer?.borderWidth = 1
+        searchBackground.layer?.borderColor = OpusTheme.cream(0.07).cgColor
+        root.addSubview(searchBackground)
         root.addSubview(searchField)
 
         headerLabel.font = NSFont.systemFont(ofSize: 11)
         headerLabel.textColor = OpusTheme.cream(0.5)
-        root.addSubview(headerLabel)
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("script"))
         column.resizingMask = .autoresizingMask
@@ -280,8 +387,8 @@ final class ScriptsPanel: NSObject {
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowSizeStyle = .custom
-        tableView.rowHeight = 26
-        tableView.intercellSpacing = NSSize(width: 0, height: 2)
+        tableView.rowHeight = ScriptRowCellView.rowHeight
+        tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.selectionHighlightStyle = .regular
         tableView.style = .plain
         tableView.delegate = self
@@ -320,6 +427,10 @@ final class ScriptsPanel: NSObject {
         outputScrollView.wantsLayer = true
         outputScrollView.layer?.cornerRadius = OpusTheme.radiusControl
         outputScrollView.layer?.masksToBounds = true
+        // Same plate treatment as the filter field, so the panel has one
+        // vocabulary for "a surface you read from" instead of two.
+        outputScrollView.layer?.borderWidth = 1
+        outputScrollView.layer?.borderColor = OpusTheme.cream(0.07).cgColor
         root.addSubview(outputScrollView)
 
         hintLabel.font = NSFont.systemFont(ofSize: 11)
@@ -371,10 +482,21 @@ final class ScriptsPanel: NSObject {
             forName: ScriptRunner.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self, self.isOpen else { return }
+            let wasShowing = !self.outputScrollView.isHidden
             self.reloadTableContent()
             self.updateHeader()
             self.updateOutputPane()
             self.updateHint()
+            // Only when the pane's PRESENCE changes: relayout on every output
+            // chunk would re-animate the window frame once a second for a
+            // script that prints once a second.
+            // Relayout when the pane appears or disappears, and when its
+            // content-driven height actually changes bucket — not on every
+            // chunk, or a script printing once a second would re-animate the
+            // window frame once a second.
+            if wasShowing != self.hasOutputToShow || abs(self.outputScrollView.frame.height - self.outputHeight()) > 0.5 {
+                self.relayout()
+            }
         }
     }
 
@@ -478,17 +600,20 @@ final class ScriptsPanel: NSObject {
 
     /// The one place a run state becomes words. Shared by the row and the
     /// output header so the two can never disagree about what is happening.
-    static func describe(_ state: ScriptRunState, now: Date) -> (text: String, color: NSColor) {
+    static func describe(_ state: ScriptRunState,
+                         now: Date) -> (text: String, color: NSColor, emphasis: Bool) {
         switch state {
         case .idle:
-            return ("prêt", OpusTheme.cream(0.4))
+            // No capsule: idle is the most common state in the list, and
+            // giving it a badge would make the quiet rows the loud ones.
+            return ("prêt", OpusTheme.cream(0.35), false)
         case .running(let since):
-            return ("● en cours · \(elapsed(since: since, now: now))", OpusTheme.green)
+            return ("en cours · \(elapsed(since: since, now: now))", OpusTheme.green, true)
         case .finished(let code, let signal, _):
-            if signal == SIGTERM { return ("arrêté", OpusTheme.amber) }
-            if let signal { return ("tué (signal \(signal))", OpusTheme.red) }
-            return code == 0 ? ("terminé", OpusTheme.cream(0.4))
-                             : ("échec (code \(code))", OpusTheme.red)
+            if signal == SIGTERM { return ("arrêté", OpusTheme.amber, true) }
+            if let signal { return ("tué · signal \(signal)", OpusTheme.red, true) }
+            return code == 0 ? ("terminé", OpusTheme.cream(0.45), false)
+                             : ("échec · code \(code)", OpusTheme.red, true)
         }
     }
 
@@ -566,12 +691,37 @@ final class ScriptsPanel: NSObject {
 
     // MARK: Layout
 
+    /// True when the selected script has something worth showing.
+    ///
+    /// The output pane used to be permanently open, so a panel whose scripts
+    /// had never run devoted its lower half to a box containing the words
+    /// "(aucune sortie)". Collapsing it means the panel is exactly as tall as
+    /// it has something to say, and the growth when a script starts printing
+    /// is itself the signal that it started.
+    private var hasOutputToShow: Bool {
+        guard let script = selectedScript else { return false }
+        if ScriptRunner.shared.state(of: script).isRunning { return true }
+        return !ScriptRunner.shared.output(of: script).text.isEmpty
+    }
+
+    /// Grows with the output, up to a ceiling.
+    ///
+    /// A fixed tall box made three lines of output look lost in a void, and a
+    /// fixed short one would hide the interesting part of a long run. The
+    /// floor keeps a one-line result from producing a sliver too thin to read.
+    private func outputHeight() -> CGFloat {
+        let lineHeight: CGFloat = 14
+        let padding: CGFloat = 14
+        let lines = max(1, outputView.string.split(separator: "\n", omittingEmptySubsequences: false).count)
+        return min(max(CGFloat(lines) * lineHeight + padding, 46), 172)
+    }
+
     private func relayout() {
         let inset = OpusTheme.insetPanel
         let contentWidth = Self.width - inset * 2
-        let visibleRows = min(max(filtered.count, 1), 8)
-        let listHeight = CGFloat(visibleRows) * (tableView.rowHeight + tableView.intercellSpacing.height)
-        let outputHeight: CGFloat = 150
+        let visibleRows = min(max(filtered.count, 1), 7)
+        let listHeight = CGFloat(visibleRows) * (ScriptRowCellView.rowHeight + tableView.intercellSpacing.height)
+        let showOutput = hasOutputToShow
 
         var y: CGFloat = Self.topMargin
         var stacked: [(NSView, CGFloat, CGFloat)] = []
@@ -581,25 +731,61 @@ final class ScriptsPanel: NSObject {
         }
 
         stack(titleLabel, height: 20, gapAfter: 14)
-        stack(searchField, height: 26, gapAfter: 8)
-        stack(headerLabel, height: 18, gapAfter: 6)
-        stack(scrollView, height: listHeight, gapAfter: 12)
-        stack(separator, height: 1, gapAfter: 10)
-        stack(outputHeaderLabel, height: 16, gapAfter: 6)
-        stack(outputScrollView, height: outputHeight, gapAfter: 10)
-        stack(hintLabel, height: 16, gapAfter: 0)
+        stack(searchField, height: 30, gapAfter: 12)
+        stack(scrollView, height: listHeight, gapAfter: showOutput ? 14 : 12)
+        if showOutput {
+            stack(separator, height: 1, gapAfter: 12)
+            stack(outputHeaderLabel, height: 15, gapAfter: 7)
+            stack(outputScrollView, height: outputHeight(), gapAfter: 12)
+        }
+        stack(hintLabel, height: 15, gapAfter: 0)
 
         let height = y + inset
         for (view, top, viewHeight) in stacked {
             view.frame = NSRect(x: inset, y: height - top - viewHeight,
                                 width: contentWidth, height: viewHeight)
         }
+        // Hidden rather than merely unpositioned: a view left on screen at a
+        // stale frame would sit on top of the list once the panel shrinks.
+        for view in [separator, outputHeaderLabel, outputScrollView] as [NSView] {
+            view.isHidden = !showOutput
+        }
+
+        // The count shares the title's line, right-aligned, so it costs no
+        // vertical space of its own.
+        headerLabel.frame = NSRect(x: inset, y: titleLabel.frame.origin.y,
+                                   width: contentWidth, height: 20)
+        // The plate takes the stacked slot; the field is centred INSIDE it at
+        // its own natural height. Stretching an NSSearchField to the plate's
+        // full height does not centre its contents — the magnifier stays
+        // pinned near the bottom and collides with the placeholder text.
+        let plate = searchField.frame
+        searchBackground.frame = plate
+        let fieldHeight: CGFloat = 20
+        searchField.frame = NSRect(x: plate.minX + 9,
+                                   y: plate.minY + (plate.height - fieldHeight) / 2,
+                                   width: plate.width - 18,
+                                   height: fieldHeight)
 
         let screen = (NSScreen.main ?? NSScreen.screens[0]).frame
-        panel.setFrame(NSRect(x: screen.midX - Self.width / 2,
-                              y: screen.midY - height / 2,
-                              width: Self.width, height: height),
-                       display: true)
+        let target = NSRect(x: screen.midX - Self.width / 2,
+                            y: screen.midY - height / 2,
+                            width: Self.width, height: height)
+        // Eased once the panel is on screen, set outright before that. The
+        // sizing pass inside open() runs before the panel is ordered front,
+        // and animating there would race the appear animation and land at the
+        // wrong size for a beat. 0.16s: long enough that the output pane
+        // opening reads as the panel unfolding rather than jumping, short
+        // enough that filter keystrokes do not feel laggy.
+        if isOpen {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.16
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().setFrame(target, display: true)
+            }
+        } else {
+            panel.setFrame(target, display: true)
+        }
     }
 
     // MARK: Animation
@@ -685,6 +871,7 @@ final class ScriptsPanel: NSObject {
         guard !filtered.isEmpty else { return }
         let current = filtered.firstIndex { $0.id == selectedScriptID } ?? -1
         let next = min(max(current + delta, 0), filtered.count - 1)
+        let wasShowing = !outputScrollView.isHidden
         selectedScriptID = filtered[next].id
         isRestoringSelection = true
         tableView.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
@@ -692,9 +879,11 @@ final class ScriptsPanel: NSObject {
         tableView.scrollRowToVisible(next)
         updateOutputPane()
         updateHint()
+        if wasShowing != hasOutputToShow { relayout() }
     }
 
     private func run(_ script: ScriptDefinition) {
+        let wasShowing = !outputScrollView.isHidden
         if let problem = ScriptRunner.shared.toggle(script) {
             outputHeaderLabel.textColor = OpusTheme.red
             outputHeaderLabel.stringValue = problem
@@ -703,6 +892,7 @@ final class ScriptsPanel: NSObject {
         updateHeader()
         updateOutputPane()
         updateHint()
+        if wasShowing != hasOutputToShow { relayout() }
     }
 
     @objc private func rowDoubleClicked() {
@@ -743,9 +933,7 @@ extension ScriptsPanel: NSTableViewDataSource, NSTableViewDelegate {
             cell.actionButton.target = self
             cell.actionButton.action = #selector(actionButtonClicked(_:))
         }
-        cell.configure(name: script.displayName,
-                       summary: script.summary,
-                       state: ScriptRunner.shared.state(of: script))
+        cell.configure(script: script, state: ScriptRunner.shared.state(of: script))
         return cell
     }
 
@@ -758,9 +946,11 @@ extension ScriptsPanel: NSTableViewDataSource, NSTableViewDelegate {
         // cleared. That is bookkeeping, not the user moving.
         guard !isRestoringSelection else { return }
         guard filtered.indices.contains(tableView.selectedRow) else { return }
+        let wasShowing = !outputScrollView.isHidden
         selectedScriptID = filtered[tableView.selectedRow].id
         updateOutputPane()
         updateHint()
+        if wasShowing != hasOutputToShow { relayout() }
     }
 }
 
