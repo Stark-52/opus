@@ -1,9 +1,9 @@
-// SecretExtractor — turns whatever the owner actually copied into candidates.
+// SecretExtractor — turns whatever was actually copied into candidates.
 //
-// The premise, from the spec: he rarely copies a bare token. He copies a
-// .env line, an Authorization header, a chunk of JSON. Asking him to
+// The premise, from the spec: people rarely copy a bare token. They copy a
+// .env line, an Authorization header, a chunk of JSON. Asking them to
 // hand-strip the value defeats the point of the panel, so the panel
-// strips it and SHOWS him what it extracted (maskedPreview) rather than
+// strips it and SHOWS what it extracted (maskedPreview) rather than
 // storing something silently wrong.
 
 import Foundation
@@ -107,7 +107,7 @@ public enum SecretExtractor {
         return "\(value.prefix(2))…\(value.suffix(2))"
     }
 
-    /// Shows enough for the owner to recognise the value and confirm the
+    /// Shows enough to recognise the value and confirm the
     /// extraction was right, without printing it. Built from maskedValue
     /// plus the length, so there is exactly one masking rule regardless of
     /// how many places end up displaying it.

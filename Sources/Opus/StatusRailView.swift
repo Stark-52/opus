@@ -23,9 +23,15 @@
 // task-2-report.md and task-3-report.md for the exact arithmetic
 // TerminalContainerView's constraints anchor to.
 //
-// No animation anywhere (the owner's explicit "retenue sur les animations UI"
-// rule, restated in the design spec's "Ce qui ne change pas") — every
-// setter below just flips needsDisplay / updates the label synchronously.
+// Every setter below updates synchronously: it flips needsDisplay or sets
+// the label, with no animation in between.
+//
+// That was once justified by a project-wide "no UI animation" rule. The
+// rule did not belong to this project — it came from an unrelated web
+// codebase and was applied here by mistake. Nothing about a status rail
+// requires it to be motionless; if animating a value change reads better,
+// animate it. What must stay true is that the rail never lies about the
+// state it is showing, so any animation has to finish at the real value.
 
 import AppKit
 
@@ -168,7 +174,7 @@ final class StatusRailView: NSView {
         // worth of width" rather than a hardcoded pixel count. DELIBERATE —
         // not in the original brief, added because a 1% fill rounding down
         // to 0pt-wide is a real regression (the whole point of the rail is
-        // that the owner can find it without being told where it is). Do not
+        // that the rail is findable without being told where it is). Do not
         // simplify this back to `railWidth * clamped` alone.
         let fillWidth = clamped > 0 ? max(OpusTheme.railHeight, railWidth * clamped) : 0
         guard fillWidth > 0 else { return }

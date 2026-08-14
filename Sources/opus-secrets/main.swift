@@ -1,6 +1,6 @@
 // opus-secrets — one binary, two audiences.
 //
-//   Human:   put / get / ls / rm / run
+//   Human:  put / get / ls / rm / run
 //   Claude Code: hook-pre / hook-post / hook-session
 //
 // The hook modes are the reason this is a compiled binary and not a shell
@@ -209,7 +209,7 @@ case "run":
 
 default:
     print("""
-    opus-secrets — passe-plat de secrets entre the owner et Claude Code.
+    opus-secrets — passe-plat de secrets vers Claude Code.
 
       put <nom>              range la valeur (stdin si pipé, presse-papier sinon)
       get <nom>              ressort la valeur (à piper, pas à afficher)
