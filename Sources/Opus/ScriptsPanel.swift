@@ -200,7 +200,11 @@ final class ScriptsPanel: NSObject {
     private var selectedScriptID: String?
     private var isRestoringSelection = false
     private var scanProblem: String?
-    private var visible = false
+    /// Derived from the window, never stored. A stored flag drifted out of
+    /// step with what was on screen — the panel stayed visible while the
+    /// flag said closed, so the toggle inverted and keystrokes went to the
+    /// window behind it. The window itself cannot lie about being visible.
+    private var isOpen: Bool { panel.isVisible && panel.alphaValue > 0.01 }
     private var previousKeyWindow: NSWindow?
     private var keyMonitor: Any?
     private var clickAwayMonitor: Any?
@@ -331,11 +335,24 @@ final class ScriptsPanel: NSObject {
         }
 
         // Switching apps: the panel loses key and goes away.
+        //
+        // Re-checked one run-loop tick later, and that delay is the whole
+        // point. A window resigns key for reasons that are not the user
+        // leaving — a scripted AppleScript query, an accessibility client
+        // attaching, a transient system panel. Closing on the raw
+        // notification meant the panel stayed on screen while its state said
+        // "closed", after which keystrokes went to the terminal behind it
+        // instead of the panel the user was looking at. Confirming that the
+        // panel is still not key on the next tick absorbs the blips and keeps
+        // the real case (focus genuinely moved elsewhere) working.
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: panel, queue: .main
         ) { [weak self] _ in
-            guard let self, self.visible else { return }
-            self.close(restoringFocus: false)
+            guard let self, self.isOpen else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isOpen, !self.panel.isKeyWindow else { return }
+                self.close(restoringFocus: false)
+            }
         }
 
         // Clicking Opus's own terminal window: that window never takes key
@@ -345,7 +362,7 @@ final class ScriptsPanel: NSObject {
         clickAwayMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
-            guard let self, self.visible, event.window !== self.panel else { return event }
+            guard let self, self.isOpen, event.window !== self.panel else { return event }
             self.close(restoringFocus: false)
             return event
         }
@@ -353,7 +370,7 @@ final class ScriptsPanel: NSObject {
         runnerObserver = NotificationCenter.default.addObserver(
             forName: ScriptRunner.didChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, self.visible else { return }
+            guard let self, self.isOpen else { return }
             self.reloadTableContent()
             self.updateHeader()
             self.updateOutputPane()
@@ -363,10 +380,10 @@ final class ScriptsPanel: NSObject {
 
     // MARK: Opening and closing
 
-    func toggle() { visible ? close() : open() }
+    func toggle() { isOpen ? close() : open() }
 
     private func open() {
-        guard !visible else { return }
+        guard !isOpen else { return }
         // Created on demand: the folder not existing is the normal state right
         // up until the first script is written, and a panel that reports that
         // as a problem would be reporting its own first run as a failure.
@@ -380,19 +397,17 @@ final class ScriptsPanel: NSObject {
         previousKeyWindow = NSApp.keyWindow
         animateAppear()
         panel.makeFirstResponder(searchField)
-        visible = true
 
         // One tick a second, only while open: "en cours depuis 3 min" has to
         // stay true, and there is nothing else driving a repaint.
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self, self.visible, ScriptRunner.shared.runningCount > 0 else { return }
+            guard let self, self.isOpen, ScriptRunner.shared.runningCount > 0 else { return }
             self.reloadTableContent()
             self.updateHeader()
         }
     }
 
     private func close(restoringFocus: Bool = true) {
-        visible = false
         tickTimer?.invalidate()
         tickTimer = nil
         searchField.stringValue = ""
@@ -402,8 +417,11 @@ final class ScriptsPanel: NSObject {
         if restoringFocus, let previous = previousKeyWindow, previous.isVisible { previous.makeKey() }
         previousKeyWindow = nil
 
+        // alphaValue is what isOpen reads, so drive it to zero FIRST: the
+        // panel must read as closed the instant close() is called, even
+        // though it keeps fading for another 90ms.
         animateDismiss { [weak self] in
-            guard let self, !self.visible else { return }
+            guard let self, self.panel.alphaValue < 0.01 else { return }
             self.panel.orderOut(nil)
         }
     }
