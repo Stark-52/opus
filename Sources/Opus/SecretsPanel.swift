@@ -250,7 +250,17 @@ final class SecretsPanel: NSObject {
     private func updatePreview() {
         let value = valueField.stringValue
         guard !value.isEmpty else { previewLabel.stringValue = ""; return }
-        previewLabel.stringValue = "sera rangé : " + SecretExtractor.maskedPreview(value)
+
+        // The panel's whole principle is that the user sees what will
+        // actually happen before it happens, so the name shown here is the
+        // SLUGGED form commit() will actually store under, not the raw text
+        // sitting in the field — recomputed on every keystroke in either
+        // field, never written back into nameField itself.
+        let maskedValue = SecretExtractor.maskedPreview(value)
+        let slugged = SecretName.slug(nameField.stringValue)
+        previewLabel.stringValue = slugged.isEmpty
+            ? "sera rangé : " + maskedValue
+            : "sera rangé sous « \(slugged) » : " + maskedValue
 
         if SecretExtractor.isShellHostile(value) {
             statusLabel.stringValue = "contient des caractères que le shell interprète : utiliser « opus-secrets run »."
@@ -317,17 +327,24 @@ final class SecretsPanel: NSObject {
     // MARK: Commit
 
     private func commit() {
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        // The user types roughly ("stripe key", "RESEND_API_KEY") and the
+        // panel normalizes rather than rejecting: slug() is the same
+        // normalization already applied to labels extracted from the
+        // clipboard, now also applied to a hand-typed name. The field
+        // itself is never rewritten (see updatePreview): only the stored
+        // name is the slugged one.
+        let typedName = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        let name = SecretName.slug(typedName)
         let value = valueField.stringValue
 
         guard !value.isEmpty else {
             statusLabel.stringValue = "valeur vide."
             return
         }
-        guard SecretName.isValid(name) else {
-            statusLabel.stringValue = name.isEmpty
+        guard !name.isEmpty else {
+            statusLabel.stringValue = typedName.isEmpty
                 ? "il manque un nom."
-                : "nom invalide. minuscules, chiffres, point et tiret, 64 max."
+                : "ce nom ne contient aucun caractère utilisable."
             return
         }
 
