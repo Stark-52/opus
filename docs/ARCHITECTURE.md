@@ -168,7 +168,7 @@ Separate Unix domain socket at `/tmp/opus-events.sock`, one-directional and conn
 
 ## Cursor visibility filter
 
-Claude Code's TUI emits `\e[?25l` to hide the cursor while it owns the screen. Inside the SwiftTerm panel that makes the input caret disappear, which the owner hated. We strip both `\e[?25l` and `\e[?25h` from every incoming byte stream (`QuickTerminalPanel.stripCursorVisibilityToggles`). The Terminal.app side gets the raw stream — its native terminal handles cursor visibility correctly.
+Claude Code's TUI emits `\e[?25l` to hide the cursor while it owns the screen. Inside the SwiftTerm panel that makes the input caret disappear, which is unacceptable in an input field. We strip both `\e[?25l` and `\e[?25h` from every incoming byte stream (`QuickTerminalPanel.stripCursorVisibilityToggles`). The Terminal.app side gets the raw stream — its native terminal handles cursor visibility correctly.
 
 ## Appearance pipeline
 

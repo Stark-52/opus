@@ -9,7 +9,7 @@
 //                      the store and there is no value to match against.
 //
 // Both search ANYWHERE in the text, never anchored to the start of a line:
-// the owner pastes "RESEND_API_KEY=re_live_..." far more often than a bare
+// a pasted "RESEND_API_KEY=re_live_..." is far more common than a bare
 // token, so an anchored match would catch nothing real.
 
 import Foundation

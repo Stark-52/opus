@@ -7,7 +7,7 @@
 //
 // Real transcript shape (confirmed by inspecting this machine's OWN live
 // session transcript while writing this file —
-// ~/.claude/projects/-Users-dev-Documents-GitHub-Project/
+// ~/.claude/projects/<cwd-with-slashes-as-dashes>/
 // <session-id>.jsonl, the transcript this very task
 // was worked from — 616 matching records found):
 //   {"type":"assistant","message":{"model":"claude-fable-5", "usage": {

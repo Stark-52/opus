@@ -7,8 +7,8 @@
 // absolute path regardless, so PATH membership is a convenience, not a
 // requirement.
 //
-// The `secret` shim goes to ~/bin instead, because that is where the owner's
-// hand already goes. It is only written when the path is free or already
+// The `secret` shim goes to ~/bin instead, which is already on the user's
+// PATH by habit. It is only written when the path is free or already
 // holds a shim we wrote: an unrecognised file there is left alone and
 // reported.
 
@@ -42,7 +42,7 @@ enum SecretsInstaller {
     /// The message from the most recently completed `install()` call, or
     /// nil when that attempt found nothing to report. `install()` runs
     /// unconditionally on every Opus launch (see main.swift) and used to
-    /// send this string only to NSLog — nobody but the owner tailing Console.app
+    /// send this string only to NSLog — nobody short of tailing Console.app
     /// would ever see it. A malformed ~/.claude/settings.json means NO
     /// hooks get registered, so every later `{{secret:...}}` placeholder
     /// travels to a provider as a literal string with the redaction net

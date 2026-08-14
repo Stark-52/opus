@@ -569,7 +569,7 @@ final class QuickTerminalPanel: NSObject {
             name: NSWindow.didBecomeKeyNotification, object: panel
         )
         // Suppress autohide when the panel briefly loses key status due to a
-        // macOS Space switch (otherwise the panel disappears as the owner swipes).
+        // macOS Space switch (otherwise the panel disappears mid-swipe).
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(spaceDidChange),
             name: NSWorkspace.activeSpaceDidChangeNotification, object: nil
@@ -1168,8 +1168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func killStaleSessionIfOrphaned() {
         // Kill any existing dtach master holding the opus.sock — guarantees a
         // fresh claude on each Opus launch. We do this unconditionally because
-        // dtach doesn't expose client count and the owner explicitly disliked the
-        // "old claude on relaunch" behavior.
+        // dtach doesn't expose a client count, and relaunching into a stale
+        // claude from a previous run is worse than always starting fresh.
         let kill = Process()
         kill.launchPath = "/usr/bin/pkill"
         kill.arguments = ["-f", "dtach -[Aa] /tmp/opus.sock"]
