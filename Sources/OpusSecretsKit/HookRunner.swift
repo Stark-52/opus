@@ -229,9 +229,14 @@ public struct HookRunner {
         let names = ((try? store.names()) ?? []).sorted()
         guard !names.isEmpty else { return nil }
 
+        // A pointer, not an inventory. Listing every name spent context on
+        // every session for something most sessions never touch, and the
+        // cost grew with the store. This stays the same two lines whether
+        // there are three secrets or fifty; the names are one command away
+        // at the moment they are actually needed.
         let context = """
-        Secrets disponibles (valeurs inaccessibles, ne pas tenter de les lire) : \
-        \(names.joined(separator: ", ")). \
+        \(names.count) secret(s) rangé(s) dans le Trousseau (valeurs inaccessibles, \
+        ne pas tenter de les lire). `secret ls` liste les noms quand tu en as besoin. \
         Pour en utiliser un, écrire {{secret:<nom>}} directement dans une commande Bash ; \
         la substitution a lieu à l'exécution et la valeur n'apparaît jamais ici.
         """

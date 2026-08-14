@@ -278,8 +278,18 @@ private final class SecretRowCellView: NSTableCellView {
                     revealed: Bool, deleteArmed: Bool) {
         nameLabel.stringValue = name
         valueLabel.stringValue = displayValue
-        lengthLabel.stringValue = length
-        valueWidthConstraint.constant = valueColumnWidth
+        // The revealed row borrows its own length column: a masked preview
+        // is six characters and a real key is fifty, so the shared column
+        // width that keeps every OTHER row from moving would show a useless
+        // prefix here. Taking the space per-row means the extra width costs
+        // no movement anywhere else in the list, and the length is the one
+        // thing already legible from the value now that it is in plain
+        // sight. Everything is restored on the next configure(), which cell
+        // reuse guarantees runs before this view represents another row.
+        lengthLabel.stringValue = revealed ? "" : length
+        valueWidthConstraint.constant = revealed
+            ? valueColumnWidth + Self.lengthColumnWidth + 8
+            : valueColumnWidth
 
         let eyeSymbol = revealed ? "eye.slash" : "eye"
         let eyeLabel = revealed ? "masquer la valeur" : "révéler la valeur"
@@ -1085,32 +1095,31 @@ final class SecretsPanel: NSObject {
         updateHint()
     }
 
-    /// Sized to the widest value actually on screen right now (masked text
-    /// for every row except one revealed row, if any), not a fixed guess —
-    /// so a list of short values doesn't leave the length column stranded
-    /// far to the right of short text, and a long revealed value still
-    /// gets real room before truncating. Clamped so neither an empty list
-    /// nor an extremely long revealed value can distort the row layout —
-    /// the upper bound leaves enough room, ahead of it, for the fixed-size
-    /// length column and the eye/trash buttons that never shrink.
+    /// Whatever is left of the row once every fixed part has taken its
+    /// share. Constant, deliberately: it used to be measured from the text
+    /// on screen, which meant revealing a row widened the column and shoved
+    /// the length text and all three buttons sideways on EVERY row — the
+    /// panel lurching at each click. Content-fitting also left the row's
+    /// whole right-hand third empty, since masked previews are six
+    /// characters wide, while the revealed value that actually needed room
+    /// was the one being truncated.
+    ///
+    /// Filling the row instead gives the value the largest column the panel
+    /// can offer, and gives it unconditionally, so nothing here depends on
+    /// what is displayed and nothing moves when that changes. A revealed
+    /// value longer than this still truncates; the copy button is how the
+    /// whole value is read.
     private func measuredValueColumnWidth() -> CGFloat {
-        let minimum: CGFloat = 60
-        // 146, not 170: the copy button added a third fixed 20pt control
-        // (plus its 4pt gap) to the trailing edge, and the row's budget has
-        // to give that back from the one column that is allowed to shrink.
-        // Leaving it at 170 would push lengthLabel's `<=` constraint against
-        // the buttons into an Auto Layout conflict.
-        let maximum: CGFloat = 146
-        guard !filteredSecrets.isEmpty else { return minimum }
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        ]
-        let widest = filteredSecrets.reduce(into: CGFloat(0)) { widest, secret in
-            let text = secret.name == revealedRowName ? secret.value : SecretExtractor.maskedValue(secret.value)
-            widest = max(widest, (text as NSString).size(withAttributes: attributes).width)
-        }
-        return min(max(widest, minimum), maximum)
+        // Every fixed horizontal cost in SecretRowCellView's constraints,
+        // in row order: leading inset, name column, gap, [value], gap,
+        // length column, gap, eye, gap, copy, gap, trash, trailing inset.
+        let fixed: CGFloat = 6 + SecretRowCellView.nameColumnWidth + 10
+            + 8 + SecretRowCellView.lengthColumnWidth + 6
+            + 20 + 4 + 20 + 4 + 20 + 8
+        let rowWidth = Self.width - OpusTheme.insetPanel * 2
+        // The floor matters only if the panel is ever narrowed: a negative
+        // or tiny width would collapse the column rather than scroll it.
+        return max(rowWidth - fixed, 60)
     }
 
     /// Recomputes the value column's width from what's about to be
