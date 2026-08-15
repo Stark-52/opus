@@ -86,4 +86,51 @@ final class TextArtifactScannerTests: XCTestCase {
     func testNonHttpSchemeIsIgnored() {
         XCTAssertEqual(TextArtifactScanner.urls(in: "ftp://a.dev/x and file:///tmp/y"), [])
     }
+
+    // MARK: Task 2 fix round 1
+
+    func testNonHttpSchemeIsAlsoMaskedOutOfPaths() {
+        // Finding 1: masking used to recognise only http/https, so the
+        // //host/path half of any other scheme leaked into paths(in:) as
+        // if it were a real, never-existing file. Same input as
+        // testNonHttpSchemeIsIgnored above; that one covers urls(in:).
+        XCTAssertEqual(TextArtifactScanner.paths(in: "ftp://a.dev/x and file:///tmp/y"), [])
+    }
+
+    func testManyUrlShapedSubstringsScanQuickly() {
+        // Finding 2: the old two-scheme scan rescanned to the end of the
+        // remaining text on every outer-loop iteration whenever the other
+        // scheme did not occur again, which is quadratic on a line dense
+        // with URL-shaped substrings (a JSON blob, curl -v output, an npm
+        // log). This does not assert a time bound, since CI machines vary
+        // too much for that to be reliable; it asserts that scanning 5000
+        // matches completes at all, which is the thing that used to hang.
+        let line = Array(repeating: "http://a.dev/x ", count: 5000).joined()
+        XCTAssertEqual(TextArtifactScanner.urls(in: line).count, 5000)
+    }
+
+    func testGuillemetIsNotPartOfTheUrl() {
+        // Finding 3: French prose wraps links in guillemets, not straight
+        // quotes. Without excluding them, URL(string:) accepts the mangled
+        // candidate silently (Foundation punycodes the guillemet into the
+        // host) instead of rejecting it, so the mangled link would have
+        // shipped straight to the user.
+        XCTAssertEqual(TextArtifactScanner.urls(in: "Le site «https://sitename.xyz» est en ligne."),
+                       ["https://sitename.xyz"])
+    }
+
+    func testCurlyQuoteIsNotPartOfTheUrl() {
+        XCTAssertEqual(TextArtifactScanner.urls(in: "She wrote \u{201C}https://example.com\u{201D} to me."),
+                       ["https://example.com"])
+    }
+
+    func testAccentedFilenameIsOnePath() {
+        // Finding 4: PathDetector.isTokenChar used to accept ASCII letters
+        // only, so an accented filename split into two fragments and the
+        // real file never appeared in the result. "/tmp/" also happens to
+        // be a real, existing directory, so the fragment would have
+        // survived ArtifactClassifier's disk filter as a bogus entry.
+        XCTAssertEqual(TextArtifactScanner.paths(in: "saved to /tmp/été.png done"),
+                       ["/tmp/été.png"])
+    }
 }

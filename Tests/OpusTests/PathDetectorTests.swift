@@ -109,4 +109,15 @@ final class PathDetectorTests: XCTestCase {
     func testTrailingDotStrippedStripsMultiple() {
         XCTAssertEqual(PathDetector.trailingDotStripped("src/a.swift.."), "src/a.swift")
     }
+
+    // MARK: Task 2 fix round 1 — accented filenames
+
+    func testAccentedFilenameIsOneToken() {
+        // "open résumé.pdf now" — clickColumn 8 lands mid-token, on the 'u'
+        // in "résumé". Accented letters must not split the token in two,
+        // or the click would resolve to a fragment that isn't the real file.
+        let result = PathDetector.extract(line: "open résumé.pdf now", clickColumn: 8, cwd: cwd)
+        XCTAssertEqual(result?.path, "/Users/dev/project/résumé.pdf")
+        XCTAssertNil(result?.line)
+    }
 }
