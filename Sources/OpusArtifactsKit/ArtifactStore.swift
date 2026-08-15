@@ -21,15 +21,23 @@ public enum ArtifactStore {
         capacity: Int = ArtifactStore.capacity
     ) -> [Artifact] {
         guard !incoming.isEmpty else { return existing }
+        // Clamped, and compared with >=, because the loop below used to test
+        // `result.count == capacity`: at capacity 0 (or any negative value)
+        // that equality can never fire from a count that only ever grows
+        // past it, so "keep nothing" returned EVERYTHING. Verified by
+        // execution, not by reading. Unreachable from today's single caller,
+        // which passes the fixed 500, but the function is public.
+        let cap = max(capacity, 0)
+        guard cap > 0 else { return [] }
 
         var seen = Set<String>()
         var result: [Artifact] = []
-        result.reserveCapacity(min(existing.count + incoming.count, capacity))
+        result.reserveCapacity(min(existing.count + incoming.count, cap))
 
         for artifact in incoming.reversed() + existing {
             guard seen.insert(artifact.key).inserted else { continue }
             result.append(artifact)
-            if result.count == capacity { break }
+            if result.count >= cap { break }
         }
         return result
     }

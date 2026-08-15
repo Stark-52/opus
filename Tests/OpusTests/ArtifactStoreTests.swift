@@ -47,6 +47,24 @@ final class ArtifactStoreTests: XCTestCase {
         XCTAssertEqual(ArtifactStore.merge(existing: [], incoming: [a, b]).count, 2)
     }
 
+    // `result.count == capacity` could never fire for a non-positive
+    // capacity, so "keep nothing" used to return everything.
+    func testZeroCapacityKeepsNothing() {
+        XCTAssertEqual(
+            ArtifactStore.merge(existing: [], incoming: [file("a"), file("b")], capacity: 0), [])
+    }
+
+    func testNegativeCapacityKeepsNothing() {
+        XCTAssertEqual(
+            ArtifactStore.merge(existing: [], incoming: [file("a"), file("b")], capacity: -1), [])
+    }
+
+    func testCapacityOfOneKeepsOnlyTheNewest() {
+        let out = ArtifactStore.merge(
+            existing: [], incoming: [file("a"), file("b")], capacity: 1)
+        XCTAssertEqual(keys(out), ["b"])
+    }
+
     func testEmptyIncomingLeavesTheListUntouched() {
         let existing = ArtifactStore.merge(existing: [], incoming: [file("a")])
         XCTAssertEqual(ArtifactStore.merge(existing: existing, incoming: []), existing)
