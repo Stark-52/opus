@@ -1,5 +1,5 @@
 import XCTest
-@testable import Opus
+@testable import OpusArtifactsKit
 
 /// PathDetector.extract is pure — no FileManager, no AppKit. These tests
 /// exercise the token-scan/parse logic directly by constructing lines and

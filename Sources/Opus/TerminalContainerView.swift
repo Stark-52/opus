@@ -9,6 +9,7 @@
 import AppKit
 import SwiftTerm
 import Darwin
+import OpusArtifactsKit
 
 protocol TerminalContainerHost: AnyObject {
     var hostWindow: NSWindow? { get }
