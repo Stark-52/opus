@@ -106,4 +106,28 @@ final class ArtifactClassifierTests: XCTestCase {
         let path = try makeFile("keyed.swift")
         XCTAssertEqual(classify(.path(path + ":12"))?.key, classify(.path(path))?.key)
     }
+
+    // Fix round 1, Finding A: an empty token resolves against cwd to cwd
+    // itself, which exists, so without a guard this returned the project
+    // root as a folder artifact. Reachable via TranscriptArtifactExtractor
+    // reading an empty "file_path" straight off tool_use JSON, not just
+    // via text scanning (which already excludes empty tokens upstream).
+    func testEmptyPathIsDropped() {
+        XCTAssertNil(classify(.path("")))
+    }
+
+    // Fix round 1, Finding B: URL.host does not include the port, so two
+    // local servers on different ports collided on one dedup key and the
+    // store silently kept only one.
+    func testUrlsDifferingOnlyByPortHaveDifferentKeys() {
+        XCTAssertNotEqual(classify(.url("http://localhost:3000/"))?.key,
+                          classify(.url("http://localhost:8080/"))?.key)
+    }
+
+    // A URL with no explicit port must still key exactly as before the
+    // port fix, so testUrlDedupKeyNormalisesHostCaseAndTrailingSlash keeps
+    // passing unchanged.
+    func testUrlWithNoExplicitPortKeysAsBefore() {
+        XCTAssertEqual(classify(.url("https://a.dev/x"))?.key, "https://a.dev/x")
+    }
 }

@@ -33,11 +33,29 @@ public enum ArtifactClassifier {
             else { return nil }
             var path = url.path
             while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-            var key = "\(scheme)://\(host.lowercased())\(path)"
+            // Port is part of the dedup identity: two local servers on
+            // different ports (localhost:3000 vs localhost:8080) are
+            // different resources, and URL.host alone can't tell them
+            // apart. url.port is nil unless the URL text carried an
+            // explicit port, so a bare host and an explicit default port
+            // (https://a.dev/x vs https://a.dev:443/x) key differently —
+            // that under-dedups rather than colliding, which is the safe
+            // direction to be wrong in.
+            let portSuffix = url.port.map { ":\($0)" } ?? ""
+            var key = "\(scheme)://\(host.lowercased())\(portSuffix)\(path)"
             if let query = url.query, !query.isEmpty { key += "?\(query)" }
             return Artifact(key: key, kind: .url, resolvedPath: nil, urlString: raw)
 
         case .path(let raw):
+            // An empty token names nothing. Without this guard it resolves
+            // against cwd to cwd itself (a real, existing directory), which
+            // would surface the project root as a drawer row. Reachable
+            // beyond text scanning: TranscriptArtifactExtractor.fromToolUse
+            // reads "file_path" straight off tool_use JSON with no
+            // non-empty guard of its own, so a malformed transcript line
+            // can hand this an empty string directly. This is the only
+            // place that gets a vote, so the guard belongs here.
+            guard !raw.isEmpty else { return nil }
             // A trailing `:12` is a line reference, not part of the name.
             let withoutLine = raw.replacingOccurrences(
                 of: ":[0-9]+(:[0-9]+)?$", with: "", options: .regularExpression)
