@@ -111,6 +111,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var todoDrawerRefreshInFlight = false
     private static let tasksDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/tasks")
 
+    // Artifacts drawer (Lot artifacts-drawer, Task 9) — same shape as the
+    // todo drawer's timer/generation/in-flight trio directly above.
+    private var artifactsTimer: Timer?
+    private var artifactsGeneration = 0
+    private var artifactsRefreshInFlight = false
+    /// Byte offset into the current session's transcript. Reset whenever the
+    /// bound session changes, so a tab switch cannot resume a new file from
+    /// the old file's offset.
+    private var artifactsOffset: UInt64 = 0
+    private var artifactsSessionId: String?
+
     /// Trailing offsets — all measured from `terminalArea.trailingAnchor` —
     /// of the buttons that share the panel's top-right row: the shield
     /// (installed by this container) plus, in the Quick Terminal panel, the
@@ -453,6 +464,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     self.startTodoDrawerTimer()
                 } else {
                     self.stopTodoDrawerTimer()
+                }
+
+                if occupant == .artifacts {
+                    self.refreshArtifacts()
+                    self.startArtifactsTimer()
+                } else {
+                    self.stopArtifactsTimer()
                 }
             })
 
@@ -839,6 +857,76 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 self.todoDrawer.tasks = tasks
             }
         }
+    }
+
+    // MARK: Artifacts drawer (Lot artifacts-drawer, Task 9, Cmd+Shift+A)
+
+    /// Same shape as the todo drawer's pipeline: a Timer that only runs
+    /// while the drawer is the dock's occupant, a generation counter
+    /// guarding the background to main handoff, and an in-flight flag so a
+    /// burst of triggers does not stack overlapping disk reads.
+    ///
+    /// The interval is 1.5s rather than the todo drawer's 5s because an
+    /// incremental read of the bytes appended since the last tick is far
+    /// cheaper than the todo drawer's full directory scan, and because a
+    /// file Claude just wrote should show up while the user is still
+    /// looking for it.
+    private func startArtifactsTimer() {
+        guard artifactsTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            self?.refreshArtifacts()
+        }
+        timer.tolerance = 0.3
+        artifactsTimer = timer
+    }
+
+    private func stopArtifactsTimer() {
+        artifactsTimer?.invalidate()
+        artifactsTimer = nil
+    }
+
+    private func refreshArtifacts() {
+        guard rightDock?.occupant == .artifacts else { return }
+        guard !artifactsRefreshInFlight else { return }
+
+        guard let sessionId = activeSessionId() else {
+            artifactsDrawer.artifacts = []
+            return
+        }
+        let cwd = OpusPreferences.shared.workingDirectory
+        // A different session means a different file. Resuming the new file
+        // from the old file's offset would skip most of it, silently.
+        if sessionId != artifactsSessionId {
+            artifactsSessionId = sessionId
+            artifactsOffset = 0
+            artifactsDrawer.artifacts = []
+        }
+        guard let url = Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
+            artifactsDrawer.artifacts = []
+            return
+        }
+
+        artifactsGeneration += 1
+        let generation = artifactsGeneration
+        let offset = artifactsOffset
+        let existing = artifactsDrawer.artifacts
+        artifactsRefreshInFlight = true
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = TranscriptArtifactReader.read(
+                url: url, from: offset, existing: existing)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.artifactsRefreshInFlight = false
+                guard self.artifactsGeneration == generation else { return }
+                self.artifactsOffset = result.offset
+                self.artifactsDrawer.artifacts = result.artifacts
+            }
+        }
+    }
+
+    func toggleArtifactsDrawer() {
+        rightDock?.toggle(.artifacts)
     }
 
     // MARK: Dangerous-mode shield button

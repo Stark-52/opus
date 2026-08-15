@@ -124,6 +124,12 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "t" {
             container.toggleTodoDrawer(); return nil
         }
+        // Cmd+Shift+A — toggle the artifacts drawer (Lot artifacts-drawer,
+        // Task 9): the active pane's bound session's files, images and
+        // links. "A" for Artifacts.
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "a" {
+            container.toggleArtifactsDrawer(); return nil
+        }
         return ev
     }
 
