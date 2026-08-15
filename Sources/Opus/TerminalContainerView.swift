@@ -86,6 +86,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `buildSubviews()`'s installation site and task-3-report.md for the
     /// arithmetic this guarantees.
     private var todoDrawerBottomConstraint: NSLayoutConstraint!
+    /// Artifacts drawer (Lot artifacts-drawer, Task 8) — second occupant of
+    /// the right dock, same top/trailing/width/bottom treatment as
+    /// `todoDrawer`/`todoDrawerBottomConstraint` above. See `buildSubviews`'
+    /// installation site.
+    private var artifactsDrawer: ArtifactsDrawerView!
+    private var artifactsDrawerBottomConstraint: NSLayoutConstraint!
     private var todoDrawerTimer: Timer?
     /// Bumped on every `refreshTodoDrawer()` call — same staleness guard as
     /// `contextMeterGeneration` above; see `refreshTodoDrawer`'s doc comment.
@@ -406,8 +412,37 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         todoDrawer = drawer
         todoDrawerBottomConstraint = drawerBottom
 
+        // Artifacts drawer (Task 8) — second occupant of the right dock,
+        // built the same way as the Tasks drawer directly above. Built and
+        // registered BEFORE `RightDock` is constructed: `RightDock.show`
+        // sets the terminal's trailing constant from the requested
+        // occupant's width whether or not it has a view for that occupant,
+        // so a dock built without this view would still shrink the
+        // terminal by RightDockGeometry.width(for: .artifacts) and show
+        // nothing in the gap.
+        let artifactsDrawerView = ArtifactsDrawerView(frame: .zero)
+        artifactsDrawerView.translatesAutoresizingMaskIntoConstraints = false
+        artifactsDrawerView.isHidden = true
+        addSubview(artifactsDrawerView)
+        // Bottom edge tracks terminalAreaBottomConstraint's own constant,
+        // never the container's raw bottomAnchor: the status rail plus tab
+        // bar band at the true bottom grows and shrinks with the tab count,
+        // and the drawer must clear both in every state, not only the one
+        // on screen when it was built. Same reasoning as TodoDrawerView.
+        let artifactsBottom = artifactsDrawerView.bottomAnchor.constraint(
+            equalTo: bottomAnchor, constant: -(14 + 4))
+        NSLayoutConstraint.activate([
+            artifactsDrawerView.topAnchor.constraint(equalTo: topAnchor),
+            artifactsDrawerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            artifactsDrawerView.widthAnchor.constraint(
+                equalToConstant: RightDockGeometry.width(for: .artifacts)),
+            artifactsBottom
+        ])
+        artifactsDrawer = artifactsDrawerView
+        artifactsDrawerBottomConstraint = artifactsBottom
+
         rightDock = RightDock(
-            views: [.tasks: drawer],
+            views: [.tasks: drawer, .artifacts: artifactsDrawerView],
             terminalTrailing: terminalAreaTrailingConstraint,
             onChange: { [weak self] occupant in
                 guard let self else { return }
@@ -2102,6 +2137,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // keeps clear of the rail/tab-bar band in both states. See
         // buildSubviews()'s doc comment on todoDrawerBottomConstraint.
         todoDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
+        // Artifacts drawer: identical treatment, same two constants, same
+        // reasoning as todoDrawerBottomConstraint immediately above — see
+        // buildSubviews()'s doc comment on artifactsDrawerBottomConstraint.
+        artifactsDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
         // Status rail: own constant, switched in lockstep with the two
         // above — see buildSubviews' doc comment on railBottomConstraint for
         // why this can't just track tabBar.topAnchor the way it used to.
