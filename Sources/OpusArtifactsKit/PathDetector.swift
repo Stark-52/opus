@@ -22,7 +22,10 @@ public enum PathDetector {
         case "A"..."Z", "a"..."z", "0"..."9", "_", "@", "~", ".", "/", "+", "%", "-":
             return true
         default:
-            return false
+            // Accented letters and non-Latin digits belong in a filename
+            // just as much as ASCII ones do (French prose regularly names
+            // a file "resume.pdf" with an accent on both e's).
+            return !c.isASCII && (c.isLetter || c.isNumber)
         }
     }
 
