@@ -8,7 +8,7 @@
 
 import Foundation
 
-enum PathDetector {
+public enum PathDetector {
     /// Characters a path/file token can be made of. Deliberately narrow: no
     /// shell metacharacters, brackets, or quotes, so wrapping punctuation
     /// like the `(` `)` `,` in `(src/a.swift:3),` — and the `:` that
@@ -17,7 +17,7 @@ enum PathDetector {
     /// leading/trailing wrapper strip below is kept anyway as a defensive
     /// no-op against a future charset change, and because the brief calls
     /// for it explicitly.
-    private static func isTokenChar(_ c: Character) -> Bool {
+    static func isTokenChar(_ c: Character) -> Bool {
         switch c {
         case "A"..."Z", "a"..."z", "0"..."9", "_", "@", "~", ".", "/", "+", "%", "-":
             return true
@@ -29,7 +29,7 @@ enum PathDetector {
     private static let leadingWrap: Set<Character> = ["(", "[", "{", "\"", "'"]
     private static let trailingWrap: Set<Character> = [",", ";", ":", ")", "]", "}", "\"", "'"]
 
-    static func extract(line: String, clickColumn: Int, cwd: String) -> (path: String, line: Int?)? {
+    public static func extract(line: String, clickColumn: Int, cwd: String) -> (path: String, line: Int?)? {
         let chars = Array(line)
         guard !chars.isEmpty else { return nil }
 
@@ -72,7 +72,7 @@ enum PathDetector {
 
     /// Expand `~`, then resolve against `cwd` when not already absolute.
     /// Plain string manipulation (append + standardize) — no disk access.
-    private static func resolvePath(_ token: String, cwd: String) -> String {
+    static func resolvePath(_ token: String, cwd: String) -> String {
         let expanded = (token as NSString).expandingTildeInPath
         if expanded.hasPrefix("/") {
             return (expanded as NSString).standardizingPath
@@ -85,7 +85,7 @@ enum PathDetector {
     /// Trailing dots are part of the token charset (dotfiles, relative paths),
     /// so the caller retries with this variant when the primary path does not
     /// exist on disk.
-    static func trailingDotStripped(_ path: String) -> String? {
+    public static func trailingDotStripped(_ path: String) -> String? {
         var s = path
         while s.hasSuffix(".") { s.removeLast() }
         return s == path || s.isEmpty ? nil : s
