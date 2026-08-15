@@ -929,6 +929,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         rightDock?.toggle(.artifacts)
     }
 
+    // MARK: Artifacts drawer key routing (Task 10)
+
+    /// Whether the artifacts drawer is the dock's current occupant. Gates
+    /// every one of the three forwarding methods below so their key
+    /// monitors only fire while the drawer is actually open.
+    var artifactsDrawerIsOpen: Bool { rightDock?.occupant == .artifacts }
+    func focusArtifactsFilter() { artifactsDrawer.focusFilter() }
+    func handleArtifactsEscape() -> Bool { artifactsDrawer.handleEscape() }
+    func handleArtifactsSpace() -> Bool { artifactsDrawer.handleSpace() }
+
     // MARK: Dangerous-mode shield button
 
     /// Floating toggle at the container's top-right (the tab bar is hidden
