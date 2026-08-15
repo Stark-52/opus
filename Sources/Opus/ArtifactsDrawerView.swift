@@ -297,6 +297,18 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         return URL(fileURLWithPath: path) as NSURL
     }
 
+    /// The shared panel is process-wide, but this app runs TWO independent
+    /// `TerminalContainerView`s at once (main window + Quick Terminal panel),
+    /// each with its own `ArtifactsDrawerView`. Ownership must be checked
+    /// before acting: without this, one window's drawer closing or
+    /// refreshing could reload or order out a preview that a DIFFERENT
+    /// window's drawer currently owns. Whoever last pressed Space in
+    /// `handleSpace()` set `panel.dataSource = self`, so `dataSource` is the
+    /// ownership record — checked here, not re-decided.
+    private func ownsPreviewPanel() -> Bool {
+        QLPreviewPanel.shared().dataSource as AnyObject? === self
+    }
+
     /// Re-queries the panel's data source (`numberOfPreviewItems`,
     /// `previewItemAt:`, both of which read `selectedArtifact` live) so an
     /// already-open panel catches up with whatever is selected NOW. A no-op
@@ -304,7 +316,14 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// showing, so this is safe to call from every refresh and every
     /// selection change, not just the ones that happen to matter.
     func reloadPreviewIfOpen() {
+        // `sharedPreviewPanelExists()` first: it's the only one of these
+        // three checks that can be answered WITHOUT instantiating a panel.
+        // `.isVisible` and `.dataSource` both call `QLPreviewPanel.shared()`,
+        // which lazily creates the singleton on first touch — reordering
+        // either ahead of the exists check would create a panel just to
+        // learn that none exists.
         guard QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible else { return }
+        guard ownsPreviewPanel() else { return }
         QLPreviewPanel.shared().reloadData()
     }
 
@@ -315,7 +334,12 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// todo drawer taking the dock instead, anything else RightDock ever
     /// grows — while `toggleArtifactsDrawer` only covers its own call site.
     func closePreviewIfOpen() {
+        // Same three-check order as reloadPreviewIfOpen, same reason: exists
+        // first so a nonexistent panel is never instantiated just to be
+        // inspected, then visible, then ownership last since it's the check
+        // that matters only once the first two already hold.
         guard QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible else { return }
+        guard ownsPreviewPanel() else { return }
         QLPreviewPanel.shared().orderOut(nil)
     }
 }
