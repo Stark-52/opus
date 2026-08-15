@@ -979,6 +979,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// every one of the three forwarding methods below so their key
     /// monitors only fire while the drawer is actually open.
     var artifactsDrawerIsOpen: Bool { rightDock?.occupant == .artifacts }
+    /// Whether the drawer, rather than the terminal, currently owns the
+    /// keyboard. Gates the hosts' Escape branch specifically: an open drawer
+    /// must not swallow the terminal's Escape (see `ArtifactsDrawerView`'s
+    /// `hasFocus` doc comment).
+    var artifactsDrawerHasFocus: Bool { artifactsDrawer.hasFocus }
     func focusArtifactsFilter() { artifactsDrawer.focusFilter() }
     func handleArtifactsEscape() -> Bool { artifactsDrawer.handleEscape() }
     func handleArtifactsSpace() -> Bool { artifactsDrawer.handleSpace() }

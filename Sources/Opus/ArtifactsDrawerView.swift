@@ -170,6 +170,25 @@ final class ArtifactsDrawerView: NSView {
         reloadPreviewIfOpen()
     }
 
+    /// Whether the keyboard is inside this drawer: the table itself, or the
+    /// field editor the filter field borrows while it is being typed into
+    /// (an NSTextField never becomes first responder in its own right).
+    ///
+    /// Final-review Important 3: the hosts used to run their Escape branch
+    /// on `artifactsDrawerIsOpen` alone. With the drawer open and the
+    /// TERMINAL focused, Escape closed the drawer and returned nil, so it
+    /// never reached SwiftTerm and Claude could not be interrupted. Before
+    /// this branch no keyCode 53 binding existed anywhere in Sources/Opus,
+    /// so that was a regression on a core gesture of a daily driver. Escape
+    /// now only belongs to the drawer while the drawer holds the keyboard;
+    /// Cmd+Shift+A remains the close gesture from anywhere.
+    var hasFocus: Bool {
+        guard let responder = window?.firstResponder else { return false }
+        if responder === tableView { return true }
+        if let editor = filterField.currentEditor(), responder === editor { return true }
+        return false
+    }
+
     /// Cmd+F, routed from the container. The field is always visible (see
     /// the finding this replaced: a hidden field with active constraints
     /// still reserves its 34pt band, so hiding it bought nothing but a
