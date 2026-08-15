@@ -217,6 +217,25 @@ final class ArtifactsDrawerView: NSView {
         guard let artifact = selectedArtifact else { return }
         ArtifactActions.open(artifact)
     }
+
+    /// Return opens the selection, which spec 8.1 lists on the same row as
+    /// the double click ("Retour, double clic | Ouvre") and which the plan
+    /// then dropped. Same entry point as `doubleAction`, so the two gestures
+    /// cannot drift.
+    ///
+    /// Routed from the hosts' key monitors rather than from an
+    /// `insertNewline(_:)` on this view, for the same reason Space is: the
+    /// table is the first responder, and whether NSTableView forwards that
+    /// command up the responder chain or consumes it to begin editing the
+    /// selected row is an AppKit detail this feature should not be betting
+    /// on. The monitor sees the key first, unconditionally. Guarded on the
+    /// table holding focus so Return inside the filter field stays a
+    /// no-op, exactly as `handleSpace` guards the space bar.
+    func handleReturn() -> Bool {
+        guard window?.firstResponder === tableView, selectedArtifact != nil else { return false }
+        openSelected()
+        return true
+    }
 }
 
 extension ArtifactsDrawerView: NSTextFieldDelegate {
@@ -364,6 +383,16 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
 }
 
 /// One row: thumbnail, name, parent directory.
+///
+/// Spec 8 also lists a "badge de genre" on each row, and there is none.
+/// That is a decision, not an oversight: the thumbnail ALREADY differs per
+/// kind — a folder icon for `.folder`, a real QuickLook thumbnail for
+/// `.image`, the generic link icon for `.url`, the document icon for
+/// `.file` — so kind is already carried visually, in the one element of
+/// the row that is always present and always 40pt tall. A badge would
+/// restate it in a drawer 300pt wide whose two text lines are already
+/// truncating, and the thing a reader needs from a row is WHICH file, not
+/// which category. Recorded here so the gap is on the record.
 private final class ArtifactCellView: NSTableCellView {
     private let thumb = NSImageView(frame: .zero)
     private let nameLabel = NSTextField(labelWithString: "")

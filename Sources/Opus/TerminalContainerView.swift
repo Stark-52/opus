@@ -989,6 +989,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func focusArtifactsFilter() { artifactsDrawer.focusFilter() }
     func handleArtifactsEscape() -> Bool { artifactsDrawer.handleEscape() }
     func handleArtifactsSpace() -> Bool { artifactsDrawer.handleSpace() }
+    func handleArtifactsReturn() -> Bool { artifactsDrawer.handleReturn() }
 
     // MARK: Dangerous-mode shield button
 
