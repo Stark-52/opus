@@ -161,6 +161,13 @@ final class ArtifactsDrawerView: NSView {
         emptyLabel.isHidden = !visible.isEmpty
         scrollView.isHidden = visible.isEmpty
         tableView.reloadData()
+        // A refresh can drop the artifact an open preview is showing (the
+        // session moved on, or the filter now excludes it) even when the
+        // selected INDEX doesn't change, which reloadData's own
+        // selection-adjustment wouldn't catch. Called unconditionally here
+        // rather than relying on that, so the panel is always re-queried
+        // against whatever `selectedArtifact` is now.
+        reloadPreviewIfOpen()
     }
 
     /// Cmd+F, routed from the container. The field is always visible (see
@@ -225,6 +232,19 @@ extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
         if let raw = artifact.urlString, let url = URL(string: raw) { return url as NSURL }
         return nil
     }
+
+    /// A row accepts the first mouse click even while its window isn't key
+    /// (standard NSTableView behavior, the same thing that lets you click a
+    /// Finder/Mail/Xcode list without activating it first) — so clicking a
+    /// different row while an open preview panel floats non-key over the
+    /// drawer DOES change `selectedArtifact` without any of that requiring
+    /// keyboard focus. Left unhandled, the panel would keep showing the
+    /// previous file while the table shows a different row selected: the
+    /// drawer's whole promise is showing the right file, so this is the
+    /// gesture that most needs the panel told to catch up.
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        reloadPreviewIfOpen()
+    }
 }
 
 // MARK: - Context menu
@@ -275,6 +295,28 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         guard let path = selectedArtifact?.resolvedPath else { return nil }
         return URL(fileURLWithPath: path) as NSURL
+    }
+
+    /// Re-queries the panel's data source (`numberOfPreviewItems`,
+    /// `previewItemAt:`, both of which read `selectedArtifact` live) so an
+    /// already-open panel catches up with whatever is selected NOW. A no-op
+    /// whenever no panel has ever been created or the existing one isn't
+    /// showing, so this is safe to call from every refresh and every
+    /// selection change, not just the ones that happen to matter.
+    func reloadPreviewIfOpen() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible else { return }
+        QLPreviewPanel.shared().reloadData()
+    }
+
+    /// Closes an open preview so it doesn't outlive the drawer it belongs
+    /// to. Called from the dock's occupant-change seam (TerminalContainerView),
+    /// not from `toggleArtifactsDrawer` directly, because that seam fires for
+    /// every route that stops showing the artifacts drawer — the hotkey, the
+    /// todo drawer taking the dock instead, anything else RightDock ever
+    /// grows — while `toggleArtifactsDrawer` only covers its own call site.
+    func closePreviewIfOpen() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible else { return }
+        QLPreviewPanel.shared().orderOut(nil)
     }
 }
 
