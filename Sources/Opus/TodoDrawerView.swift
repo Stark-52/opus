@@ -16,9 +16,10 @@
 // on screen when it was built.
 
 import AppKit
+import OpusArtifactsKit
 
 final class TodoDrawerView: NSView {
-    static let width: CGFloat = 260
+    static let width: CGFloat = RightDockGeometry.width(for: .tasks)
 
     /// Tasks to display, already loaded+sorted (`TaskListReader.load`'s
     /// numeric-filename order — oldest task first, same order the task
