@@ -63,11 +63,12 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         // when it's open. Kept byte-identical to QuickTerminalPanel's copy
         // of this block, the same way Cmd+Shift+T is duplicated between the
         // two hosts: fixing one host only would leave the other with the
-        // bug. Escape and Space carry no modifier, so both are gated on
-        // one — Escape on the drawer actually holding the keyboard (an open
-        // drawer must not swallow the terminal's interrupt), Space on the
-        // modifier set being empty (Shift+Space and Ctrl+Space are the
-        // terminal's, not a preview request).
+        // bug. Escape, Space and Return carry no modifier, so each is gated
+        // on one — Escape on the drawer actually holding the keyboard (an
+        // open drawer must not swallow the terminal's interrupt), Space and
+        // Return on the modifier set being empty (Shift+Space and
+        // Ctrl+Space are the terminal's, not a preview request), with the
+        // drawer itself checking that the TABLE has focus before it acts.
         if container.artifactsDrawerIsOpen {
             if mods == [.command], ev.charactersIgnoringModifiers?.lowercased() == "f" {
                 container.focusArtifactsFilter(); return nil
@@ -78,6 +79,9 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             }
             if ev.keyCode == 49, mods.isEmpty {  // Space
                 if container.handleArtifactsSpace() { return nil }
+            }
+            if ev.keyCode == 36, mods.isEmpty {  // Return
+                if container.handleArtifactsReturn() { return nil }
             }
         }
         if mods == .command {
