@@ -35,7 +35,7 @@ final class ArtifactsDrawerView: NSView {
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No artifacts in this session")
     private let filterField = NSTextField(frame: .zero)
-    let tableView = NSTableView(frame: .zero)
+    private let tableView = NSTableView(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
 
     override init(frame frameRect: NSRect) {

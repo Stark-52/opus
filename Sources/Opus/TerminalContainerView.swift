@@ -73,9 +73,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// instead of a harmlessly closed drawer. Read as `rightDock?.occupant
     /// ?? .none` everywhere.
     private var rightDock: RightDock?
-    /// Own trailing constraint on `terminalArea` — `0` when the drawer is
-    /// closed, `-TodoDrawerView.width` when open, so the terminal never
-    /// draws underneath the drawer. See `toggleTodoDrawer()`.
+    /// Own trailing constraint on `terminalArea` — `0` when the dock is
+    /// empty, `RightDockGeometry.terminalTrailingConstant(for:)` for
+    /// whichever drawer is showing, so the terminal never draws underneath
+    /// it. Written by `RightDock.show(_:)`, which owns that arithmetic.
     private var terminalAreaTrailingConstraint: NSLayoutConstraint!
     /// Own bottom constraint on the drawer, switched in `updateTabIndicator`
     /// alongside `terminalAreaBottomConstraint`/`railBottomConstraint` — the
@@ -317,9 +318,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // right from construction, not just after the first tab change.
         let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
         // v1.6 backlog Task 3: trailing constraint is now a variable, not a
-        // fixed pin — `0` (closed) by default, `-TodoDrawerView.width` while
-        // the todo drawer is open (toggleTodoDrawer), so the terminal area
-        // shrinks to make room instead of drawing underneath the drawer.
+        // fixed pin — `0` (dock empty) by default, and
+        // `RightDockGeometry.terminalTrailingConstant(for:)` for whichever
+        // drawer the dock is showing, so the terminal area shrinks to make
+        // room instead of drawing underneath the drawer.
         let trailing = area.trailingAnchor.constraint(equalTo: trailingAnchor)
         NSLayoutConstraint.activate([
             area.topAnchor.constraint(equalTo: topAnchor),
