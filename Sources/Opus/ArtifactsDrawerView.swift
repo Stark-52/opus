@@ -64,7 +64,6 @@ final class ArtifactsDrawerView: NSView {
         filterField.translatesAutoresizingMaskIntoConstraints = false
         filterField.wantsLayer = true
         filterField.layer?.cornerRadius = OpusTheme.radiusControl
-        filterField.isHidden = true
 
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.textColor = OpusTheme.cream(0.45)
@@ -145,14 +144,22 @@ final class ArtifactsDrawerView: NSView {
                 || $0.displayDetail.lowercased().contains(needle)
         }
         header.stringValue = Self.headerText(artifacts: artifacts)
+        // Two distinct reasons the list can be empty, two distinct messages:
+        // a session with no artifacts at all versus a filter that matched
+        // none of the ones that exist. Recomputed on every call so the text
+        // always reflects the CURRENT artifacts/filter pair, not whichever
+        // one was true when the view was built.
+        emptyLabel.stringValue = artifacts.isEmpty ? "No artifacts in this session" : "No match"
         emptyLabel.isHidden = !visible.isEmpty
         scrollView.isHidden = visible.isEmpty
         tableView.reloadData()
     }
 
-    /// Cmd+F, routed from the container. Reveals the field and focuses it.
+    /// Cmd+F, routed from the container. The field is always visible (see
+    /// the finding this replaced: a hidden field with active constraints
+    /// still reserves its 34pt band, so hiding it bought nothing but a
+    /// state machine), so focusing is the whole job.
     func focusFilter() {
-        filterField.isHidden = false
         window?.makeFirstResponder(filterField)
     }
 
@@ -166,7 +173,6 @@ final class ArtifactsDrawerView: NSView {
             return true
         }
         if window?.firstResponder === filterField.currentEditor() {
-            filterField.isHidden = true
             window?.makeFirstResponder(tableView)
             return true
         }
