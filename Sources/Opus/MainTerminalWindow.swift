@@ -60,18 +60,23 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         // Artifacts drawer gestures (Lot artifacts-drawer, Task 10): only
         // while the drawer is the dock's current occupant, and BEFORE the
         // find-bar's own Cmd+F branch below so the drawer's filter wins
-        // when it's open. Escape and Space fire with no modifier at all —
-        // this repo has no other binding on either keyCode, so nothing
-        // here is shadowed.
+        // when it's open. Kept byte-identical to QuickTerminalPanel's copy
+        // of this block, the same way Cmd+Shift+T is duplicated between the
+        // two hosts: fixing one host only would leave the other with the
+        // bug. Escape and Space carry no modifier, so both are gated on
+        // one — Escape on the drawer actually holding the keyboard (an open
+        // drawer must not swallow the terminal's interrupt), Space on the
+        // modifier set being empty (Shift+Space and Ctrl+Space are the
+        // terminal's, not a preview request).
         if container.artifactsDrawerIsOpen {
             if mods == [.command], ev.charactersIgnoringModifiers?.lowercased() == "f" {
                 container.focusArtifactsFilter(); return nil
             }
-            if ev.keyCode == 53 {  // Escape
+            if ev.keyCode == 53, container.artifactsDrawerHasFocus {  // Escape
                 if container.handleArtifactsEscape() { return nil }
                 container.toggleArtifactsDrawer(); return nil
             }
-            if ev.keyCode == 49 {  // Space
+            if ev.keyCode == 49, mods.isEmpty {  // Space
                 if container.handleArtifactsSpace() { return nil }
             }
         }
