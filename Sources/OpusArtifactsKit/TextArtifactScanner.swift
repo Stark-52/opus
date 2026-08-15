@@ -134,10 +134,21 @@ public enum TextArtifactScanner {
 
     /// Every maximal run of path characters that could name a file, in
     /// reading order, unresolved and unexpanded. A candidate must be at
-    /// least 3 characters and contain a `/` or a `.`; everything past that
-    /// is the disk's job, not this scanner's. Accepting `v1.2.3` here and
-    /// letting ArtifactClassifier drop it is deliberate: no rule of form
-    /// separates a version number from a filename, only existence does.
+    /// least 3 characters, contain a `/` or a `.`, and contain at least one
+    /// letter or digit; everything past that is the disk's job, not this
+    /// scanner's. Accepting `v1.2.3` here and letting ArtifactClassifier
+    /// drop it is deliberate: no rule of form separates a version number
+    /// from a filename, only existence does.
+    ///
+    /// The letter-or-digit rule is the one exception, added by the final
+    /// whole-branch review after running this over the owner's real
+    /// transcripts. Punctuation-only tokens name nothing, but they are not
+    /// harmless: `///` (74 occurrences in one session, from Swift doc
+    /// comment markers in assistant prose) is 3 characters and contains a
+    /// `/`, so it passed, resolved to `/`, and `/` exists — which means the
+    /// existence filter the whole text-scanning design leans on could not
+    /// cull it, and last-mention-wins ordering kept re-bumping the root to
+    /// the top of the drawer. `//.` and `...` are the same shape.
     public static func paths(in text: String) -> [String] {
         let masked = maskingURLs(in: text)
         var result: [String] = []
@@ -146,6 +157,7 @@ public enum TextArtifactScanner {
             defer { token = "" }
             guard token.count >= 3 else { return }
             guard token.contains("/") || token.contains(".") else { return }
+            guard token.contains(where: { $0.isLetter || $0.isNumber }) else { return }
             result.append(token)
         }
         for c in masked {

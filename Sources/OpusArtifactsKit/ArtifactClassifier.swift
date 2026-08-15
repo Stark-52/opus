@@ -62,12 +62,55 @@ public enum ArtifactClassifier {
             let resolved = PathDetector.resolvePath(withoutLine, cwd: candidate.cwd)
 
             guard let path = firstExisting(resolved, fileManager: fileManager) else { return nil }
+            guard !isNoise(path, cwd: candidate.cwd) else { return nil }
 
             var isDir: ObjCBool = false
             _ = fileManager.fileExists(atPath: path, isDirectory: &isDir)
             let kind: ArtifactKind = isDir.boolValue ? .folder : (isImage(path) ? .image : .file)
             return Artifact(key: path, kind: kind, resolvedPath: path, urlString: nil)
         }
+    }
+
+    /// Paths that exist on disk and are still not artifacts.
+    ///
+    /// Added by the final whole-branch review, which ran the shipped code
+    /// over the owner's three largest real transcripts and found the drawer
+    /// dominated by navigational context rather than by anything Claude
+    /// made. The existence filter cannot help here, because every one of
+    /// these genuinely exists:
+    ///
+    /// - `/dev/*`: `/dev/null` appeared 346 times in one 52 MB session,
+    ///   almost entirely from `2>/dev/null` inside Bash commands, and
+    ///   `/dev/console` the same way. Tested on the RESOLVED path, not on
+    ///   the raw token, so a relative `dev/null` under cwd is untouched and
+    ///   an ordinary file whose name merely starts with "dev" is untouched
+    ///   too (see testFileNamedDevIsNotDropped).
+    /// - `/`: what `///` used to resolve to before the scanner stopped
+    ///   emitting punctuation-only tokens. Belt and braces, and it also
+    ///   covers a literal `/` arriving from a tool_use key.
+    /// - the entry's own `cwd`: the project root, mentioned constantly (201
+    ///   times in that same session) and never a product. A path equal to
+    ///   cwd cannot be a folder Claude just created, since cwd already
+    ///   existed before the session started, so nothing real is hidden.
+    /// - the home directory: same argument, one level up.
+    ///
+    /// Both sides are standardized the same way `resolvePath` standardizes
+    /// its output, otherwise a cwd carrying a trailing slash or an
+    /// unresolved symlink would never compare equal. The incoming path
+    /// needs it too, and not only in theory: measured on the owner's three
+    /// largest transcripts, an ELLIPSIS in prose ("...") resolved to
+    /// `<cwd>/...`, which does not exist, and then `firstExisting`'s
+    /// trailing-dot retry turned it into `<cwd>/`, which does — so the
+    /// project root appeared a SECOND time under a different dedup key.
+    /// `TextArtifactScanner` now rejects "..." upstream, but tool_use keys
+    /// reach this function with no scanner in front of them.
+    private static func isNoise(_ path: String, cwd: String) -> Bool {
+        if path.hasPrefix("/dev/") { return true }
+        let normalized = (path as NSString).standardizingPath
+        if normalized == "/" { return true }
+        if normalized == (cwd as NSString).standardizingPath { return true }
+        if normalized == (NSHomeDirectory() as NSString).standardizingPath { return true }
+        return false
     }
 
     /// The path as resolved, else the same path with sentence-ending dots

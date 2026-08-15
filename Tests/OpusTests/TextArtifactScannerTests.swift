@@ -45,6 +45,24 @@ final class TextArtifactScannerTests: XCTestCase {
         XCTAssertEqual(TextArtifactScanner.paths(in: "bumped to v1.2.3"), ["v1.2.3"])
     }
 
+    // Final whole-branch review: "///" is 3 characters and contains a "/",
+    // so it passed the length and shape rules, resolved to "/", and "/"
+    // exists — the existence filter could not cull it. 74 occurrences in one
+    // real session, all of them Swift doc-comment markers in prose.
+    func testDocCommentMarkerIsRejected() {
+        XCTAssertEqual(TextArtifactScanner.paths(in: "/// A doc comment line"), [])
+    }
+
+    func testPunctuationOnlyTokensAreRejected() {
+        XCTAssertEqual(TextArtifactScanner.paths(in: "wait ... then //. and ../ done"), [])
+    }
+
+    // The letter-or-digit rule must not cost a real path anything: a digit
+    // alone is enough, and so is a single letter.
+    func testDigitOnlyNameIsStillAccepted() {
+        XCTAssertEqual(TextArtifactScanner.paths(in: "at /tmp/2026/01 now"), ["/tmp/2026/01"])
+    }
+
     func testPathsIgnoreUrls() {
         // The URL scanner owns these. Returning "//example.com/x" here would
         // be worse than nothing: resolvePath treats a leading slash as

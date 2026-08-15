@@ -130,4 +130,67 @@ final class ArtifactClassifierTests: XCTestCase {
     func testUrlWithNoExplicitPortKeysAsBefore() {
         XCTAssertEqual(classify(.url("https://a.dev/x"))?.key, "https://a.dev/x")
     }
+
+    // MARK: Existing-but-not-an-artifact (final whole-branch review)
+
+    // 346 occurrences in one real 52 MB session, from `2>/dev/null` inside
+    // Bash commands. /dev/null exists, so only an explicit rule removes it.
+    func testDevNullIsDropped() {
+        XCTAssertNil(classify(.path("/dev/null")))
+    }
+
+    func testDevConsoleIsDropped() {
+        XCTAssertNil(classify(.path("/dev/console")))
+    }
+
+    // Positive control for the rule above: the test is a prefix on the
+    // RESOLVED path, not a substring on the token, so an ordinary file whose
+    // name merely contains "dev" survives.
+    func testFileNamedDevIsNotDropped() throws {
+        let path = try makeFile("dev-notes.md")
+        XCTAssertEqual(classify(.path(path))?.resolvedPath, path)
+    }
+
+    func testFolderNamedDevIsNotDropped() throws {
+        let path = try makeDir("dev")
+        XCTAssertEqual(classify(.path(path))?.kind, .folder)
+    }
+
+    // "///" in assistant prose used to reach here as a path and resolve to
+    // "/", which exists. TextArtifactScanner now rejects it upstream; this
+    // closes the tool_use route, which has no scanner in front of it.
+    func testFilesystemRootIsDropped() {
+        XCTAssertNil(classify(.path("/")))
+    }
+
+    // The project root is mentioned constantly and is never a product. It
+    // also cannot be a folder Claude just made: cwd existed before the
+    // session did.
+    func testCwdItselfIsDropped() {
+        XCTAssertNil(classify(.path(root.path)))
+    }
+
+    func testDotResolvingToCwdIsDropped() {
+        XCTAssertNil(classify(.path(".")))
+    }
+
+    // Measured on the real transcripts: an ellipsis in prose resolves to
+    // <cwd>/... , which does not exist, and firstExisting's trailing-dot
+    // retry then yields <cwd>/ , which does — a second project-root row
+    // under a second dedup key. The scanner now rejects "..." upstream;
+    // this covers the tool_use route, which has no scanner in front of it.
+    func testCwdWithTrailingSlashIsDropped() {
+        XCTAssertNil(classify(.path("...")))
+    }
+
+    func testHomeDirectoryIsDropped() {
+        XCTAssertNil(classify(.path(NSHomeDirectory()), cwd: "/"))
+    }
+
+    // The cwd rule must not swallow the things inside cwd, which are
+    // exactly what the drawer exists to show.
+    func testFileInsideCwdIsKept() throws {
+        let path = try makeFile("inside.md")
+        XCTAssertEqual(classify(.path(path))?.resolvedPath, path)
+    }
 }
