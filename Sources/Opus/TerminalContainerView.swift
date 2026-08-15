@@ -893,12 +893,40 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         artifactsTimer = nil
     }
 
+    /// Clear the drawer AND forget which session it was showing.
+    ///
+    /// Final-review Important 1: the two early-return branches below used to
+    /// clear only the visible list, keeping `artifactsSessionId` and
+    /// `artifactsOffset`. That silently truncated the drawer for the rest of
+    /// the process: open on session A at byte offset N, switch to a tab whose
+    /// pane has no bound session (one tick empties the list), switch back —
+    /// `A == A`, so no reset fires, and the reader resumes at byte N against
+    /// an empty list. Everything session A produced before that moment is
+    /// gone from the drawer with no visible symptom, which is acceptance
+    /// criterion 1 failing quietly. Dropping the id is what guarantees the
+    /// next successful refresh takes the reset path and re-reads from 0.
+    ///
+    /// The generation bump drops a read that is still in flight for the
+    /// session being forgotten, so its result cannot repopulate the list we
+    /// just decided has no session behind it.
+    private func resetArtifactsSession() {
+        artifactsSessionId = nil
+        artifactsOffset = 0
+        artifactsGeneration += 1
+        artifactsDrawer.artifacts = []
+    }
+
     private func refreshArtifacts() {
         guard rightDock?.occupant == .artifacts else { return }
-        guard !artifactsRefreshInFlight else { return }
 
+        // Session resolution and the identity reset run BEFORE the in-flight
+        // guard, not after it. A first read of a large transcript takes about
+        // 0.8s in release, and a tab switch is most likely during exactly
+        // that window; with the guard on top, a refresh arriving mid-read
+        // returned without clearing or resetting anything, so switchTab's
+        // call below would have been a no-op precisely when it matters most.
         guard let sessionId = activeSessionId() else {
-            artifactsDrawer.artifacts = []
+            resetArtifactsSession()
             return
         }
         let cwd = OpusPreferences.shared.workingDirectory
@@ -908,11 +936,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             artifactsSessionId = sessionId
             artifactsOffset = 0
             artifactsDrawer.artifacts = []
+            // Any read still in flight belongs to the PREVIOUS session. Bump
+            // here so its result is dropped instead of being merged into the
+            // new session's freshly emptied list.
+            artifactsGeneration += 1
         }
         guard let url = Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
-            artifactsDrawer.artifacts = []
+            resetArtifactsSession()
             return
         }
+
+        // The guard stays, but only over the dispatch: no second background
+        // read is started while one is running.
+        guard !artifactsRefreshInFlight else { return }
 
         artifactsGeneration += 1
         let generation = artifactsGeneration
@@ -1906,6 +1942,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // session B while the drawer is open would keep showing A's tasks
         // for up to 5s. No-ops when the drawer is closed.
         refreshTodoDrawer()
+        // Same again for the artifacts drawer, whose own timer is 1.5s.
+        // Safe only because refreshArtifacts now resolves the session and
+        // resets identity ABOVE its in-flight guard: before that, this call
+        // landing during the first (slow) read of a transcript would have
+        // returned without resetting, and a switch to a pane with no bound
+        // session would have kept the old id and offset. No-ops when the
+        // drawer is closed.
+        refreshArtifacts()
     }
 
     /// True when `text`, once whitespace-trimmed, is nothing but the "❯ "
