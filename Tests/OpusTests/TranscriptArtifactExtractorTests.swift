@@ -83,6 +83,17 @@ final class TranscriptArtifactExtractorTests: XCTestCase {
         XCTAssertEqual(out, [])
     }
 
+    // A page I fetched is not a page I made. A fetched URL that matters is
+    // named in the reply text, where the text scanner still catches it.
+    func testWebFetchYieldsNothing() {
+        let out = run("""
+        {"type":"assistant","cwd":"/Users/a/proj","message":{"content":[
+          {"type":"tool_use","name":"WebFetch","input":{"url":"https://docs.dev/page"}}
+        ]}}
+        """)
+        XCTAssertEqual(out, [])
+    }
+
     func testAssistantTextIsScanned() {
         let out = run("""
         {"type":"assistant","cwd":"/Users/a/proj","message":{"content":[
