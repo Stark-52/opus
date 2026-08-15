@@ -11,6 +11,7 @@
 // never an error path taken when something goes wrong.
 
 import AppKit
+import Quartz
 import QuickLookThumbnailing
 import OpusArtifactsKit
 import OpusSecretsKit
@@ -86,6 +87,13 @@ final class ArtifactsDrawerView: NSView {
         tableView.delegate = self
         tableView.target = self
         tableView.doubleAction = #selector(openSelected)
+        // Allow dragging a row out to an external destination (Finder, Mail,
+        // Slack). Returning a pasteboard writer alone is not enough — without
+        // this mask the table's default external operation is "none" and the
+        // drag silently refuses to drop anywhere outside the app.
+        tableView.setDraggingSourceOperationMask([.copy], forLocal: false)
+        tableView.menu = NSMenu()
+        tableView.menu?.delegate = self
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = tableView
@@ -206,6 +214,68 @@ extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
         cell.configure(artifact: artifact)
         return cell
     }
+
+    /// Drag a row out to the Finder, the Desktop, a mail composer, Slack.
+    /// The real file goes, not a reference to it. This is the action that
+    /// removes the original round trip entirely: no more asking Claude to
+    /// copy something to the Desktop just to reach it.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard let artifact = artifact(at: row) else { return nil }
+        if let path = artifact.resolvedPath { return URL(fileURLWithPath: path) as NSURL }
+        if let raw = artifact.urlString, let url = URL(string: raw) { return url as NSURL }
+        return nil
+    }
+}
+
+// MARK: - Context menu
+
+extension ArtifactsDrawerView: NSMenuDelegate, ArtifactMenuTarget {
+    /// Right-click acts on the row under the cursor, which is not
+    /// necessarily the selected row. Resolving it at menu-open time and
+    /// selecting it keeps the two in agreement.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = tableView.clickedRow
+        guard let artifact = artifact(at: row) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        for item in ArtifactActions.menu(for: artifact, target: self).items {
+            menu.addItem(item.copy() as! NSMenuItem)
+        }
+        for item in menu.items { item.target = self }
+    }
+
+    func menuOpen() { if let a = selectedArtifact { ArtifactActions.open(a) } }
+    func menuReveal() { if let a = selectedArtifact { ArtifactActions.revealInFinder(a) } }
+    func menuRevealParent() { if let a = selectedArtifact { ArtifactActions.revealParent(a) } }
+    func menuCopyPath() { if let a = selectedArtifact { ArtifactActions.copyPath(a) } }
+    func menuCopyLink() { if let a = selectedArtifact { ArtifactActions.copyLink(a) } }
+}
+
+// MARK: - QuickLook
+
+extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    /// Space previews the selected row, exactly like the Finder. Only when
+    /// the TABLE has focus: with the filter field focused, space is a space.
+    func handleSpace() -> Bool {
+        guard window?.firstResponder === tableView,
+              let artifact = selectedArtifact,
+              artifact.resolvedPath != nil
+        else { return false }
+        guard let panel = QLPreviewPanel.shared() else { return false }
+        panel.dataSource = self
+        panel.delegate = self
+        panel.makeKeyAndOrderFront(nil)
+        return true
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        selectedArtifact?.resolvedPath == nil ? 0 : 1
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        guard let path = selectedArtifact?.resolvedPath else { return nil }
+        return URL(fileURLWithPath: path) as NSURL
+    }
 }
 
 /// One row: thumbnail, name, parent directory.
@@ -294,17 +364,6 @@ private final class ArtifactCellView: NSTableCellView {
                 guard let self, self.generation == token else { return }
                 self.thumb.image = rep.nsImage
             }
-        }
-    }
-}
-
-// Replaced by the real implementation in ArtifactActions.swift.
-enum ArtifactActions {
-    static func open(_ artifact: Artifact) {
-        if let path = artifact.resolvedPath {
-            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-        } else if let s = artifact.urlString, let url = URL(string: s) {
-            NSWorkspace.shared.open(url)
         }
     }
 }

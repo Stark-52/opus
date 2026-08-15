@@ -737,6 +737,25 @@ final class QuickTerminalPanel: NSObject {
         guard ev.window === panel else { return ev }
         let mods = KeyMods.shortcutMods(ev.modifierFlags)
 
+        // Artifacts drawer gestures (Lot artifacts-drawer, Task 10): only
+        // while the drawer is the dock's current occupant, and BEFORE the
+        // find-bar's own Cmd+F branch below so the drawer's filter wins
+        // when it's open. Escape and Space fire with no modifier at all —
+        // this repo has no other binding on either keyCode, so nothing
+        // here is shadowed.
+        if container.artifactsDrawerIsOpen {
+            if mods == [.command], ev.charactersIgnoringModifiers?.lowercased() == "f" {
+                container.focusArtifactsFilter(); return nil
+            }
+            if ev.keyCode == 53 {  // Escape
+                if container.handleArtifactsEscape() { return nil }
+                container.toggleArtifactsDrawer(); return nil
+            }
+            if ev.keyCode == 49 {  // Space
+                if container.handleArtifactsSpace() { return nil }
+            }
+        }
+
         // Cmd alone — tab/pane lifecycle + tab switching.
         if mods == .command {
             if let chars = ev.charactersIgnoringModifiers?.lowercased() {
