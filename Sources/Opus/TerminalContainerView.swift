@@ -471,6 +471,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     self.startArtifactsTimer()
                 } else {
                     self.stopArtifactsTimer()
+                    // Every route out of the artifacts drawer lands here
+                    // (the hotkey, the todo drawer taking the dock instead,
+                    // anything else RightDock ever grows) — unlike
+                    // toggleArtifactsDrawer, which only covers its own call
+                    // site. An open QuickLook preview has no other owner
+                    // telling it to close, so it would otherwise float on
+                    // over a drawer that's no longer there.
+                    self.artifactsDrawer.closePreviewIfOpen()
                 }
             })
 
