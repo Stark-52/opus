@@ -64,6 +64,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // (background read, generation-guarded main-thread apply, timer that
     // only runs while the surface is actually visible), not a new pattern.
     private var todoDrawer: TodoDrawerView!
+    /// Owns the container's right edge: the terminal's trailing constraint,
+    /// the top-right button row's shift, and (via `onChange`) the Tasks
+    /// timer's lifecycle. Optional, not implicitly unwrapped: `installShieldButton()`
+    /// (called from `init`, after `buildSubviews()`) reads it through
+    /// `pinToTopRightRow`, and although that call order is safe today, a
+    /// force unwrap would turn any future earlier call into a launch crash
+    /// instead of a harmlessly closed drawer. Read as `rightDock?.occupant
+    /// ?? .none` everywhere.
+    private var rightDock: RightDock?
     /// Own trailing constraint on `terminalArea` — `0` when the drawer is
     /// closed, `-TodoDrawerView.width` when open, so the terminal never
     /// draws underneath the drawer. See `toggleTodoDrawer()`.
@@ -390,11 +399,27 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         NSLayoutConstraint.activate([
             drawer.topAnchor.constraint(equalTo: topAnchor),
             drawer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            drawer.widthAnchor.constraint(equalToConstant: TodoDrawerView.width),
+            drawer.widthAnchor.constraint(
+                equalToConstant: RightDockGeometry.width(for: .tasks)),
             drawerBottom
         ])
         todoDrawer = drawer
         todoDrawerBottomConstraint = drawerBottom
+
+        rightDock = RightDock(
+            views: [.tasks: drawer],
+            terminalTrailing: terminalAreaTrailingConstraint,
+            onChange: { [weak self] occupant in
+                guard let self else { return }
+                self.updateTopRightRow(drawerOpen: RightDockGeometry.isOpen(occupant))
+                self.layoutSubtreeIfNeeded()
+                if occupant == .tasks {
+                    self.refreshTodoDrawer()
+                    self.startTodoDrawerTimer()
+                } else {
+                    self.stopTodoDrawerTimer()
+                }
+            })
 
         layoutSubtreeIfNeeded()
     }
@@ -661,7 +686,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let constraint = button.trailingAnchor.constraint(
             equalTo: terminalArea.trailingAnchor,
             constant: TopRightButtonRow.trailingConstant(
-                base: base, drawerOpen: !todoDrawer.isHidden))
+                base: base, drawerOpen: RightDockGeometry.isOpen(rightDock?.occupant ?? .none)))
         topRightRowConstraints.append((constraint, base))
         constraint.isActive = true
     }
@@ -673,46 +698,33 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
+    // The dangerous-mode shield button (installShieldButton, above)
+    // used to float at a FIXED offset from the container's own
+    // trailing edge, which sat inside the drawer's top-right corner
+    // whenever the drawer was open. Fix round finding F2: rather
+    // than hiding the shield for the drawer's duration (which kills
+    // the only at-a-glance "claude is running
+    // --dangerously-skip-permissions" signal), the button's trailing
+    // anchor is now pinned to `terminalArea.trailingAnchor` instead
+    // of the container's — so flipping this same
+    // `terminalAreaTrailingConstraint` that shrinks the terminal
+    // area also slides the shield left with it, landing inside the
+    // now-narrower terminal area instead of under the drawer. No
+    // shield-specific bookkeeping needed here anymore;
+    // `refreshShieldButton()` still governs the button's visibility
+    // on its own, unrelated axis (skip-permissions state, not drawer
+    // state).
+    //
+    // Palette fix round: the shield was the ONLY button that moved.
+    // Its row siblings (the panel's pin and ↗ buttons) were still
+    // pinned to the panel's own trailing edge and stayed put, ending
+    // up inside the drawer's top-right corner — see
+    // `TopRightButtonRow`. They are now pinned to the same moving
+    // anchor via `pinToTopRightRow`, and `updateTopRightRow` applies
+    // the row-wide shift that keeps the rightmost one clear of the
+    // drawer's leading edge.
     func toggleTodoDrawer() {
-        if todoDrawer.isHidden {
-            todoDrawer.isHidden = false
-            // The dangerous-mode shield button (installShieldButton, above)
-            // used to float at a FIXED offset from the container's own
-            // trailing edge, which sat inside the drawer's top-right corner
-            // whenever the drawer was open. Fix round finding F2: rather
-            // than hiding the shield for the drawer's duration (which kills
-            // the only at-a-glance "claude is running
-            // --dangerously-skip-permissions" signal), the button's trailing
-            // anchor is now pinned to `terminalArea.trailingAnchor` instead
-            // of the container's — so flipping this same
-            // `terminalAreaTrailingConstraint` that shrinks the terminal
-            // area also slides the shield left with it, landing inside the
-            // now-narrower terminal area instead of under the drawer. No
-            // shield-specific bookkeeping needed here anymore;
-            // `refreshShieldButton()` still governs the button's visibility
-            // on its own, unrelated axis (skip-permissions state, not drawer
-            // state).
-            //
-            // Palette fix round: the shield was the ONLY button that moved.
-            // Its row siblings (the panel's pin and ↗ buttons) were still
-            // pinned to the panel's own trailing edge and stayed put, ending
-            // up inside the drawer's top-right corner — see
-            // `TopRightButtonRow`. They are now pinned to the same moving
-            // anchor via `pinToTopRightRow`, and `updateTopRightRow` applies
-            // the row-wide shift that keeps the rightmost one clear of the
-            // drawer's leading edge.
-            terminalAreaTrailingConstraint.constant = -TodoDrawerView.width
-            updateTopRightRow(drawerOpen: true)
-            layoutSubtreeIfNeeded()
-            refreshTodoDrawer()
-            startTodoDrawerTimer()
-        } else {
-            todoDrawer.isHidden = true
-            terminalAreaTrailingConstraint.constant = 0
-            updateTopRightRow(drawerOpen: false)
-            layoutSubtreeIfNeeded()
-            stopTodoDrawerTimer()
-        }
+        rightDock?.toggle(.tasks)
     }
 
     private func startTodoDrawerTimer() {
@@ -767,7 +779,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // on every activity change / tab switch, which fire far more often
         // than the drawer is actually open; a hidden drawer has nothing on
         // screen worth a disk read+parse for).
-        guard !todoDrawer.isHidden else { return }
+        guard rightDock?.occupant == .tasks else { return }
         // Fix round finding F3: a refresh already in flight covers whatever
         // this call would have asked for too (it started more recently than
         // this event), so drop this trigger rather than paying for a second
