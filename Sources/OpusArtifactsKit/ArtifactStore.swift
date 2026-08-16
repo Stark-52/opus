@@ -8,6 +8,16 @@
 import Foundation
 
 public enum ArtifactStore {
+    /// A dated artifact always beats an undated one; between two dated ones
+    /// the later wins.
+    private static func isNewer(_ a: Artifact, than b: Artifact) -> Bool {
+        switch (a.timestamp, b.timestamp) {
+        case let (x?, y?): return x > y
+        case (_?, nil): return true
+        default: return false
+        }
+    }
+
     /// No observed session comes close. This is a runaway guard, not a
     /// product limit.
     public static let capacity = 500
@@ -30,15 +40,36 @@ public enum ArtifactStore {
         let cap = max(capacity, 0)
         guard cap > 0 else { return [] }
 
-        var seen = Set<String>()
-        var result: [Artifact] = []
-        result.reserveCapacity(min(existing.count + incoming.count, cap))
-
+        // Deduplicate first, keeping whichever copy carries the newer
+        // timestamp. The same file written twice is one row, dated by its
+        // latest write, and an undated copy never displaces a dated one.
+        var best: [String: Artifact] = [:]
+        var order: [String] = []
         for artifact in incoming.reversed() + existing {
-            guard seen.insert(artifact.key).inserted else { continue }
-            result.append(artifact)
-            if result.count >= cap { break }
+            guard let held = best[artifact.key] else {
+                best[artifact.key] = artifact
+                order.append(artifact.key)
+                continue
+            }
+            if isNewer(artifact, than: held) { best[artifact.key] = artifact }
         }
-        return result
+
+        // Then order by the shared clock. Position within one transcript
+        // cannot order two transcripts against each other; a timestamp can,
+        // and that is what lets an aggregated drawer interleave two sessions
+        // instead of stacking one batch on the other. Ties and undated
+        // artifacts fall back to the order they were seen in, which keeps the
+        // result stable rather than arbitrary.
+        var rank: [String: Int] = [:]
+        for (i, key) in order.enumerated() { rank[key] = i }
+        let sorted = order.compactMap { best[$0] }.sorted { a, b in
+            switch (a.timestamp, b.timestamp) {
+            case let (x?, y?) where x != y: return x > y
+            case (nil, _?): return false   // undated cannot claim to be recent
+            case (_?, nil): return true
+            default: return (rank[a.key] ?? 0) < (rank[b.key] ?? 0)
+            }
+        }
+        return Array(sorted.prefix(cap))
     }
 }

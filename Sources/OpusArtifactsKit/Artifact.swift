@@ -21,12 +21,21 @@ public struct Artifact: Equatable, Sendable {
     /// Display goes through SecretRedactor at the view layer; opening and
     /// copying must use this value or the link stops working.
     public let urlString: String?
+    /// When the transcript entry that produced this artifact was written.
+    /// Ordering used to be position within one transcript, which stops
+    /// meaning anything once a drawer merges several sessions, so this is the
+    /// clock they share. Optional because an entry can omit it, and dropping
+    /// an artifact for want of a timestamp would be worse than ordering it
+    /// conservatively.
+    public let timestamp: Date?
 
-    public init(key: String, kind: ArtifactKind, resolvedPath: String?, urlString: String?) {
+    public init(key: String, kind: ArtifactKind, resolvedPath: String?,
+                urlString: String?, timestamp: Date? = nil) {
         self.key = key
         self.kind = kind
         self.resolvedPath = resolvedPath
         self.urlString = urlString
+        self.timestamp = timestamp
     }
 
     /// Filename, folder name, or host. The bold half of a row.

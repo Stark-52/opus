@@ -25,10 +25,15 @@ public enum TranscriptArtifactExtractor {
               let message = root["message"] as? [String: Any]
         else { return [] }
 
+        // ISO8601 with fractional seconds, e.g. 2026-08-16T14:01:10.280Z.
+        // Absent on some entry shapes, which is not a reason to drop the
+        // artifacts on the line.
+        let timestamp = (root["timestamp"] as? String).flatMap(Self.parseTimestamp)
+
         // message.content is either a String or an array of blocks. Both
         // shapes are live in real transcripts.
         if let text = message["content"] as? String {
-            return scanText(text, cwd: cwd)
+            return scanText(text, cwd: cwd, timestamp: timestamp)
         }
         guard let blocks = message["content"] as? [[String: Any]] else { return [] }
 
@@ -37,10 +42,10 @@ public enum TranscriptArtifactExtractor {
             switch block["type"] as? String {
             case "text":
                 if let text = block["text"] as? String {
-                    result.append(contentsOf: scanText(text, cwd: cwd))
+                    result.append(contentsOf: scanText(text, cwd: cwd, timestamp: timestamp))
                 }
             case "tool_use":
-                result.append(contentsOf: fromToolUse(block, cwd: cwd))
+                result.append(contentsOf: fromToolUse(block, cwd: cwd, timestamp: timestamp))
             default:
                 continue
             }
@@ -48,12 +53,32 @@ public enum TranscriptArtifactExtractor {
         return result
     }
 
-    private static func scanText(_ text: String, cwd: String) -> [ArtifactCandidate] {
-        TextArtifactScanner.urls(in: text).map { ArtifactCandidate(payload: .url($0), cwd: cwd) }
-            + TextArtifactScanner.paths(in: text).map { ArtifactCandidate(payload: .path($0), cwd: cwd) }
+    /// One formatter, created once: ISO8601DateFormatter is expensive to
+    /// build and this runs per transcript line.
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    /// Falls back to the fractionless form, which some entries use.
+    private static func parseTimestamp(_ raw: String) -> Date? {
+        if let d = isoFormatter.date(from: raw) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: raw)
     }
 
-    private static func fromToolUse(_ block: [String: Any], cwd: String) -> [ArtifactCandidate] {
+    private static func scanText(_ text: String, cwd: String, timestamp: Date?) -> [ArtifactCandidate] {
+        TextArtifactScanner.urls(in: text).map {
+            ArtifactCandidate(payload: .url($0), cwd: cwd, timestamp: timestamp)
+        } + TextArtifactScanner.paths(in: text).map {
+            ArtifactCandidate(payload: .path($0), cwd: cwd, timestamp: timestamp)
+        }
+    }
+
+    private static func fromToolUse(_ block: [String: Any], cwd: String,
+                                    timestamp: Date?) -> [ArtifactCandidate] {
         guard let name = block["name"] as? String,
               !ArtifactRuleTable.deniedTools.contains(name),
               let input = block["input"] as? [String: Any]
@@ -62,15 +87,19 @@ public enum TranscriptArtifactExtractor {
         var result: [ArtifactCandidate] = []
         for (key, value) in input.sorted(by: { $0.key < $1.key }) {
             if ArtifactRuleTable.urlKeys.contains(key), let s = value as? String {
-                if TextArtifactScanner.urls(in: s).first == s { result.append(.init(payload: .url(s), cwd: cwd)) }
+                if TextArtifactScanner.urls(in: s).first == s {
+                    result.append(.init(payload: .url(s), cwd: cwd, timestamp: timestamp))
+                }
             } else if ArtifactRuleTable.pathKeys.contains(key) {
                 if let s = value as? String {
-                    result.append(.init(payload: .path(s), cwd: cwd))
+                    result.append(.init(payload: .path(s), cwd: cwd, timestamp: timestamp))
                 } else if let many = value as? [String] {
-                    result.append(contentsOf: many.map { .init(payload: .path($0), cwd: cwd) })
+                    result.append(contentsOf: many.map {
+                        .init(payload: .path($0), cwd: cwd, timestamp: timestamp)
+                    })
                 }
             } else if ArtifactRuleTable.textScanKeys.contains(key), let s = value as? String {
-                result.append(contentsOf: scanText(s, cwd: cwd))
+                result.append(contentsOf: scanText(s, cwd: cwd, timestamp: timestamp))
             }
         }
         return result
