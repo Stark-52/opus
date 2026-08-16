@@ -521,7 +521,15 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         // `warmPreviewPanel()`, called when the drawer opens, is what makes it
         // FAST. Building the shared panel is the expensive part, and doing it
         // on the keypress is what made the preview feel sluggish.
-        DispatchQueue.main.async { panel.makeKeyAndOrderFront(nil) }
+        // Scheduled in the COMMON run loop modes, not through
+        // DispatchQueue.main. Both hand the work to the main thread, but a
+        // main-queue block only runs in the run loop's DEFAULT mode: while
+        // AppKit is inside an event-tracking mode, which it can be during key
+        // handling, that block waits for the mode to end. That wait is the
+        // lag, and it is why one press felt slower than two presses of the
+        // very same code path a tenth of a second apart. Common modes include
+        // tracking, so this runs at the next turn whatever mode we are in.
+        RunLoop.main.perform(inModes: [.common]) { panel.makeKeyAndOrderFront(nil) }
         return true
     }
 
