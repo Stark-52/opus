@@ -2013,6 +2013,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             // painted until some unrelated future event happens to repaint it.
             refreshTabBarStates()
         }
+
+        // The tab's session set just shrank, and the drawer aggregates that
+        // set. Without this the closed pane's artifacts stayed listed until
+        // some later event happened to refresh, which read as the drawer
+        // remembering a pane that no longer exists. refreshArtifacts notices
+        // the set changed and rebuilds from what is left.
+        refreshArtifacts()
     }
 
     func splitActivePane(vertical: Bool) {

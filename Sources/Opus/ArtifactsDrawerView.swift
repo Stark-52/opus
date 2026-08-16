@@ -498,7 +498,16 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         // find one it clears whatever was assigned and closes itself again.
         // Assigning directly and skipping the protocol is what made the
         // preview flash open and vanish.
-        panel.makeKeyAndOrderFront(nil)
+        // Deferred by one runloop turn, deliberately. The FIRST Space is the
+        // call that CREATES the shared panel (that is what `shared()` does),
+        // and ordering a just-created panel front in the same turn races its
+        // own setup: it looks for a controller in the responder chain at a
+        // moment when this window has already resigned key, finds none, and
+        // closes again. The second Space then works because the panel already
+        // exists. One turn is enough for it to be a real, settled panel while
+        // this window is still the key one, which is the same timing argument
+        // as the panel's own autohide deferral.
+        DispatchQueue.main.async { panel.makeKeyAndOrderFront(nil) }
         return true
     }
 
