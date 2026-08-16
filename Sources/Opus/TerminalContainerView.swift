@@ -437,9 +437,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         drawer.isHidden = true
         addSubview(drawer)
         let drawerBottom = drawer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
+        // Held rather than activated anonymously: RightDock animates this
+        // constant between 0 (showing) and the drawer's width (parked off
+        // the right edge), which is what makes opening a slide.
+        let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: trailingAnchor)
         NSLayoutConstraint.activate([
             drawer.topAnchor.constraint(equalTo: topAnchor),
-            drawer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            drawerTrailing,
             drawer.widthAnchor.constraint(
                 equalToConstant: RightDockGeometry.width(for: .tasks)),
             drawerBottom
@@ -466,9 +470,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // on screen when it was built. Same reasoning as TodoDrawerView.
         let artifactsBottom = artifactsDrawerView.bottomAnchor.constraint(
             equalTo: bottomAnchor, constant: -(14 + 4))
+        let artifactsTrailing = artifactsDrawerView.trailingAnchor.constraint(
+            equalTo: trailingAnchor)
         NSLayoutConstraint.activate([
             artifactsDrawerView.topAnchor.constraint(equalTo: topAnchor),
-            artifactsDrawerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            artifactsTrailing,
             artifactsDrawerView.widthAnchor.constraint(
                 equalToConstant: RightDockGeometry.width(for: .artifacts)),
             artifactsBottom
@@ -477,8 +483,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         artifactsDrawerBottomConstraint = artifactsBottom
 
         rightDock = RightDock(
-            views: [.tasks: drawer, .artifacts: artifactsDrawerView],
+            panels: [
+                .tasks: RightDock.Panel(view: drawer, trailing: drawerTrailing),
+                .artifacts: RightDock.Panel(
+                    view: artifactsDrawerView, trailing: artifactsTrailing)
+            ],
             terminalTrailing: terminalAreaTrailingConstraint,
+            layout: { [weak self] in self?.layoutSubtreeIfNeeded() },
             onChange: { [weak self] occupant in
                 guard let self else { return }
                 self.updateTopRightRow(drawerOpen: RightDockGeometry.isOpen(occupant))
@@ -491,7 +502,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 // has completed — and refreshArtifactsButton() itself is
                 // nil-safe on `artifactsButton` regardless.
                 self.refreshArtifactsButton()
-                self.layoutSubtreeIfNeeded()
+                // The layout pass moved into RightDock's animation group;
+                // running it here as well would settle the constraints
+                // instantly and cancel the slide.
                 if occupant == .tasks {
                     self.refreshTodoDrawer()
                     self.startTodoDrawerTimer()
