@@ -415,6 +415,33 @@ extension ArtifactsDrawerView: NSMenuDelegate, ArtifactMenuTarget {
 
 // MARK: - QuickLook
 
+// The controller half of QuickLook. The panel finds this by walking the
+// responder chain of the window that was key when it opened, which reaches
+// here because `handleSpace` only fires while the table (a descendant of
+// this view) is first responder.
+//
+// This was originally skipped, with the data source assigned directly in
+// `handleSpace`. A reviewer flagged it and the objection was overruled on
+// the grounds that the app has a single QuickLook call site and no second
+// consumer to arbitrate with. That reasoning was about ARBITRATION and
+// missed the real job of the protocol: without a controller the panel has
+// no owner, drops the assignment and closes immediately.
+extension ArtifactsDrawerView {
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = self
+        panel.delegate = self
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        // Release ownership so `ownsPreviewPanel()` stops claiming a panel
+        // this drawer no longer drives.
+        panel.dataSource = nil
+        panel.delegate = nil
+    }
+}
+
 extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     /// Space previews the selected row, exactly like the Finder. Only when
     /// the TABLE has focus: with the filter field focused, space is a space.
@@ -424,8 +451,12 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
               artifact.resolvedPath != nil
         else { return false }
         guard let panel = QLPreviewPanel.shared() else { return false }
-        panel.dataSource = self
-        panel.delegate = self
+        // Only order it front. The data source and delegate are set from
+        // `beginPreviewPanelControl` below, not here: the panel walks the
+        // responder chain for a controller when it opens, and if it does not
+        // find one it clears whatever was assigned and closes itself again.
+        // Assigning directly and skipping the protocol is what made the
+        // preview flash open and vanish.
         panel.makeKeyAndOrderFront(nil)
         return true
     }
