@@ -33,6 +33,15 @@ echo "→ installing opus-secrets to ~/.local/bin"
 cp "$SECRETS_BIN" "$HOME/.local/bin/opus-secrets"
 chmod +x "$HOME/.local/bin/opus-secrets"
 
+# CFBundleIdentifier is not a cosmetic string, and changing it is not free.
+# TCC keys its grants on the DESIGNATED REQUIREMENT, which is the identifier
+# plus the certificate leaf (see the signing block at the bottom), so a new
+# identifier is a new app as far as macOS is concerned: Accessibility and the
+# rest have to be granted again, and the stale entry has to be removed by hand
+# or two rows named Opus sit in the list with one of them dead. Preferences
+# move with it too, since the standard UserDefaults domain IS the identifier —
+# migrate an existing install with `defaults export <old> -` piped through
+# `defaults import <new> -` before first launch.
 cat > Opus.app/Contents/Info.plist <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
