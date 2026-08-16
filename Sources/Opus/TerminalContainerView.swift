@@ -557,6 +557,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 // tool that finishes.
                 if occupant == .artifacts {
                     self.refreshArtifacts()
+                    // Pay for QuickLook's setup here rather than on the
+                    // keypress that wants to use it.
+                    self.artifactsDrawer.warmPreviewPanel()
                 } else {
                     // Every route out of the artifacts drawer lands here
                     // (the hotkey, the todo drawer taking the dock instead,

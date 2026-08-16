@@ -324,6 +324,16 @@ final class ArtifactsDrawerView: NSView {
     /// the finding this replaced: a hidden field with active constraints
     /// still reserves its 34pt band, so hiding it bought nothing but a
     /// state machine), so focusing is the whole job.
+    /// Build the shared QuickLook panel ahead of time, without showing it.
+    /// `QLPreviewPanel.shared()` is what creates it, and creating it is the
+    /// slow part: doing that on the keypress made the preview feel sluggish,
+    /// and doing it in the same turn as showing it was what made the first
+    /// press fail outright. Called when the drawer opens, so the cost lands
+    /// somewhere nobody is waiting.
+    func warmPreviewPanel() {
+        _ = QLPreviewPanel.shared()
+    }
+
     func focusFilter() {
         window?.makeFirstResponder(filterField)
     }
@@ -498,16 +508,14 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         // find one it clears whatever was assigned and closes itself again.
         // Assigning directly and skipping the protocol is what made the
         // preview flash open and vanish.
-        // Deferred by one runloop turn, deliberately. The FIRST Space is the
-        // call that CREATES the shared panel (that is what `shared()` does),
-        // and ordering a just-created panel front in the same turn races its
-        // own setup: it looks for a controller in the responder chain at a
-        // moment when this window has already resigned key, finds none, and
-        // closes again. The second Space then works because the panel already
-        // exists. One turn is enough for it to be a real, settled panel while
-        // this window is still the key one, which is the same timing argument
-        // as the panel's own autohide deferral.
-        DispatchQueue.main.async { panel.makeKeyAndOrderFront(nil) }
+        // Immediate. The deferral this used to need existed only because the
+        // first Space was also the call that CREATED the panel, and ordering
+        // a just-created panel front in the same turn raced its own setup.
+        // `warmPreviewPanel()` now does the creating when the drawer opens,
+        // so by the time anyone presses Space the panel is a settled object
+        // and there is nothing to wait for. Waiting a turn here was costing
+        // the keypress the very latency it was meant to hide.
+        panel.makeKeyAndOrderFront(nil)
         return true
     }
 
