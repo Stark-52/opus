@@ -49,6 +49,24 @@ func runEventSubcommand() {
     for i in compacted.indices where compacted[i] == 0x0A || compacted[i] == 0x0D {
         compacted[i] = 0x20
     }
+
+    // Stamp this process's own pid into the payload, so the receiving side
+    // can work out WHICH pane the event belongs to by walking up from here
+    // to the pane's shell. Nothing else in a hook payload identifies a pane:
+    // session_id names the conversation, and after a `/resume` that is no
+    // longer the id Opus spawned the pane with, which is exactly how a pane
+    // ends up reading a transcript that does not exist.
+    //
+    // Injected at the byte level, immediately after the opening brace,
+    // rather than by decoding and re-encoding: this subcommand's whole
+    // contract is that it forwards the payload verbatim, and a round trip
+    // through JSONSerialization would silently reorder keys and could drop
+    // anything Foundation cannot represent.
+    if let brace = compacted.firstIndex(of: 0x7B) {   // '{'
+        let field = Data("\"opus_pid\":\(getpid()),".utf8)
+        compacted.insert(contentsOf: field, at: compacted.index(after: brace))
+    }
+
     compacted.append(0x0A)
 
     let eventSock = socket(AF_UNIX, SOCK_STREAM, 0)
