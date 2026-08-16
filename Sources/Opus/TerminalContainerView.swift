@@ -117,7 +117,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // Artifacts drawer (Lot artifacts-drawer, Task 9) — same shape as the
     // todo drawer's timer/generation/in-flight trio directly above.
-    private var artifactsTimer: Timer?
     private var artifactsGeneration = 0
     private var artifactsRefreshInFlight = false
     /// Byte offset into the current session's transcript. Reset whenever the
@@ -544,11 +543,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     self.stopTodoDrawerTimer()
                 }
 
+                // One refresh on open, then nothing until an event says
+                // something changed. There is no timer to start or stop any
+                // more: hook events drive this drawer, so a closed drawer
+                // costs exactly nothing and an open one costs one read per
+                // tool that finishes.
                 if occupant == .artifacts {
                     self.refreshArtifacts()
-                    self.startArtifactsTimer()
                 } else {
-                    self.stopArtifactsTimer()
                     // Every route out of the artifacts drawer lands here
                     // (the hotkey, the todo drawer taking the dock instead,
                     // anything else RightDock ever grows) — unlike
@@ -968,19 +970,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// cheaper than the todo drawer's full directory scan, and because a
     /// file Claude just wrote should show up while the user is still
     /// looking for it.
-    private func startArtifactsTimer() {
-        guard artifactsTimer == nil else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            self?.refreshArtifacts()
-        }
-        timer.tolerance = 0.3
-        artifactsTimer = timer
-    }
 
-    private func stopArtifactsTimer() {
-        artifactsTimer?.invalidate()
-        artifactsTimer = nil
-    }
 
     /// Clear the drawer AND forget which session it was showing.
     ///
@@ -2586,6 +2576,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // own .opusClaudeEvent observer (it owns the global registry) — this
         // container only needs to react to the RESULT, for notifications.
         notifyIfNeeded(for: event)
+
+        // The artifacts drawer is driven by these events rather than by a
+        // clock. A tool finishing is the only moment new artifacts can
+        // appear, so polling for them was asking a question whose answer had
+        // already been delivered. It also had a real cost: every tick
+        // reloaded the table, which throws away the selection and killed any
+        // open QuickLook preview.
+        switch event.kind {
+        case .toolDone, .turnEnded, .sessionStarted:
+            refreshArtifacts()
+        case .promptSubmitted, .toolUse, .needsAttention:
+            break
+        }
     }
 
     /// Step 4 — precise per-pane notification. Raises ClaudeAttention's
