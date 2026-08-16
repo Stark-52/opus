@@ -4,6 +4,7 @@
 
 import Foundation
 import AppKit
+import OpusArtifactsKit
 
 /// Posted whenever any preference is written. Observers (e.g. the panel's
 /// appearance applier, ClaudeBackend's next spawn) read the current value.
@@ -108,6 +109,8 @@ final class OpusPreferences {
         static let editorCommand          = "opus.editorCommand"
         // Context meter (Task 2, v1.4.2 follow-up)
         static let contextLimitTokens     = "opus.contextLimitTokens"
+        static let tasksDrawerWidth       = "opus.tasksDrawerWidth"
+        static let artifactsDrawerWidth   = "opus.artifactsDrawerWidth"
         // Send to Claude (v1.6 backlog, Task 2)
         static let sendToClaudeTemplate   = "opus.sendToClaudeTemplate"
     }
@@ -429,6 +432,36 @@ final class OpusPreferences {
     }
 
     // MARK: Internal
+
+    // MARK: Right dock widths
+
+    /// Key for an occupant's remembered width. `.none` has no drawer and so
+    /// no width to remember.
+    private static func drawerWidthKey(_ occupant: RightDockGeometry.Occupant) -> String? {
+        switch occupant {
+        case .tasks: return K.tasksDrawerWidth
+        case .artifacts: return K.artifactsDrawerWidth
+        case .none: return nil
+        }
+    }
+
+    /// The width the user last dragged this drawer to, or its default. A
+    /// stored 0 means "never dragged": UserDefaults returns 0 for a missing
+    /// key, and 0 is not a width any drag can produce because clampWidth
+    /// floors it at RightDockGeometry.minimumWidth.
+    func drawerWidth(for occupant: RightDockGeometry.Occupant) -> CGFloat {
+        guard let key = Self.drawerWidthKey(occupant) else { return 0 }
+        let stored = CGFloat(defaults.double(forKey: key))
+        guard stored > 0 else { return RightDockGeometry.defaultWidth(for: occupant) }
+        return RightDockGeometry.clampWidth(stored, for: occupant)
+    }
+
+    /// Clamped on the way in as well as on the way out, so a value written
+    /// by an older build or by hand cannot put a drawer outside its band.
+    func setDrawerWidth(_ width: CGFloat, for occupant: RightDockGeometry.Occupant) {
+        guard let key = Self.drawerWidthKey(occupant) else { return }
+        write(key, Double(RightDockGeometry.clampWidth(width, for: occupant)))
+    }
 
     private func write(_ key: String, _ value: Any?) {
         defaults.set(value, forKey: key)

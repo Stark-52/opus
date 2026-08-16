@@ -43,12 +43,20 @@ final class RightDock {
     struct Panel {
         let view: NSView
         let trailing: NSLayoutConstraint
+        /// The drawer's own width. Mutable because the leading edge is
+        /// draggable; the parked `trailing.constant` has to follow it or a
+        /// drawer resized while closed would reappear part-way on screen.
+        let width: NSLayoutConstraint
     }
 
     private(set) var occupant: Occupant = .none
 
     private let panels: [Occupant: Panel]
     private let terminalTrailing: NSLayoutConstraint
+    /// Resolves an occupant's current width, which is a stored preference
+    /// rather than a constant now that the edge can be dragged. Injected so
+    /// this class stays free of UserDefaults.
+    private let widthProvider: (Occupant) -> CGFloat
     /// Runs the container's own layout pass. Called INSIDE the animation
     /// group, which is what turns the constraint changes into movement
     /// rather than a jump.
@@ -61,10 +69,12 @@ final class RightDock {
 
     init(panels: [Occupant: Panel],
          terminalTrailing: NSLayoutConstraint,
+         widthProvider: @escaping (Occupant) -> CGFloat,
          layout: @escaping () -> Void,
          onChange: @escaping (Occupant) -> Void) {
         self.panels = panels
         self.terminalTrailing = terminalTrailing
+        self.widthProvider = widthProvider
         self.layout = layout
         self.onChange = onChange
         // Start every drawer parked and hidden, so `occupant == .none` and
@@ -72,8 +82,37 @@ final class RightDock {
         // container remembering to set both.
         for (key, panel) in panels {
             panel.view.isHidden = true
-            panel.trailing.constant = RightDockGeometry.width(for: key)
+            let w = widthProvider(key)
+            panel.width.constant = w
+            panel.trailing.constant = w
         }
+    }
+
+    /// Apply a dragged width immediately and without animation: a resize
+    /// that eased toward the pointer would lag behind it and feel broken.
+    /// Writing the value to preferences is the container's job, once, at the
+    /// end of the gesture.
+    func setWidth(_ proposed: CGFloat, for target: Occupant) {
+        guard let panel = panels[target] else { return }
+        let width = RightDockGeometry.clampWidth(proposed, for: target)
+        panel.width.constant = width
+        if target == occupant {
+            terminalTrailing.constant =
+                RightDockGeometry.terminalTrailingConstant(forWidth: width)
+        } else {
+            // Parked: keep it exactly one width off the edge so it does not
+            // reappear part-way on screen next time it opens.
+            panel.trailing.constant = width
+        }
+        layout()
+    }
+
+    /// The width an occupant's drawer is currently laid out at, which after
+    /// a drag is the clamped value rather than whatever the pointer asked
+    /// for. The container reads this on mouse up so preferences store what
+    /// is actually on screen.
+    func currentWidth(for target: Occupant) -> CGFloat {
+        panels[target]?.width.constant ?? 0
     }
 
     /// Toggle: asking for the occupant that is already showing closes the
@@ -103,10 +142,11 @@ final class RightDock {
 
             for (key, panel) in panels {
                 panel.trailing.animator().constant =
-                    key == requested ? 0 : RightDockGeometry.width(for: key)
+                    key == requested ? 0 : widthProvider(key)
             }
             terminalTrailing.animator().constant =
-                RightDockGeometry.terminalTrailingConstant(for: requested)
+                RightDockGeometry.terminalTrailingConstant(
+                    forWidth: widthProvider(requested))
             layout()
         }, completionHandler: { [weak self] in
             guard let self, self.occupant == requested else { return }
