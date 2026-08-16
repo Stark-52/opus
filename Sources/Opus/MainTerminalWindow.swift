@@ -69,6 +69,8 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         // Return on the modifier set being empty (Shift+Space and
         // Ctrl+Space are the terminal's, not a preview request), with the
         // drawer itself checking that the TABLE has focus before it acts.
+        // Left/Right are gated the same way: they step the chips, and
+        // an arrow typed at the terminal must stay the terminal's.
         if container.artifactsDrawerIsOpen {
             if mods == [.command], ev.charactersIgnoringModifiers?.lowercased() == "f" {
                 container.focusArtifactsFilter(); return nil
@@ -82,6 +84,9 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
             }
             if ev.keyCode == 36, mods.isEmpty {  // Return
                 if container.handleArtifactsReturn() { return nil }
+            }
+            if ev.keyCode == 123 || ev.keyCode == 124, mods.isEmpty {  // Left, Right
+                if container.handleArtifactsHorizontalArrow(ev.keyCode == 124 ? 1 : -1) { return nil }
             }
         }
         if mods == .command {

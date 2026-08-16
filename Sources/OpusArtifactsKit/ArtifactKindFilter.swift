@@ -38,4 +38,34 @@ public enum ArtifactKindFilter: String, CaseIterable, Equatable, Sendable {
     public static func apply(_ filter: ArtifactKindFilter, to artifacts: [Artifact]) -> [Artifact] {
         filter == .all ? artifacts : artifacts.filter { filter.matches($0) }
     }
+
+    /// The next chip left or right of `current`, wrapping around the row.
+    /// Only the SIGN of `direction` is read.
+    ///
+    /// Chips that would show nothing are skipped, because the two callers
+    /// both have a reason not to land on an empty one: from the drawer it
+    /// means arrowing into a blank list, and from an open preview it means
+    /// handing QuickLook zero items, which is how the panel decides to close
+    /// itself. `candidates` is what each caller counts as showable — every
+    /// artifact for the drawer, only the ones with a file behind them for
+    /// the preview.
+    ///
+    /// Returns `current` unchanged when no other chip qualifies, so a
+    /// session whose artifacts are all one kind simply stays put.
+    public static func step(from current: ArtifactKindFilter,
+                            direction: Int,
+                            keeping candidates: [Artifact]) -> ArtifactKindFilter {
+        let cases = allCases
+        guard direction != 0, let start = cases.firstIndex(of: current) else { return current }
+        let stride = direction > 0 ? 1 : -1
+        var index = start
+        // At most one full lap: the last step lands back on `current`, which
+        // is exactly the value we want to fall out with anyway.
+        for _ in cases.indices {
+            index = (index + stride + cases.count) % cases.count
+            let candidate = cases[index]
+            if candidates.contains(where: { candidate.matches($0) }) { return candidate }
+        }
+        return current
+    }
 }
