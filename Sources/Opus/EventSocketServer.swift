@@ -39,7 +39,35 @@ extension Notification.Name {
 struct OpusClaudeEvent: Equatable {
     let sessionId: String
     let cwd: String
+    /// The transcript file this session is actually writing to, as reported
+    /// by the hook itself. Empty when absent. Worth preferring over anything
+    /// derived from `sessionId` plus `cwd`: that derivation guesses, and it
+    /// guesses wrong whenever the pane's working directory differs from the
+    /// one in preferences, or whenever a `/resume` moved the conversation to
+    /// a different file than the one Opus spawned the pane with.
+    let transcriptPath: String
+    /// pid of the `opus-attach` process that relayed this event, stamped in
+    /// by its `event` subcommand. Walking up from here to a pane's shell is
+    /// the only thing in the payload that identifies WHICH pane fired it.
+    /// 0 when absent, which is what an older opus-attach on PATH sends.
+    let relayPid: Int32
     let kind: Kind
+
+    /// Explicit rather than memberwise so the two fields added for pane
+    /// attribution default to "absent". Every existing call site predates
+    /// them and means exactly that, and defaulting here beats editing a
+    /// dozen tests to say so.
+    init(sessionId: String,
+         cwd: String,
+         transcriptPath: String = "",
+         relayPid: Int32 = 0,
+         kind: Kind) {
+        self.sessionId = sessionId
+        self.cwd = cwd
+        self.transcriptPath = transcriptPath
+        self.relayPid = relayPid
+        self.kind = kind
+    }
 
     enum Kind: Equatable {
         case promptSubmitted
@@ -82,6 +110,10 @@ struct OpusClaudeEvent: Equatable {
 
         let sessionId = obj["session_id"] as? String ?? ""
         let cwd = obj["cwd"] as? String ?? ""
+        let transcriptPath = obj["transcript_path"] as? String ?? ""
+        // Tolerates the field being absent (an opus-attach from before this
+        // change, still on PATH) and being any numeric shape JSON chose.
+        let relayPid = (obj["opus_pid"] as? NSNumber)?.int32Value ?? 0
 
         let kind: Kind
         switch eventName {
@@ -104,7 +136,9 @@ struct OpusClaudeEvent: Equatable {
             return nil   // unrecognized event name — not one of our six hooks
         }
 
-        return OpusClaudeEvent(sessionId: sessionId, cwd: cwd, kind: kind)
+        return OpusClaudeEvent(
+            sessionId: sessionId, cwd: cwd,
+            transcriptPath: transcriptPath, relayPid: relayPid, kind: kind)
     }
 }
 

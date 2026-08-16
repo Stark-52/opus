@@ -26,9 +26,14 @@ final class EventParsingTests: XCTestCase {
         }
         """
         let event = OpusClaudeEvent.parse(line: data(json))
+        // This fixture was copied from a real payload and has always carried
+        // a transcript_path; the parser simply used to throw it away. Now
+        // that the field is read, the expectation asserts it, which also
+        // makes this fixture the standing proof that the field is real.
         XCTAssertEqual(event, OpusClaudeEvent(
             sessionId: "sess-abc123",
             cwd: "/Users/dev/Documents/GitHub/opus",
+            transcriptPath: "/Users/dev/.claude/projects/-Users-dev-opus/sess-abc123.jsonl",
             kind: .promptSubmitted
         ))
     }
@@ -201,5 +206,27 @@ final class EventParsingTests: XCTestCase {
             cwd: "/Users/dev/opus",
             kind: .sessionStarted(source: "resume")
         ))
+    }
+
+    // MARK: Pane attribution fields (added when /resume was found to leave a
+    // pane bound to a session id whose transcript never exists)
+
+    func testTranscriptPathIsParsedWhenPresent() {
+        let line = Data(#"{"hook_event_name":"Stop","session_id":"s","cwd":"/c","transcript_path":"/t/s.jsonl"}"#.utf8)
+        XCTAssertEqual(OpusClaudeEvent.parse(line: line)?.transcriptPath, "/t/s.jsonl")
+    }
+
+    func testRelayPidIsParsedWhenPresent() {
+        let line = Data(#"{"hook_event_name":"Stop","session_id":"s","cwd":"/c","opus_pid":4242}"#.utf8)
+        XCTAssertEqual(OpusClaudeEvent.parse(line: line)?.relayPid, 4242)
+    }
+
+    func testBothFieldsAbsentIsNotAnError() {
+        // An opus-attach from before this change is still a valid relay: the
+        // event must parse, just without attribution.
+        let line = Data(#"{"hook_event_name":"Stop","session_id":"s","cwd":"/c"}"#.utf8)
+        let event = OpusClaudeEvent.parse(line: line)
+        XCTAssertEqual(event?.transcriptPath, "")
+        XCTAssertEqual(event?.relayPid, 0)
     }
 }
