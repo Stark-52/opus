@@ -228,9 +228,34 @@ final class ArtifactsDrawerView: NSView {
 
     @objc private func chipTapped(_ sender: NSButton) {
         guard ArtifactKindFilter.allCases.indices.contains(sender.tag) else { return }
-        kindFilter = ArtifactKindFilter.allCases[sender.tag]
+        select(kindFilter: ArtifactKindFilter.allCases[sender.tag])
+    }
+
+    /// The single seam every chip change goes through: the mouse, the arrow
+    /// keys in the drawer, and the arrow keys inside an open preview. Guarded
+    /// on an actual change so re-picking the current chip costs nothing.
+    private func select(kindFilter next: ArtifactKindFilter) {
+        guard next != kindFilter else { return }
+        kindFilter = next
         restyleChips()
         applyFilter()
+    }
+
+    /// Left and right step through the chips, the way up and down step
+    /// through the rows. Routed from the hosts' key monitors rather than from
+    /// the table's own `keyDown`, for the same reason Space and Return are:
+    /// the monitor sees the key first and unconditionally.
+    ///
+    /// Consumes the key whenever the table holds focus, even when the chip
+    /// does not move (one kind of artifact, nowhere to step to). Letting it
+    /// fall through in that case would send an arrow to the terminal from a
+    /// keystroke the user aimed at the drawer.
+    func handleHorizontalArrow(direction: Int) -> Bool {
+        guard window?.firstResponder === tableView else { return false }
+        select(kindFilter: ArtifactKindFilter.step(from: kindFilter,
+                                                   direction: direction,
+                                                   keeping: textFiltered))
+        return true
     }
 
     /// One color, one meaning: cyan already means "nominal, active control"
@@ -247,16 +272,24 @@ final class ArtifactsDrawerView: NSView {
 
     @objc private func filterChanged() { applyFilter() }
 
-    private func applyFilter() {
-        // Chip narrows by kind first, text filter narrows what's left. AND,
-        // not OR: a chip that excludes everything stays empty no matter what
-        // the text field says.
-        let byKind = ArtifactKindFilter.apply(kindFilter, to: artifacts)
+    /// `artifacts` narrowed by the text field alone. Split out of
+    /// `applyFilter` because it is also what the arrow keys measure each chip
+    /// against: stepping onto a chip that the TEXT filter has already emptied
+    /// would land on a blank list just as surely as stepping onto a kind the
+    /// session never produced.
+    private var textFiltered: [Artifact] {
         let needle = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        visible = needle.isEmpty ? byKind : byKind.filter {
+        guard !needle.isEmpty else { return artifacts }
+        return artifacts.filter {
             $0.displayName.lowercased().contains(needle)
                 || $0.displayDetail.lowercased().contains(needle)
         }
+    }
+
+    private func applyFilter() {
+        // Chip and text field compose by AND, in either order: a chip that
+        // excludes everything stays empty no matter what the text field says.
+        visible = ArtifactKindFilter.apply(kindFilter, to: textFiltered)
         header.stringValue = Self.headerText(artifacts: artifacts)
         // Four distinct reasons the list can be empty, four distinct
         // messages. The first version of this shipped with one sentence for
@@ -479,15 +512,6 @@ extension ArtifactsDrawerView {
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         ownsPreview = true
-        // Start on whatever is selected. Without this the panel opens on the
-        // first previewable row and the arrow keys navigate from there, which
-        // is not where the user was looking.
-        defer {
-            if let key = selectedArtifact?.key,
-               let index = previewableArtifacts.firstIndex(where: { $0.key == key }) {
-                panel.currentPreviewItemIndex = index
-            }
-        }
         panel.dataSource = self
         panel.delegate = self
     }
@@ -542,23 +566,86 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         return true
     }
 
-    /// Every previewable row, not just the selected one. Handing the panel a
-    /// single item left it with nothing to navigate, which is why the arrow
-    /// keys did nothing; with the whole list it browses natively, exactly as
-    /// it does from the Finder. URLs are excluded because QuickLook has
-    /// nothing to show for a link.
-    private var previewableArtifacts: [Artifact] {
-        visible.filter { $0.resolvedPath != nil }
-    }
-
+    /// Exactly one item: whatever the drawer has selected. The panel briefly
+    /// held the WHOLE previewable list instead, to make the arrow keys work
+    /// at all, and that is what has to be given up to get the mapping its
+    /// owner asked for. A panel holding several items keeps left and right
+    /// for its own navigation and only forwards the keys it has no use for,
+    /// so left and right could never mean anything else. With a single item
+    /// there is nothing for it to navigate, every arrow arrives in
+    /// `previewPanel(_:handle:)` below, and the drawer decides what each one
+    /// means.
+    ///
+    /// Navigation therefore moves the SELECTION and the panel follows, which
+    /// is also why the highlighted row now tracks the preview instead of
+    /// staying behind: the selection is the state, not a copy of it.
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        previewableArtifacts.count
+        selectedArtifact?.resolvedPath == nil ? 0 : 1
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        let items = previewableArtifacts
-        guard items.indices.contains(index), let path = items[index].resolvedPath else { return nil }
+        guard let path = selectedArtifact?.resolvedPath else { return nil }
         return URL(fileURLWithPath: path) as NSURL
+    }
+
+    /// Every key the panel does not consume itself lands here. Up and down
+    /// walk the rows, left and right walk the chips, which is the same
+    /// mapping the drawer has when the panel is closed: one gesture, one
+    /// meaning, whether or not a preview happens to be open.
+    ///
+    /// Anything else is handed back untouched, so Escape still closes the
+    /// panel, Space still toggles it and Cmd+W still belongs to the app.
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        guard event?.type == .keyDown else { return false }
+        switch event.keyCode {
+        case 125: return selectPreviewableRow(step: 1)      // Down
+        case 126: return selectPreviewableRow(step: -1)     // Up
+        case 124: return stepPreviewKindFilter(direction: 1)   // Right
+        case 123: return stepPreviewKindFilter(direction: -1)  // Left
+        default: return false
+        }
+    }
+
+    /// Moves the selection to the next row that QuickLook can actually show,
+    /// skipping link rows rather than stopping on one: a selected link means
+    /// zero preview items, and a panel with zero items closes itself, so
+    /// arrowing past a link would dismiss the preview mid-browse.
+    ///
+    /// Clamps at both ends instead of wrapping, matching the Finder.
+    @discardableResult
+    private func selectPreviewableRow(step: Int) -> Bool {
+        let rows = visible.indices.filter { visible[$0].resolvedPath != nil }
+        guard !rows.isEmpty else { return true }
+        let target: Int
+        if let position = rows.firstIndex(of: tableView.selectedRow) {
+            target = rows[min(max(position + step, 0), rows.count - 1)]
+        } else {
+            // No selection, or one sitting on a link: enter the list from the
+            // end the arrow came from.
+            target = step > 0 ? rows[0] : rows[rows.count - 1]
+        }
+        tableView.selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
+        tableView.scrollRowToVisible(target)
+        // The selection change is what refreshes the panel, through
+        // `tableViewSelectionDidChange`. Nothing to do here.
+        return true
+    }
+
+    /// Steps the chips from inside an open preview, counting only artifacts
+    /// QuickLook can show. Links are a real category in the drawer and a dead
+    /// end in the panel, so the chip row is walked differently depending on
+    /// which one is asking.
+    private func stepPreviewKindFilter(direction: Int) -> Bool {
+        let previewable = textFiltered.filter { $0.resolvedPath != nil }
+        select(kindFilter: ArtifactKindFilter.step(from: kindFilter,
+                                                   direction: direction,
+                                                   keeping: previewable))
+        // `applyFilter` restores the selection by identity, so a file present
+        // in both chips stays on screen and the preview does not flicker.
+        // When it is gone, start at the top of the new chip rather than
+        // leaving the panel with nothing.
+        if selectedArtifact?.resolvedPath == nil { selectPreviewableRow(step: 1) }
+        return true
     }
 
     /// Where the panel grows FROM. Only the source rect, deliberately not the
@@ -567,8 +654,10 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// move. The rect alone costs nothing and is what makes the entrance read
     /// as coming out of the row rather than appearing from nowhere.
     ///
-    /// Anchored on the item being previewed, not on the selection, so it
-    /// still points at the right row after the arrow keys have moved on.
+    /// Resolved from the item the panel hands in rather than from
+    /// `selectedArtifact`, so the rect describes what is actually being shown
+    /// even if the selection moved between the panel asking and the frame
+    /// being needed.
     func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
         guard let url = item as? URL ?? (item as? NSURL) as URL?,
               let row = previewRowInTable(forPath: url.path),
@@ -578,9 +667,9 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         return window.convertToScreen(inWindow)
     }
 
-    /// Row index in the TABLE for a previewed path. The panel indexes into
-    /// `previewableArtifacts`, which skips URL rows, so the two orderings are
-    /// not the same and translating between them by position would drift.
+    /// Row index in the TABLE for a previewed path. Looked up by path rather
+    /// than assumed to be the selected row: the panel's index space is its
+    /// own, and a filter change can reorder the table under it.
     private func previewRowInTable(forPath path: String) -> Int? {
         visible.firstIndex { $0.resolvedPath == path }
     }

@@ -1118,6 +1118,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func handleArtifactsEscape() -> Bool { artifactsDrawer.handleEscape() }
     func handleArtifactsSpace() -> Bool { artifactsDrawer.handleSpace() }
     func handleArtifactsReturn() -> Bool { artifactsDrawer.handleReturn() }
+    /// Left/right step the chips while the drawer's table has focus. Up/down
+    /// are NOT routed: NSTableView already walks its own rows, and taking
+    /// them here would only reimplement that badly.
+    func handleArtifactsHorizontalArrow(_ direction: Int) -> Bool {
+        artifactsDrawer.handleHorizontalArrow(direction: direction)
+    }
 
     // MARK: Artifacts drawer toggle button
 

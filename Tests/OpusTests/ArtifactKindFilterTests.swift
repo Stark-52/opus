@@ -64,4 +64,59 @@ final class ArtifactKindFilterTests: XCTestCase {
         XCTAssertEqual(ArtifactKindFilter.allCases.map(\.title),
                        ["All", "Files", "Images", "Links", "Folders"])
     }
+
+    // MARK: Stepping the chips with the arrow keys
+
+    func testStepRightWalksTheRowInOrder() {
+        var chip = ArtifactKindFilter.all
+        var walked: [ArtifactKindFilter] = []
+        for _ in 1...5 {
+            chip = ArtifactKindFilter.step(from: chip, direction: 1, keeping: sample)
+            walked.append(chip)
+        }
+        XCTAssertEqual(walked, [.files, .images, .links, .folders, .all])
+    }
+
+    func testStepLeftWalksTheRowBackwards() {
+        XCTAssertEqual(ArtifactKindFilter.step(from: .all, direction: -1, keeping: sample), .folders)
+        XCTAssertEqual(ArtifactKindFilter.step(from: .files, direction: -1, keeping: sample), .all)
+    }
+
+    func testStepSkipsChipsWithNothingInThem() {
+        // Files and Images only: Links and Folders have to be stepped over,
+        // not landed on, or the arrow key walks into a blank list.
+        let partial = [make(.file, "a.md"), make(.image, "b.png")]
+        XCTAssertEqual(ArtifactKindFilter.step(from: .images, direction: 1, keeping: partial), .all)
+        XCTAssertEqual(ArtifactKindFilter.step(from: .all, direction: -1, keeping: partial), .images)
+    }
+
+    func testStepStaysPutWhenNoOtherChipQualifies() {
+        // One kind, so All and Files are the only non-empty chips; from
+        // Files, right must reach All rather than stall.
+        let onlyFiles = [make(.file, "a.md")]
+        XCTAssertEqual(ArtifactKindFilter.step(from: .files, direction: 1, keeping: onlyFiles), .all)
+        // Nothing at all: every chip is empty, so there is nowhere to go.
+        XCTAssertEqual(ArtifactKindFilter.step(from: .files, direction: 1, keeping: []), .files)
+    }
+
+    func testStepWithADirectionOfZeroIsANoOp() {
+        XCTAssertEqual(ArtifactKindFilter.step(from: .images, direction: 0, keeping: sample), .images)
+    }
+
+    func testOnlyTheSignOfTheDirectionIsRead() {
+        // The callers pass +1/-1, but a stray magnitude must not skip chips.
+        XCTAssertEqual(ArtifactKindFilter.step(from: .all, direction: 7, keeping: sample), .files)
+        XCTAssertEqual(ArtifactKindFilter.step(from: .all, direction: -7, keeping: sample), .folders)
+    }
+
+    func testPreviewCallerNeverLandsOnLinks() {
+        // The preview passes only artifacts with a file behind them, which is
+        // what keeps QuickLook from being handed zero items and closing.
+        let previewable = sample.filter { $0.resolvedPath != nil }
+        var chip = ArtifactKindFilter.all
+        for _ in 1...8 {
+            chip = ArtifactKindFilter.step(from: chip, direction: 1, keeping: previewable)
+            XCTAssertNotEqual(chip, .links)
+        }
+    }
 }
