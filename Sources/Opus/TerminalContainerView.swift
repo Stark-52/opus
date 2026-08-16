@@ -26,6 +26,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabBarHeightConstraint: NSLayoutConstraint!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
     private var shieldButton: NSButton?
+    /// Artifacts drawer toggle — see `installArtifactsButton()`.
+    private var artifactsButton: NSButton?
     /// Bottom status rail (visual-harmonization spec, section 1 "Rail de
     /// statut") — replaces the old top-right PaneActivityDot + "ctx NN%"
     /// label pair (v1.4.1/v1.4.2) AND the bottom ContextMeterBar strip. See
@@ -65,9 +67,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // only runs while the surface is actually visible), not a new pattern.
     private var todoDrawer: TodoDrawerView!
     /// Owns the container's right edge: the terminal's trailing constraint,
-    /// the top-right button row's shift, and (via `onChange`) the Tasks
-    /// timer's lifecycle. Optional, not implicitly unwrapped: `installShieldButton()`
-    /// (called from `init`, after `buildSubviews()`) reads it through
+    /// the top-right button row's shift, and (via `onChange`) the Tasks and
+    /// artifacts timers' lifecycles. Optional, not implicitly unwrapped:
+    /// `installShieldButton()` and `installArtifactsButton()` (both called
+    /// from `init`, after `buildSubviews()`) read it through
     /// `pinToTopRightRow`, and although that call order is safe today, a
     /// force unwrap would turn any future earlier call into a launch crash
     /// instead of a harmlessly closed drawer. Read as `rightDock?.occupant
@@ -156,9 +159,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         static let openBase: CGFloat = 4
         /// Dangerous-mode shield — unchanged from finding F2.
         static let shieldBase: CGFloat = -28
-        /// Pin (autohide toggle) — the row's leftmost button. -58 reproduces
-        /// its historical `blur.trailingAnchor - 72` pin.
+        /// Pin (autohide toggle) — the row's leftmost button in the Quick
+        /// Terminal panel. -58 reproduces its historical
+        /// `blur.trailingAnchor - 72` pin.
         static let pinBase: CGFloat = -58
+        /// Artifacts drawer toggle, the row's new leftmost member in BOTH
+        /// hosts. -88 continues the row's 30pt rhythm from `pinBase`.
+        /// Uniform across the main window and the Quick Terminal panel
+        /// deliberately — this is the same geometry slot where the v1.6
+        /// row-members-move-independently bug lived, so per-host cleverness
+        /// is exactly the wrong thing to introduce here. Cost: in the main
+        /// window (shield alone, no pin/open-in-Terminal siblings) this
+        /// leaves a gap between the shield at -28 and this button at -88;
+        /// on-screen checklist item, a one-constant fix if it reads badly.
+        static let artifactsBase: CGFloat = -88
         /// Extra leftward travel applied to the WHOLE row while the drawer is
         /// open, so the rightmost button clears the drawer's leading edge.
         static let drawerOpenShift: CGFloat = -8
@@ -302,6 +316,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 name: .claudeBackendDidSpawn, object: nil
             )
         }
+        // Unconditional, unlike installShieldButton() above: the shield only
+        // means something for the shared backend (useSharedTab0), but the
+        // artifacts drawer works in every pane. Placed after the branch
+        // (rather than inside it or before buildSubviews()) so it always
+        // runs exactly once per container, whichever way useSharedTab0
+        // falls, and — like installShieldButton() — after buildSubviews()
+        // has already assigned `rightDock`, which pinToTopRightRow reads.
+        installArtifactsButton()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -460,6 +482,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             onChange: { [weak self] occupant in
                 guard let self else { return }
                 self.updateTopRightRow(drawerOpen: RightDockGeometry.isOpen(occupant))
+                // Runs for EVERY transition (including .artifacts → .tasks),
+                // same as updateTopRightRow above, so the toggle's tint never
+                // lags behind which drawer is actually showing. Safe even
+                // before installArtifactsButton() has run — it only reaches
+                // that point via a user- or code-triggered toggle() call,
+                // which can't happen until init (and this button install)
+                // has completed — and refreshArtifactsButton() itself is
+                // nil-safe on `artifactsButton` regardless.
+                self.refreshArtifactsButton()
                 self.layoutSubtreeIfNeeded()
                 if occupant == .tasks {
                     self.refreshTodoDrawer()
@@ -990,6 +1021,52 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     func handleArtifactsEscape() -> Bool { artifactsDrawer.handleEscape() }
     func handleArtifactsSpace() -> Bool { artifactsDrawer.handleSpace() }
     func handleArtifactsReturn() -> Bool { artifactsDrawer.handleReturn() }
+
+    // MARK: Artifacts drawer toggle button
+
+    /// Toggle for the artifacts drawer, pinned into the top-right row so it
+    /// travels with the terminal area when a drawer opens, same as the
+    /// shield. the owner asked for a button beside the hotkey: a drawer nobody
+    /// can see the handle for is a drawer nobody opens.
+    ///
+    /// Called unconditionally from `init` (see the call site's own comment)
+    /// — unlike `installShieldButton()`, which only matters for the shared
+    /// backend, the artifacts drawer works in every pane, so its toggle
+    /// belongs in every host.
+    private func installArtifactsButton() {
+        let btn = NSButton(title: "", target: self, action: #selector(artifactsButtonTapped))
+        btn.isBordered = false
+        btn.imagePosition = .imageOnly
+        btn.image = NSImage(systemSymbolName: "sidebar.trailing",
+                            accessibilityDescription: "Artifacts")
+        btn.setAccessibilityLabel("Artifacts drawer")
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(btn)
+        NSLayoutConstraint.activate([
+            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            btn.widthAnchor.constraint(equalToConstant: 24),
+            btn.heightAnchor.constraint(equalToConstant: 22)
+        ])
+        pinToTopRightRow(btn, base: TopRightButtonRow.artifactsBase)
+        artifactsButton = btn
+        refreshArtifactsButton()
+    }
+
+    @objc private func artifactsButtonTapped() {
+        toggleArtifactsDrawer()
+    }
+
+    /// Cyan while the drawer is the dock's occupant, dim otherwise. The
+    /// theme's rule is one color one meaning, and cyan already means an
+    /// active control. Called from `installArtifactsButton()` (initial
+    /// state) and from the dock's `onChange` closure in `buildSubviews()`
+    /// (every subsequent occupant change), so the tint never lags behind
+    /// which drawer, if any, is actually showing.
+    private func refreshArtifactsButton() {
+        artifactsButton?.contentTintColor =
+            rightDock?.occupant == .artifacts ? OpusTheme.cyan : OpusTheme.cream(0.45)
+        artifactsButton?.toolTip = "Artifacts produced by this session (Cmd+Shift+A)"
+    }
 
     // MARK: Dangerous-mode shield button
 
