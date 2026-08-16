@@ -642,8 +642,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `ClaudeSessionLocator.mostRecentSessionId(for:)` for an unbound
     /// shared pane. Removed — that locator answers "what's the newest
     /// transcript in this cwd's project dir," which is NOT the same
-    /// question as "what's THIS pane's session." The owner's real working
-    /// directory routinely has a dozen-plus concurrently live transcripts
+    /// question as "what's THIS pane's session." A real working directory
+    /// routinely has a dozen-plus concurrently live transcripts
     /// (subagents, other Opus surfaces, sessions resumed elsewhere) all
     /// writing into the same project dir, so at cold start (the exact
     /// moment this fallback fired — before the first `SessionStart` hook
@@ -1016,8 +1016,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // call below would have been a no-op precisely when it matters most.
         // Every pane of the ACTIVE TAB, not just the focused one. A tab split
         // with Cmd+D is one piece of work seen from two angles, so its panes
-        // share one drawer; separate tabs stay separate. This is the owner's
-        // model and it is better than the original one-pane-one-drawer.
+        // share one drawer; separate tabs stay separate. That grouping replaced
+        // the original one-pane-one-drawer rule.
         let sources = activeTabArtifactSources()
         guard !sources.isEmpty else {
             resetArtifactsSession()
@@ -1594,7 +1594,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// func so the SAFETY GUARD below is unit-testable without a live
     /// TerminalView/SwiftTerm buffer.
     ///
-    /// v1.5.1 (owner smoke-test fix) — INDEX MEANING: `nextIndex` is the
+    /// v1.5.1 — INDEX MEANING: `nextIndex` is the
     /// match's POSITION IN THE CONVERSATION, 1 = oldest/topmost match,
     /// `total` = newest/bottom-most. It is still our own approximation, not
     /// SwiftTerm's real search cursor — SwiftTerm's cursor is entirely
@@ -1617,9 +1617,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// wrapping to 1 at the top; `.down` decremented, wrapping to `total`
     /// at the bottom) — a number that told the user how many jumps they'd
     /// made, never WHERE they were, and that moved in a DIFFERENT direction
-    /// each time the search wrapped. That mismatch is what the owner
-    /// reported ("la numérotation est bizarre, elle commence au dernier
-    /// message de claude, puis descend et ensuite remonte tout en haut").
+    /// each time the search wrapped. On screen that read as a counter
+    /// starting at the newest message, counting down, then jumping back to
+    /// the top, which is the bug this replaced.
     ///
     /// SAFETY GUARD: SwiftTerm's own search
     /// (`SearchService.findAll`/`SearchLineCache.translateBufferLineToStringWithWrap`)
@@ -2262,7 +2262,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         guard activePane != nil else { return }
         let pb = NSPasteboard.general
         // Files copied/dragged from Finder carry their POSIX path under the
-        // file-URL type, while `.string` is only the display name (e.g. "Reports").
+        // file-URL type, while `.string` is only the display name.
         // Insert the full shell-quoted path(s), matching Terminal.app.
         if let paths = Self.filePathsString(from: pb) {
             sendToActivePane(paths)

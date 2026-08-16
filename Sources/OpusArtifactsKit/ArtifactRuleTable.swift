@@ -17,17 +17,17 @@
 import Foundation
 
 public enum ArtifactRuleTable {
-    /// Tools whose file arguments are reads, not products. The owner's
-    /// explicit call: a session that reads forty files would bury the one
-    /// image the drawer was opened to find.
+    /// Tools whose file arguments are reads, not products. A deliberate
+    /// call: a session that reads forty files would bury the one image the
+    /// drawer was opened to find.
     ///
     /// `WebFetch` and `WebSearch` join them for the URL half of the same
-    /// argument: the chosen category was "web URLs I tell him about", not
-    /// "URLs I consumed", and unlike paths, URLs have no downstream
+    /// argument: the chosen category was "web URLs named in the reply", not
+    /// "URLs a tool consumed", and unlike paths, URLs have no downstream
     /// existence filter to thin them out. Any fetched page that actually
     /// matters gets named in the reply text, where the text scanner already
     /// catches it. `mcp__claude-in-chrome__navigate` is deliberately NOT
-    /// denied: a page opened in the owner's own browser is closer to a
+    /// denied: a page opened in the user's own browser is closer to a
     /// product than to a read, and the final review measured it as the real
     /// URL traffic (55 occurrences against WebFetch's 8, while WebSearch
     /// carries no `url` key at all) — so these two strings match the stated

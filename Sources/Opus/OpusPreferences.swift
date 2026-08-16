@@ -282,9 +282,8 @@ final class OpusPreferences {
     /// can't tell 200k from 1M-context sessions — so this is a user-set
     /// preference, not a derived value. Clamped to 10,000…2,000,000 (the
     /// 2,000,000 ceiling matches `ContextMeter.twoMillionLimit`, the top tier
-    /// its safety auto-bump can reach). Default 1,000,000 — the owner's
-    /// baseline is 1M-context sessions; drop it to 200,000 in Settings for a
-    /// standard-window session.
+    /// its safety auto-bump can reach). Defaults to 1,000,000 for 1M-context
+    /// sessions; drop it to 200,000 in Settings for a standard window.
     var contextLimitTokens: Int {
         get {
             let v = defaults.integer(forKey: K.contextLimitTokens)

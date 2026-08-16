@@ -33,13 +33,12 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         layer?.backgroundColor = OpusTheme.panelBackground.cgColor
         layer?.cornerRadius = OpusTheme.radiusControl
 
-        // Fix (v1.5.1, Cmd+F readability): owner smoke-test — "le texte
-        // s'adapte bien au darkmode... là c'est gris sur blanc". Root cause:
-        // this view never forced an appearance, so in macOS Light mode the
-        // embedded NSSearchField drew its bezel using the SYSTEM appearance
-        // — a white rounded bezel painted INSIDE this dark bar — and the
-        // cream(0.95) text set below on that white bezel is the "grey on
-        // white" the owner saw. Same one-line pattern and rationale as
+        // Fix (v1.5.1, Cmd+F readability): the field read as grey on white
+        // in macOS Light mode. Root cause: this view never forced an
+        // appearance, so the embedded NSSearchField drew its bezel using the
+        // SYSTEM appearance — a white rounded bezel painted INSIDE this dark
+        // bar — and the cream(0.95) text set below then sat on white.
+        // Same one-line pattern and rationale as
         // SessionSwitcherPanel.swift:144 (force darkAqua regardless of the
         // system appearance so OUR dark palette below draws correctly no
         // matter what mode macOS is in). NOT sufficient alone — see the
@@ -68,7 +67,7 @@ final class FindBarView: NSView, NSSearchFieldDelegate {
         // that bezel and painting the field's own background ourselves
         // (`OpusTheme.fieldBackground`, lighter than the bar so it stays
         // visually distinct — see that token's doc comment) is what
-        // actually removes the white rect the owner saw. `focusRingType` is
+        // actually removes the white rect. `focusRingType` is
         // deliberately left untouched: the focus ring must stay visible.
         field.isBezeled = false
         field.drawsBackground = true

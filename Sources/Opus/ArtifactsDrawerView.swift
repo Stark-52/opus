@@ -293,8 +293,8 @@ final class ArtifactsDrawerView: NSView {
         header.stringValue = Self.headerText(artifacts: artifacts)
         // Four distinct reasons the list can be empty, four distinct
         // messages. The first version of this shipped with one sentence for
-        // all of them and told its owner "No artifacts in this session" for a
-        // pane whose session had never been used, which is true and useless.
+        // all of them and said "No artifacts in this session" for a pane whose
+        // session had never been used, which is true and useless.
         // Recomputed on every call so the text always reflects the CURRENT
         // state, never whichever one was true when the view was built.
         if let reason = ArtifactsEmptyReason.resolve(
@@ -313,9 +313,9 @@ final class ArtifactsDrawerView: NSView {
         // every refresh whether anything had changed or not. That is what
         // killed the QuickLook preview: the panel previews the SELECTED row,
         // the refresh wiped the selection out from under it, and the preview
-        // closed on its own. The owner worked it out from the symptom, having
-        // noticed the preview survived for varying lengths of time depending
-        // on where in the refresh cycle it was opened.
+        // closed on its own. The tell was that the preview survived for varying
+        // lengths of time depending on where in the refresh cycle it was
+        // opened.
         guard visible != previouslyRendered else { return }
         previouslyRendered = visible
 
@@ -568,8 +568,8 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
 
     /// Exactly one item: whatever the drawer has selected. The panel briefly
     /// held the WHOLE previewable list instead, to make the arrow keys work
-    /// at all, and that is what has to be given up to get the mapping its
-    /// owner asked for. A panel holding several items keeps left and right
+    /// at all, and that is what has to be given up to get the mapping this
+    /// drawer wants. A panel holding several items keeps left and right
     /// for its own navigation and only forwards the keys it has no use for,
     /// so left and right could never mean anything else. With a single item
     /// there is nothing for it to navigate, every arrow arrives in

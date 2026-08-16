@@ -11,8 +11,8 @@
 //     .highwatermark              — small counter file, NOT a task
 //
 // A task JSON object looks like:
-//   {"id":"1","subject":"Lot A: encodeur WebP réel (libwebp SPM)",
-//    "description":"…","activeForm":"Ajout de l'encodeur WebP",
+//   {"id":"1","subject":"Add the WebP encoder",
+//    "description":"…","activeForm":"Adding the WebP encoder",
 //    "status":"completed","blocks":[],"blockedBy":[]}
 //
 // This type only ever reads `id`/`subject`/`status` — `description`,
