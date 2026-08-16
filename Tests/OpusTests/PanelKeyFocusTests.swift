@@ -49,6 +49,29 @@ final class PanelKeyFocusTests: XCTestCase {
             visible: true, pinned: false, spaceSwitchInFlight: true, keyStillWithinOpus: false))
     }
 
+    func testQuickLookPreviewSuppressesTheAutohide() {
+        // Space opens a QuickLook preview, which takes key status. The panel
+        // then folded and took the drawer with it, and the preview died with
+        // the window that held its data source, so the preview appeared to
+        // flash open and vanish.
+        //
+        // keyStillWithinOpus is false here on purpose: that is the value the
+        // deferred check actually observes, because QLPreviewPanel takes key
+        // more than one runloop turn later and NSApp.keyWindow is still nil
+        // when the decision is made. Suppressing on the preview being up is
+        // what makes this independent of that timing.
+        XCTAssertFalse(QuickTerminalPanel.shouldAutohideOnResign(
+            visible: true, pinned: false, spaceSwitchInFlight: false,
+            keyStillWithinOpus: false, quickLookVisible: true))
+    }
+
+    func testQuickLookNotUpLeavesTheAutohideAlone() {
+        // Regression guard: the new term must not become a blanket excuse.
+        XCTAssertTrue(QuickTerminalPanel.shouldAutohideOnResign(
+            visible: true, pinned: false, spaceSwitchInFlight: false,
+            keyStillWithinOpus: false, quickLookVisible: false))
+    }
+
     func testAnAlreadyHiddenPanelIsNeverHiddenAgain() {
         XCTAssertFalse(QuickTerminalPanel.shouldAutohideOnResign(
             visible: false, pinned: false, spaceSwitchInFlight: false, keyStillWithinOpus: false))
