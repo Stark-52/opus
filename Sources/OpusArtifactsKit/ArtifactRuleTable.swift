@@ -17,9 +17,9 @@
 import Foundation
 
 public enum ArtifactRuleTable {
-    /// Tools whose file arguments are reads, not products. the owner's explicit
-    /// call: a session that reads forty files would bury the one image he
-    /// opened the drawer to find.
+    /// Tools whose file arguments are reads, not products. The owner's
+    /// explicit call: a session that reads forty files would bury the one
+    /// image the drawer was opened to find.
     ///
     /// `WebFetch` and `WebSearch` join them for the URL half of the same
     /// argument: the chosen category was "web URLs I tell him about", not
