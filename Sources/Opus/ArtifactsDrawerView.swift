@@ -508,14 +508,20 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         // find one it clears whatever was assigned and closes itself again.
         // Assigning directly and skipping the protocol is what made the
         // preview flash open and vanish.
-        // Immediate. The deferral this used to need existed only because the
-        // first Space was also the call that CREATED the panel, and ordering
-        // a just-created panel front in the same turn raced its own setup.
-        // `warmPreviewPanel()` now does the creating when the drawer opens,
-        // so by the time anyone presses Space the panel is a settled object
-        // and there is nothing to wait for. Waiting a turn here was costing
-        // the keypress the very latency it was meant to hide.
-        panel.makeKeyAndOrderFront(nil)
+        // Both halves are needed, and each was established by removing it and
+        // watching what broke.
+        //
+        // The one-turn deferral is what makes a SINGLE press work. Ordering
+        // the panel front from inside the key-handling turn does not survive;
+        // one turn later, once the key-window transition has settled, it does.
+        // Removing it brought the two-press behaviour straight back even with
+        // the panel already built, which disproved the first explanation that
+        // this was only about the panel being created too late.
+        //
+        // `warmPreviewPanel()`, called when the drawer opens, is what makes it
+        // FAST. Building the shared panel is the expensive part, and doing it
+        // on the keypress is what made the preview feel sluggish.
+        DispatchQueue.main.async { panel.makeKeyAndOrderFront(nil) }
         return true
     }
 
