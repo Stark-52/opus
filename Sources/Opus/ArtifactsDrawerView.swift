@@ -20,11 +20,28 @@ final class ArtifactsDrawerView: NSView {
     static let width: CGFloat = RightDockGeometry.width(for: .artifacts)
     private static let cellID = NSUserInterfaceItemIdentifier("ArtifactCell")
 
-    var artifacts: [Artifact] = [] {
-        didSet {
-            guard artifacts != oldValue else { return }
-            applyFilter()
-        }
+    /// Assigned only through `update(artifacts:hasSession:hasTranscript:)`.
+    /// It used to be settable directly with a `didSet` that re-filtered, but
+    /// the empty-state message now depends on two flags as well as the list,
+    /// and a `didSet` guarded on `artifacts != oldValue` would silently skip
+    /// the refresh in the one case that matters: the list stayed empty while
+    /// the REASON it is empty changed. One entry point makes that impossible.
+    private(set) var artifacts: [Artifact] = []
+
+    /// Whether a Claude session is bound to the pane this drawer belongs to.
+    private var hasBoundSession = false
+    /// Whether that session has a transcript on disk yet. A pane Opus spawned
+    /// and nobody typed in has a session id and no transcript.
+    private var hasTranscript = false
+
+    /// The container's single way to hand this view its state. Flags first,
+    /// list second, one re-filter at the end, so the message and the rows can
+    /// never describe two different moments.
+    func update(artifacts newArtifacts: [Artifact], hasSession: Bool, hasTranscript: Bool) {
+        hasBoundSession = hasSession
+        self.hasTranscript = hasTranscript
+        artifacts = newArtifacts
+        applyFilter()
     }
 
     /// What the table actually shows: `artifacts` narrowed by the filter
@@ -226,12 +243,20 @@ final class ArtifactsDrawerView: NSView {
                 || $0.displayDetail.lowercased().contains(needle)
         }
         header.stringValue = Self.headerText(artifacts: artifacts)
-        // Two distinct reasons the list can be empty, two distinct messages:
-        // a session with no artifacts at all versus a chip or text filter
-        // that matched none of the ones that exist. Recomputed on every call
-        // so the text always reflects the CURRENT artifacts/filter pair, not
-        // whichever one was true when the view was built.
-        emptyLabel.stringValue = artifacts.isEmpty ? "No artifacts in this session" : "No match"
+        // Four distinct reasons the list can be empty, four distinct
+        // messages. The first version of this shipped with one sentence for
+        // all of them and told its owner "No artifacts in this session" for a
+        // pane whose session had never been used, which is true and useless.
+        // Recomputed on every call so the text always reflects the CURRENT
+        // state, never whichever one was true when the view was built.
+        if let reason = ArtifactsEmptyReason.resolve(
+            hasSession: hasBoundSession,
+            hasTranscript: hasTranscript,
+            artifactCount: artifacts.count,
+            visibleCount: visible.count
+        ) {
+            emptyLabel.stringValue = reason.message
+        }
         emptyLabel.isHidden = !visible.isEmpty
         scrollView.isHidden = visible.isEmpty
         tableView.reloadData()

@@ -946,7 +946,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         artifactsSessionId = nil
         artifactsOffset = 0
         artifactsGeneration += 1
-        artifactsDrawer.artifacts = []
+        artifactsDrawer.update(artifacts: [], hasSession: false, hasTranscript: false)
     }
 
     private func refreshArtifacts() {
@@ -968,14 +968,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         if sessionId != artifactsSessionId {
             artifactsSessionId = sessionId
             artifactsOffset = 0
-            artifactsDrawer.artifacts = []
             // Any read still in flight belongs to the PREVIOUS session. Bump
             // here so its result is dropped instead of being merged into the
             // new session's freshly emptied list.
             artifactsGeneration += 1
         }
+        // No transcript is NOT the same as no session, and the drawer has to
+        // be able to say which. This deliberately does not go through
+        // `resetArtifactsSession()`, which forgets the session id and would
+        // make the drawer report "no session bound" for a pane that has one.
+        // A pane Opus spawned and nobody typed in lands here every time.
         guard let url = Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
-            resetArtifactsSession()
+            artifactsDrawer.update(artifacts: [], hasSession: true, hasTranscript: false)
             return
         }
 
@@ -997,7 +1001,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 self.artifactsRefreshInFlight = false
                 guard self.artifactsGeneration == generation else { return }
                 self.artifactsOffset = result.offset
-                self.artifactsDrawer.artifacts = result.artifacts
+                self.artifactsDrawer.update(
+                    artifacts: result.artifacts, hasSession: true, hasTranscript: true)
             }
         }
     }
