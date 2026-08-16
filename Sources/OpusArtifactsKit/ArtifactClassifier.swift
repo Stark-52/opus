@@ -44,7 +44,8 @@ public enum ArtifactClassifier {
             let portSuffix = url.port.map { ":\($0)" } ?? ""
             var key = "\(scheme)://\(host.lowercased())\(portSuffix)\(path)"
             if let query = url.query, !query.isEmpty { key += "?\(query)" }
-            return Artifact(key: key, kind: .url, resolvedPath: nil, urlString: raw)
+            return Artifact(key: key, kind: .url, resolvedPath: nil, urlString: raw,
+                            timestamp: candidate.timestamp)
 
         case .path(let raw):
             // An empty token names nothing. Without this guard it resolves
@@ -67,7 +68,8 @@ public enum ArtifactClassifier {
             var isDir: ObjCBool = false
             _ = fileManager.fileExists(atPath: path, isDirectory: &isDir)
             let kind: ArtifactKind = isDir.boolValue ? .folder : (isImage(path) ? .image : .file)
-            return Artifact(key: path, kind: kind, resolvedPath: path, urlString: nil)
+            return Artifact(key: path, kind: kind, resolvedPath: path, urlString: nil,
+                            timestamp: candidate.timestamp)
         }
     }
 

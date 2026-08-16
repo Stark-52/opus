@@ -18,9 +18,13 @@ public struct ArtifactCandidate: Equatable, Sendable {
     /// relative path means nothing without it, and it varies line to line
     /// in a session that changed project.
     public let cwd: String
+    /// The transcript entry's own timestamp, carried through so the artifact
+    /// can be ordered against artifacts from a different session.
+    public let timestamp: Date?
 
-    public init(payload: Payload, cwd: String) {
+    public init(payload: Payload, cwd: String, timestamp: Date? = nil) {
         self.payload = payload
         self.cwd = cwd
+        self.timestamp = timestamp
     }
 }

@@ -122,8 +122,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Byte offset into the current session's transcript. Reset whenever the
     /// bound session changes, so a tab switch cannot resume a new file from
     /// the old file's offset.
-    private var artifactsOffset: UInt64 = 0
-    private var artifactsSessionId: String?
+    /// One read offset per session, because a tab can hold several panes
+    /// (Cmd+D) and the drawer aggregates all of them into one list. A single
+    /// offset would have every session resuming from another session's
+    /// position in its own file.
+    private var artifactsOffsets: [String: UInt64] = [:]
+    /// The session set the drawer is currently showing. When the active tab's
+    /// set changes, everything resets: a tab is the unit here, and its
+    /// artifacts do not carry over to another tab's.
+    private var artifactsSessionIds: Set<String> = []
 
     /// Trailing offsets — all measured from `terminalArea.trailingAnchor` —
     /// of the buttons that share the panel's top-right row: the shield
@@ -975,8 +982,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Clear the drawer AND forget which session it was showing.
     ///
     /// Final-review Important 1: the two early-return branches below used to
-    /// clear only the visible list, keeping `artifactsSessionId` and
-    /// `artifactsOffset`. That silently truncated the drawer for the rest of
+    /// clear only the visible list, keeping the bound session ids and their
+    /// read offsets. That silently truncated the drawer for the rest of
     /// the process: open on session A at byte offset N, switch to a tab whose
     /// pane has no bound session (one tick empties the list), switch back —
     /// `A == A`, so no reset fires, and the reader resumes at byte N against
@@ -989,8 +996,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// session being forgotten, so its result cannot repopulate the list we
     /// just decided has no session behind it.
     private func resetArtifactsSession() {
-        artifactsSessionId = nil
-        artifactsOffset = 0
+        artifactsSessionIds = []
+        artifactsOffsets = [:]
         artifactsGeneration += 1
         artifactsDrawer.update(artifacts: [], hasSession: false, hasTranscript: false)
     }
@@ -1004,61 +1011,88 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // that window; with the guard on top, a refresh arriving mid-read
         // returned without clearing or resetting anything, so switchTab's
         // call below would have been a no-op precisely when it matters most.
-        guard let sessionId = activeSessionId() else {
+        // Every pane of the ACTIVE TAB, not just the focused one. A tab split
+        // with Cmd+D is one piece of work seen from two angles, so its panes
+        // share one drawer; separate tabs stay separate. This is the owner's
+        // model and it is better than the original one-pane-one-drawer.
+        let sources = activeTabArtifactSources()
+        guard !sources.isEmpty else {
             resetArtifactsSession()
             return
         }
-        let cwd = OpusPreferences.shared.workingDirectory
-        // A different session means a different file. Resuming the new file
-        // from the old file's offset would skip most of it, silently.
-        if sessionId != artifactsSessionId {
-            artifactsSessionId = sessionId
-            artifactsOffset = 0
-            // Any read still in flight belongs to the PREVIOUS session. Bump
-            // here so its result is dropped instead of being merged into the
-            // new session's freshly emptied list.
+
+        let ids = Set(sources.map(\.sessionId))
+        if ids != artifactsSessionIds {
+            artifactsSessionIds = ids
+            artifactsOffsets = [:]
+            artifactsDrawer.update(artifacts: [], hasSession: true, hasTranscript: false)
+            // Any read still in flight belongs to the PREVIOUS tab. Bump here
+            // so its result is dropped rather than merged into a list that is
+            // now about a different set of sessions.
             artifactsGeneration += 1
         }
-        // The hook tells us which file this session is actually writing to.
-        // Prefer it over the derivation below, which guesses from the id plus
-        // the working directory in preferences and guesses wrong whenever the
-        // pane is not in that directory, or whenever a /resume moved the
-        // conversation somewhere else entirely.
-        let reported = activePaneToken().flatMap {
-            ClaudeStateStore.shared.transcriptPath(forPaneToken: $0)
+
+        // A session with no transcript on disk yet is not a session with no
+        // artifacts, and the drawer says which. With several panes, "has a
+        // transcript" is true as soon as ANY of them does.
+        let readable = sources.compactMap { source -> (String, URL)? in
+            guard let url = source.transcriptURL else { return nil }
+            return (source.sessionId, url)
         }
-        // No transcript is NOT the same as no session, and the drawer has to
-        // be able to say which. This deliberately does not go through
-        // `resetArtifactsSession()`, which forgets the session id and would
-        // make the drawer report "no session bound" for a pane that has one.
-        // A pane Opus spawned and nobody typed in lands here every time.
-        guard let url = reported.map(URL.init(fileURLWithPath:))
-                ?? Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
+        guard !readable.isEmpty else {
             artifactsDrawer.update(artifacts: [], hasSession: true, hasTranscript: false)
             return
         }
 
-        // The guard stays, but only over the dispatch: no second background
-        // read is started while one is running.
         guard !artifactsRefreshInFlight else { return }
 
         artifactsGeneration += 1
         let generation = artifactsGeneration
-        let offset = artifactsOffset
+        let offsets = artifactsOffsets
         let existing = artifactsDrawer.artifacts
         artifactsRefreshInFlight = true
 
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let result = TranscriptArtifactReader.read(
-                url: url, from: offset, existing: existing)
+            // Read each session from its own offset, then let the store merge
+            // them on the shared clock. Ordering by position in a transcript
+            // could not have interleaved two sessions; the timestamps can.
+            var merged = existing
+            var newOffsets = offsets
+            for (sessionId, url) in readable {
+                let result = TranscriptArtifactReader.read(
+                    url: url, from: offsets[sessionId] ?? 0, existing: merged)
+                merged = result.artifacts
+                newOffsets[sessionId] = result.offset
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.artifactsRefreshInFlight = false
                 guard self.artifactsGeneration == generation else { return }
-                self.artifactsOffset = result.offset
+                self.artifactsOffsets = newOffsets
                 self.artifactsDrawer.update(
-                    artifacts: result.artifacts, hasSession: true, hasTranscript: true)
+                    artifacts: merged, hasSession: true, hasTranscript: true)
             }
+        }
+    }
+
+    /// One entry per pane of the active tab that has a session bound, with
+    /// the transcript that pane's own hooks reported when they reported one.
+    private func activeTabArtifactSources() -> [(sessionId: String, transcriptURL: URL?)] {
+        guard tabPanes.indices.contains(activeTabIndex) else { return [] }
+        let cwd = OpusPreferences.shared.workingDirectory
+        var seen = Set<String>()
+        return tabPanes[activeTabIndex].compactMap { pane in
+            let token = ObjectIdentifier(pane.terminal)
+            guard let sessionId = ClaudeStateStore.shared.sessionId(forPaneToken: token),
+                  seen.insert(sessionId).inserted   // shared backend: one session, several panes
+            else { return nil }
+            // The hook says which file it writes to; the derivation below only
+            // guesses, and guesses wrong whenever the pane is not in the
+            // working directory held in preferences.
+            let reported = ClaudeStateStore.shared.transcriptPath(forPaneToken: token)
+            let url = reported.map(URL.init(fileURLWithPath:))
+                ?? Self.transcriptURL(sessionId: sessionId, cwd: cwd)
+            return (sessionId, url)
         }
     }
 
