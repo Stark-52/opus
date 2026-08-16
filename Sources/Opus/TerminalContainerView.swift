@@ -441,11 +441,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // constant between 0 (showing) and the drawer's width (parked off
         // the right edge), which is what makes opening a slide.
         let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: trailingAnchor)
+        let drawerWidth = drawer.widthAnchor.constraint(
+            equalToConstant: OpusPreferences.shared.drawerWidth(for: .tasks))
         NSLayoutConstraint.activate([
             drawer.topAnchor.constraint(equalTo: topAnchor),
             drawerTrailing,
-            drawer.widthAnchor.constraint(
-                equalToConstant: RightDockGeometry.width(for: .tasks)),
+            drawerWidth,
             drawerBottom
         ])
         todoDrawer = drawer
@@ -472,23 +473,54 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             equalTo: bottomAnchor, constant: -(14 + 4))
         let artifactsTrailing = artifactsDrawerView.trailingAnchor.constraint(
             equalTo: trailingAnchor)
+        let artifactsWidth = artifactsDrawerView.widthAnchor.constraint(
+            equalToConstant: OpusPreferences.shared.drawerWidth(for: .artifacts))
         NSLayoutConstraint.activate([
             artifactsDrawerView.topAnchor.constraint(equalTo: topAnchor),
             artifactsTrailing,
-            artifactsDrawerView.widthAnchor.constraint(
-                equalToConstant: RightDockGeometry.width(for: .artifacts)),
+            artifactsWidth,
             artifactsBottom
         ])
         artifactsDrawer = artifactsDrawerView
         artifactsDrawerBottomConstraint = artifactsBottom
 
+        // One grabbable strip per drawer, pinned to its leading edge and
+        // sized in points, installed AFTER both drawers so it sits above
+        // them in z-order and wins the hit test. The drag reports a proposed
+        // width continuously and writes to preferences once, on mouse up:
+        // persisting every frame would fire the preferences-changed
+        // notification dozens of times per gesture.
+        for (occupant, view) in [(RightDockGeometry.Occupant.tasks, drawer as NSView),
+                                 (.artifacts, artifactsDrawerView as NSView)] {
+            let handle = DrawerResizeHandle(
+                proposeWidth: { [weak self] proposed in
+                    self?.rightDock?.setWidth(proposed, for: occupant)
+                },
+                commit: { [weak self] in
+                    guard let self, let dock = self.rightDock else { return }
+                    OpusPreferences.shared.setDrawerWidth(
+                        dock.currentWidth(for: occupant), for: occupant)
+                })
+            addSubview(handle)
+            NSLayoutConstraint.activate([
+                handle.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                handle.widthAnchor.constraint(
+                    equalToConstant: DrawerResizeHandle.thickness),
+                handle.topAnchor.constraint(equalTo: view.topAnchor),
+                handle.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
+        }
+
         rightDock = RightDock(
             panels: [
-                .tasks: RightDock.Panel(view: drawer, trailing: drawerTrailing),
+                .tasks: RightDock.Panel(
+                    view: drawer, trailing: drawerTrailing, width: drawerWidth),
                 .artifacts: RightDock.Panel(
-                    view: artifactsDrawerView, trailing: artifactsTrailing)
+                    view: artifactsDrawerView, trailing: artifactsTrailing,
+                    width: artifactsWidth)
             ],
             terminalTrailing: terminalAreaTrailingConstraint,
+            widthProvider: { OpusPreferences.shared.drawerWidth(for: $0) },
             layout: { [weak self] in self?.layoutSubtreeIfNeeded() },
             onChange: { [weak self] occupant in
                 guard let self else { return }

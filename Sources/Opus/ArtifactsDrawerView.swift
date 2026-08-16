@@ -101,7 +101,12 @@ final class ArtifactsDrawerView: NSView {
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("artifact"))
+        // Starting width only. The drawer's edge is draggable now, so the
+        // column has to follow the table rather than a constant: a fixed
+        // column in a resized drawer leaves a dead gutter on one side or
+        // truncates every row on the other.
         column.width = Self.width - 2 * OpusTheme.controlGap
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.addTableColumn(column)
         tableView.headerView = nil
         tableView.backgroundColor = .clear
