@@ -643,6 +643,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `ClaudeStateStore` binds the real id. The todo drawer's empty state
     /// ("No tasks in this session") is this exact same rule applied to a
     /// second surface — see `refreshTodoDrawer`'s doc comment.
+    /// The active pane's identity, resolved exactly like `activeSessionId()`
+    /// below and kept adjacent to it so the two cannot drift apart and answer
+    /// about different panes.
+    private func activePaneToken() -> ObjectIdentifier? {
+        guard tabPanes.indices.contains(activeTabIndex) else { return nil }
+        let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
+        let panes = tabPanes[activeTabIndex]
+        guard panes.indices.contains(idx) else { return nil }
+        return ObjectIdentifier(panes[idx].terminal)
+    }
+
     private func activeSessionId() -> String? {
         guard tabPanes.indices.contains(activeTabIndex) else { return nil }
         let idx = tabActivePaneIndex.indices.contains(activeTabIndex) ? tabActivePaneIndex[activeTabIndex] : 0
@@ -1018,12 +1029,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             // new session's freshly emptied list.
             artifactsGeneration += 1
         }
+        // The hook tells us which file this session is actually writing to.
+        // Prefer it over the derivation below, which guesses from the id plus
+        // the working directory in preferences and guesses wrong whenever the
+        // pane is not in that directory, or whenever a /resume moved the
+        // conversation somewhere else entirely.
+        let reported = activePaneToken().flatMap {
+            ClaudeStateStore.shared.transcriptPath(forPaneToken: $0)
+        }
         // No transcript is NOT the same as no session, and the drawer has to
         // be able to say which. This deliberately does not go through
         // `resetArtifactsSession()`, which forgets the session id and would
         // make the drawer report "no session bound" for a pane that has one.
         // A pane Opus spawned and nobody typed in lands here every time.
-        guard let url = Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
+        guard let url = reported.map(URL.init(fileURLWithPath:))
+                ?? Self.transcriptURL(sessionId: sessionId, cwd: cwd) else {
             artifactsDrawer.update(artifacts: [], hasSession: true, hasTranscript: false)
             return
         }
@@ -1798,6 +1818,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         if useSharedTab0 {
             ClaudeBackend.shared.startIfNeeded()
             let pane0 = TabPane.makeShared(frame: terminalArea.bounds, panel: nil, container: self)
+        // Registered for hook attribution: the pid reader is a closure
+        // because the PTY child does not exist yet at this point.
+        ClaudeStateStore.shared.registerPane(
+            ObjectIdentifier(pane0.terminal), shellPid: { [weak pane0] in pane0?.shellPid ?? 0 })
             styleTerminal(pane0.terminal)
             terminalArea.addSubview(pane0.terminal)
             tabs.append(pane0.terminal)
@@ -1821,6 +1845,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             }
         } else {
             let pane0 = TabPane.makePrivate(frame: terminalArea.bounds, panel: nil, container: self)
+        // Registered for hook attribution: the pid reader is a closure
+        // because the PTY child does not exist yet at this point.
+        ClaudeStateStore.shared.registerPane(
+            ObjectIdentifier(pane0.terminal), shellPid: { [weak pane0] in pane0?.shellPid ?? 0 })
             styleTerminal(pane0.terminal)
             terminalArea.addSubview(pane0.terminal)
             pane0.start()
@@ -1849,6 +1877,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     func spawnNewTab() {
         let pane = TabPane.makePrivate(frame: terminalFrame(), panel: nil, container: self)
+        // Registered for hook attribution: the pid reader is a closure
+        // because the PTY child does not exist yet at this point.
+        ClaudeStateStore.shared.registerPane(
+            ObjectIdentifier(pane.terminal), shellPid: { [weak pane] in pane?.shellPid ?? 0 })
         styleTerminal(pane.terminal)
         pane.terminal.isHidden = true
         terminalArea.addSubview(pane.terminal)
@@ -1974,6 +2006,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // and its size-change calc can produce negative cols/rows during that
         // first layout pass (which is what makes the UInt16 conversion crash).
         let newPane = TabPane.makePrivate(frame: oldView.frame, panel: nil, container: self)
+        // Registered for hook attribution: the pid reader is a closure
+        // because the PTY child does not exist yet at this point.
+        ClaudeStateStore.shared.registerPane(
+            ObjectIdentifier(newPane.terminal), shellPid: { [weak newPane] in newPane?.shellPid ?? 0 })
         styleTerminal(newPane.terminal)
         newPane.start()
         recordPendingSpawn(newPane)

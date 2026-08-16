@@ -22,6 +22,7 @@
 // listening.
 
 import Foundation
+import OpusArtifactsKit
 
 /// What a single Claude session is doing right now, as far as the hook
 /// stream can tell. Drives the tab-bar dot color (see OpusTabBar.draw).
@@ -239,9 +240,73 @@ final class ClaudeStateStore {
         paneSessionIds[paneToken] = sessionId
     }
 
+    // MARK: Pane attribution (rebinding after /resume)
+
+    /// Live shell-pid readers, one per registered pane. A closure rather than
+    /// a stored pid because a pane is registered at creation, before its PTY
+    /// child exists: storing 0 once would disable attribution for that pane
+    /// forever.
+    private var paneShellPids: [ObjectIdentifier: () -> Int32] = [:]
+    /// The transcript file each pane's session is actually writing to, as
+    /// reported by its own hooks. Preferred over anything derived from a
+    /// session id plus a working directory, because that derivation guesses.
+    private var paneTranscriptPaths: [ObjectIdentifier: String] = [:]
+
+    func registerPane(_ paneToken: ObjectIdentifier, shellPid: @escaping () -> Int32) {
+        assert(Thread.isMainThread, "ClaudeStateStore is main-thread only")
+        paneShellPids[paneToken] = shellPid
+    }
+
+    func transcriptPath(forPaneToken paneToken: ObjectIdentifier) -> String? {
+        assert(Thread.isMainThread, "ClaudeStateStore is main-thread only")
+        guard let p = paneTranscriptPaths[paneToken], !p.isEmpty else { return nil }
+        return p
+    }
+
+    /// Attribute an event to the pane whose shell it descends from, and make
+    /// that pane's binding match what the event actually says.
+    ///
+    /// This is the fix for `/resume`. Opus binds a pane to the session id it
+    /// spawned with; resuming a different conversation moves claude to a
+    /// different transcript without any of that changing, so the pane stays
+    /// pointed at an id whose file will never exist and the context meter,
+    /// the tasks drawer and the artifacts drawer all read nothing for the
+    /// rest of that pane's life. Nothing in a hook payload names a pane, so
+    /// the process tree is what settles it.
+    ///
+    /// Silent no-op when the relay pid is absent (an older opus-attach still
+    /// on PATH) or the walk finds no known shell: an event we cannot
+    /// attribute is dropped rather than guessed at, because guessing here
+    /// would bind one pane's drawer to another pane's session.
+    private func reattributeIfNeeded(_ event: OpusClaudeEvent) {
+        guard event.relayPid > 0 else { return }
+        var pidToToken: [Int32: ObjectIdentifier] = [:]
+        for (token, read) in paneShellPids {
+            let pid = read()
+            if pid > 0 { pidToToken[pid] = token }
+        }
+        guard !pidToToken.isEmpty,
+              let ownerPid = ProcessAncestry.owner(
+                of: event.relayPid,
+                among: Set(pidToToken.keys),
+                parentOf: ProcessParentLookup.parent(of:)),
+              let token = pidToToken[ownerPid]
+        else { return }
+
+        if !event.transcriptPath.isEmpty {
+            paneTranscriptPaths[token] = event.transcriptPath
+        }
+        guard paneSessionIds[token] != event.sessionId else { return }
+        paneSessionIds[token] = event.sessionId
+        NotificationCenter.default.post(name: .opusPaneActivityChanged, object: nil)
+    }
+
     @objc private func claudeEventReceived(_ note: Notification) {
         assert(Thread.isMainThread, "ClaudeStateStore is main-thread only")
         guard let event = note.userInfo?["event"] as? OpusClaudeEvent else { return }
+        // Before anything else: make sure the pane this event came from is
+        // bound to the session the event is actually about.
+        reattributeIfNeeded(event)
         if case .sessionStarted = event.kind {
             bindOldestPendingSpawn(toSessionId: event.sessionId)
         }

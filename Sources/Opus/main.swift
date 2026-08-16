@@ -105,6 +105,11 @@ final class OpusTabBar: NSView {
 final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDelegate {
     let terminal: TerminalView
     private var process: LocalProcess!
+
+    /// The PTY child's pid, or 0 before the process has started. Used to
+    /// attribute a hook event to this pane by walking up from the pid the
+    /// hook's relay stamped into its payload.
+    var shellPid: Int32 { process?.shellPid ?? 0 }
     weak var panel: QuickTerminalPanel?
     weak var container: TerminalContainerView?
     var title: String = "Claude"
@@ -291,6 +296,11 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
 final class TabPane {
     let terminal: TerminalView
     let wrapper: FilteredClaudeTab?            // non-nil → private claude
+
+    /// The pid of the process actually running claude for this pane. A
+    /// private pane owns its own; every shared pane reports the one shared
+    /// backend, which is correct because they genuinely are one session.
+    var shellPid: Int32 { wrapper?.shellPid ?? ClaudeBackend.shared.shellPid }
     fileprivate var sharedSubscription: UUID?  // non-nil → shared backend
     var title: String = "Claude"
 

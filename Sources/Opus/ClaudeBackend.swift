@@ -31,6 +31,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     static let shared = ClaudeBackend()
 
     private var process: LocalProcess?
+
+    /// The shared backend's PTY child pid, or 0 before it has spawned.
+    var shellPid: Int32 { process?.shellPid ?? 0 }
     private var subscribers: [UUID: (ArraySlice<UInt8>) -> Void] = [:]
     private var primarySize: winsize = winsize(ws_row: 40, ws_col: 200, ws_xpixel: 0, ws_ypixel: 0)
 
