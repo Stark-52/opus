@@ -38,6 +38,15 @@ final class ArtifactsDrawerView: NSView {
     private let tableView = NSTableView(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
 
+    /// Per-kind lens, composed with the text filter by AND. Lives in memory
+    /// only: it is a per-moment choice, not a preference, so it resets
+    /// whenever the drawer itself is rebuilt rather than persisting anywhere.
+    private var kindFilter: ArtifactKindFilter = .all
+    private let chipRow = NSView()
+    /// Index-parallel with `ArtifactKindFilter.allCases`, built once in
+    /// `buildChipRow()`. `sender.tag` is the index back into both arrays.
+    private var chipButtons: [NSButton] = []
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -51,6 +60,9 @@ final class ArtifactsDrawerView: NSView {
         header.font = .systemFont(ofSize: 12, weight: .medium)
         header.textColor = OpusTheme.cream(0.95)
         header.translatesAutoresizingMaskIntoConstraints = false
+
+        chipRow.translatesAutoresizingMaskIntoConstraints = false
+        buildChipRow()
 
         filterField.font = .systemFont(ofSize: 12)
         filterField.textColor = OpusTheme.cream(0.95)
@@ -101,6 +113,7 @@ final class ArtifactsDrawerView: NSView {
         scrollView.hasVerticalScroller = true
 
         addSubview(header)
+        addSubview(chipRow)
         addSubview(filterField)
         addSubview(scrollView)
         addSubview(emptyLabel)
@@ -110,7 +123,12 @@ final class ArtifactsDrawerView: NSView {
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
             header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
 
-            filterField.topAnchor.constraint(equalTo: header.bottomAnchor, constant: OpusTheme.controlGap),
+            chipRow.topAnchor.constraint(equalTo: header.bottomAnchor, constant: OpusTheme.controlGap),
+            chipRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
+            chipRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
+            chipRow.heightAnchor.constraint(equalToConstant: 20),
+
+            filterField.topAnchor.constraint(equalTo: chipRow.bottomAnchor, constant: OpusTheme.controlGap),
             filterField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
             filterField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
             filterField.heightAnchor.constraint(equalToConstant: 22),
@@ -141,22 +159,78 @@ final class ArtifactsDrawerView: NSView {
 
     var selectedArtifact: Artifact? { artifact(at: tableView.selectedRow) }
 
+    // MARK: Kind filter chips
+
+    /// One borderless NSButton per `ArtifactKindFilter` case, chained
+    /// left to right inside `chipRow`. `sender.tag` (set to the case's
+    /// index in `allCases`) is how `chipTapped` recovers which case fired,
+    /// so this array and `ArtifactKindFilter.allCases` must stay parallel.
+    private func buildChipRow() {
+        var previous: NSView?
+        for (index, filter) in ArtifactKindFilter.allCases.enumerated() {
+            let button = NSButton(title: filter.title, target: self, action: #selector(chipTapped(_:)))
+            button.tag = index
+            button.isBordered = false
+            button.refusesFirstResponder = true
+            button.font = .systemFont(ofSize: 10)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            chipRow.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.centerYAnchor.constraint(equalTo: chipRow.centerYAnchor),
+                button.leadingAnchor.constraint(
+                    equalTo: previous?.trailingAnchor ?? chipRow.leadingAnchor,
+                    constant: previous == nil ? 0 : OpusTheme.controlGap)
+            ])
+            chipButtons.append(button)
+            previous = button
+        }
+        // `lessThanOrEqualTo` rather than `equalTo`: this only guarantees the
+        // row never overflows chipRow's bounds. It does not by itself
+        // guarantee nothing clips — see the width computation in the task
+        // report, which confirms the five titles fit with room to spare.
+        if let last = previous {
+            last.trailingAnchor.constraint(lessThanOrEqualTo: chipRow.trailingAnchor).isActive = true
+        }
+        restyleChips()
+    }
+
+    @objc private func chipTapped(_ sender: NSButton) {
+        guard ArtifactKindFilter.allCases.indices.contains(sender.tag) else { return }
+        kindFilter = ArtifactKindFilter.allCases[sender.tag]
+        restyleChips()
+        applyFilter()
+    }
+
+    /// One color, one meaning: cyan already means "nominal, active control"
+    /// elsewhere in this theme, so the selected chip reuses it rather than
+    /// inventing a second color for the same idea.
+    private func restyleChips() {
+        for (index, button) in chipButtons.enumerated() {
+            let filter = ArtifactKindFilter.allCases[index]
+            button.contentTintColor = filter == kindFilter ? OpusTheme.cyan : OpusTheme.cream(0.45)
+        }
+    }
+
     // MARK: Filter
 
     @objc private func filterChanged() { applyFilter() }
 
     private func applyFilter() {
+        // Chip narrows by kind first, text filter narrows what's left. AND,
+        // not OR: a chip that excludes everything stays empty no matter what
+        // the text field says.
+        let byKind = ArtifactKindFilter.apply(kindFilter, to: artifacts)
         let needle = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        visible = needle.isEmpty ? artifacts : artifacts.filter {
+        visible = needle.isEmpty ? byKind : byKind.filter {
             $0.displayName.lowercased().contains(needle)
                 || $0.displayDetail.lowercased().contains(needle)
         }
         header.stringValue = Self.headerText(artifacts: artifacts)
         // Two distinct reasons the list can be empty, two distinct messages:
-        // a session with no artifacts at all versus a filter that matched
-        // none of the ones that exist. Recomputed on every call so the text
-        // always reflects the CURRENT artifacts/filter pair, not whichever
-        // one was true when the view was built.
+        // a session with no artifacts at all versus a chip or text filter
+        // that matched none of the ones that exist. Recomputed on every call
+        // so the text always reflects the CURRENT artifacts/filter pair, not
+        // whichever one was true when the view was built.
         emptyLabel.stringValue = artifacts.isEmpty ? "No artifacts in this session" : "No match"
         emptyLabel.isHidden = !visible.isEmpty
         scrollView.isHidden = visible.isEmpty
