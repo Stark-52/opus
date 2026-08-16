@@ -48,6 +48,10 @@ final class ArtifactsDrawerView: NSView {
     /// field. Kept separate so typing in the filter never mutates the
     /// container's data.
     private var visible: [Artifact] = []
+    /// What the table was last told to draw. `applyFilter` compares against
+    /// this and skips `reloadData()` entirely when nothing changed, because
+    /// reloading destroys the selection and with it any open preview.
+    private var previouslyRendered: [Artifact] = []
 
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No artifacts in this session")
@@ -264,13 +268,30 @@ final class ArtifactsDrawerView: NSView {
         }
         emptyLabel.isHidden = !visible.isEmpty
         scrollView.isHidden = visible.isEmpty
+
+        // Reload ONLY when the rows actually changed. `reloadData()` throws
+        // away the selection and the first responder, and this used to run on
+        // every refresh whether anything had changed or not. That is what
+        // killed the QuickLook preview: the panel previews the SELECTED row,
+        // the refresh wiped the selection out from under it, and the preview
+        // closed on its own. The owner worked it out from the symptom, having
+        // noticed the preview survived for varying lengths of time depending
+        // on where in the refresh cycle it was opened.
+        guard visible != previouslyRendered else { return }
+        previouslyRendered = visible
+
+        // Even a real change must not silently move the selection. Remember
+        // what was selected by identity, not by index: a new artifact
+        // arriving at the top shifts every index below it.
+        let selectedKey = selectedArtifact?.key
         tableView.reloadData()
+        if let selectedKey, let row = visible.firstIndex(where: { $0.key == selectedKey }) {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
         // A refresh can drop the artifact an open preview is showing (the
         // session moved on, or the filter now excludes it) even when the
         // selected INDEX doesn't change, which reloadData's own
-        // selection-adjustment wouldn't catch. Called unconditionally here
-        // rather than relying on that, so the panel is always re-queried
-        // against whatever `selectedArtifact` is now.
+        // selection-adjustment wouldn't catch.
         reloadPreviewIfOpen()
     }
 
@@ -427,7 +448,9 @@ extension ArtifactsDrawerView: NSMenuDelegate, ArtifactMenuTarget {
 // missed the real job of the protocol: without a controller the panel has
 // no owner, drops the assignment and closes immediately.
 extension ArtifactsDrawerView {
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        return true
+    }
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         panel.dataSource = self
@@ -462,7 +485,7 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     }
 
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        selectedArtifact?.resolvedPath == nil ? 0 : 1
+        return selectedArtifact?.resolvedPath == nil ? 0 : 1
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
