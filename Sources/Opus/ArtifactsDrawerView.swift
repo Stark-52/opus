@@ -479,6 +479,15 @@ extension ArtifactsDrawerView {
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
         ownsPreview = true
+        // Start on whatever is selected. Without this the panel opens on the
+        // first previewable row and the arrow keys navigate from there, which
+        // is not where the user was looking.
+        defer {
+            if let key = selectedArtifact?.key,
+               let index = previewableArtifacts.firstIndex(where: { $0.key == key }) {
+                panel.currentPreviewItemIndex = index
+            }
+        }
         panel.dataSource = self
         panel.delegate = self
     }
@@ -533,13 +542,47 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         return true
     }
 
+    /// Every previewable row, not just the selected one. Handing the panel a
+    /// single item left it with nothing to navigate, which is why the arrow
+    /// keys did nothing; with the whole list it browses natively, exactly as
+    /// it does from the Finder. URLs are excluded because QuickLook has
+    /// nothing to show for a link.
+    private var previewableArtifacts: [Artifact] {
+        visible.filter { $0.resolvedPath != nil }
+    }
+
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        return selectedArtifact?.resolvedPath == nil ? 0 : 1
+        previewableArtifacts.count
     }
 
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        guard let path = selectedArtifact?.resolvedPath else { return nil }
+        let items = previewableArtifacts
+        guard items.indices.contains(index), let path = items[index].resolvedPath else { return nil }
         return URL(fileURLWithPath: path) as NSURL
+    }
+
+    /// Where the panel grows FROM. Only the source rect, deliberately not the
+    /// transition image: supplying an image made the open drag, because it
+    /// forced an icon fetch and an extra composite before anything could
+    /// move. The rect alone costs nothing and is what makes the entrance read
+    /// as coming out of the row rather than appearing from nowhere.
+    ///
+    /// Anchored on the item being previewed, not on the selection, so it
+    /// still points at the right row after the arrow keys have moved on.
+    func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
+        guard let url = item as? URL ?? (item as? NSURL) as URL?,
+              let row = previewRowInTable(forPath: url.path),
+              let window = tableView.window
+        else { return .zero }
+        let inWindow = tableView.convert(tableView.rect(ofRow: row), to: nil)
+        return window.convertToScreen(inWindow)
+    }
+
+    /// Row index in the TABLE for a previewed path. The panel indexes into
+    /// `previewableArtifacts`, which skips URL rows, so the two orderings are
+    /// not the same and translating between them by position would drift.
+    private func previewRowInTable(forPath path: String) -> Int? {
+        visible.firstIndex { $0.resolvedPath == path }
     }
 
     /// The shared panel is process-wide, but this app runs TWO independent
