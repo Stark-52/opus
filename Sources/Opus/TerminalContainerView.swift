@@ -1129,8 +1129,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// Toggle for the artifacts drawer, pinned into the top-right row so it
     /// travels with the terminal area when a drawer opens, same as the
-    /// shield. the owner asked for a button beside the hotkey: a drawer nobody
-    /// can see the handle for is a drawer nobody opens.
+    /// shield. Asked for alongside the hotkey: a drawer nobody can see the
+    /// handle for is a drawer nobody opens.
     ///
     /// Called unconditionally from `init` (see the call site's own comment)
     /// — unlike `installShieldButton()`, which only matters for the shared
