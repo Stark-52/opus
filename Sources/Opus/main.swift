@@ -10,6 +10,7 @@
 import Cocoa
 import Carbon
 import SwiftTerm
+import Quartz
 
 // MARK: - Quick Terminal Panel (SwiftTerm embedded)
 
@@ -1014,13 +1015,24 @@ final class QuickTerminalPanel: NSObject {
     /// left Opus. That is an in-app focus move, not the user going to another
     /// application, and it must NOT collapse the panel. Everything else keeps
     /// behaving exactly as it did.
+    /// `quickLookVisible` is the newest term. Space opens a QuickLook
+    /// preview, which takes key status away from the panel; the panel folded,
+    /// took the drawer with it, and the preview died along with the window
+    /// that owned its data source, so it read as a preview that flashed open
+    /// and vanished. `keyStillWithinOpus` does not save it: the decision is
+    /// deferred by exactly one runloop turn, and QLPreviewPanel takes key
+    /// later than that, so NSApp.keyWindow is still nil when the question is
+    /// asked. Suppressing on the preview being up is what makes this correct
+    /// regardless of how long the panel takes to claim focus.
     static func shouldAutohideOnResign(visible: Bool,
                                        pinned: Bool,
                                        spaceSwitchInFlight: Bool,
-                                       keyStillWithinOpus: Bool) -> Bool {
+                                       keyStillWithinOpus: Bool,
+                                       quickLookVisible: Bool = false) -> Bool {
         guard visible else { return false }
         if spaceSwitchInFlight { return false }   // Space transition, not a focus change
         if pinned { return false }                // pinned = never autohide
+        if quickLookVisible { return false }      // our own preview holds focus
         return !keyStillWithinOpus
     }
 
@@ -1059,7 +1071,13 @@ final class QuickTerminalPanel: NSObject {
                 // still the focused surface one turn later) must not hide it
                 // either — deferring the decision is what makes that case
                 // visible at all.
-                keyStillWithinOpus: NSApp.keyWindow != nil
+                keyStillWithinOpus: NSApp.keyWindow != nil,
+                // Guarded on `sharedPreviewPanelExists()` first: calling
+                // `shared()` unconditionally would CREATE the panel, and
+                // creating one here to ask whether one is up would make the
+                // answer always yes.
+                quickLookVisible: QLPreviewPanel.sharedPreviewPanelExists()
+                    && QLPreviewPanel.shared().isVisible
             ) else { return }
             self.hide()
         }
