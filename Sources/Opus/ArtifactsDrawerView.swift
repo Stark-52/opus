@@ -53,6 +53,12 @@ final class ArtifactsDrawerView: NSView {
     /// reloading destroys the selection and with it any open preview.
     private var previouslyRendered: [Artifact] = []
 
+    /// Whether THIS drawer currently drives the shared QuickLook panel.
+    /// Tracked explicitly rather than inferred from the panel's `dataSource`,
+    /// because giving ownership up that way meant nil-ing the data source,
+    /// and a panel with no data source closes itself.
+    private var ownsPreview = false
+
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No artifacts in this session")
     private let filterField = NSTextField(frame: .zero)
@@ -372,6 +378,15 @@ extension ArtifactsDrawerView: NSTextFieldDelegate {
 extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { visible.count }
 
+    /// AppKit's own highlight is a light fill, and every label in a row is
+    /// cream, so a selected row rendered as near-white on near-white and was
+    /// unreadable. Same shape as ScriptsPanel's row background: a dim panel
+    /// fill plus a cyan edge, cyan meaning "active" exactly as it does
+    /// everywhere else in this app.
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        ArtifactRowBackground()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let artifact = artifact(at: row) else { return nil }
         let cell: ArtifactCellView
@@ -453,15 +468,18 @@ extension ArtifactsDrawerView {
     }
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        ownsPreview = true
         panel.dataSource = self
         panel.delegate = self
     }
 
     override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        // Release ownership so `ownsPreviewPanel()` stops claiming a panel
-        // this drawer no longer drives.
-        panel.dataSource = nil
-        panel.delegate = nil
+        // Give up ownership WITHOUT clearing the panel's data source. Clearing
+        // it leaves the panel with nothing to show, which closes it, and this
+        // method is also called when the panel merely takes key status away
+        // from the drawer's own window. Tearing down here is how a preview
+        // could kill itself the instant it opened.
+        ownsPreview = false
     }
 }
 
@@ -501,9 +519,7 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// window's drawer currently owns. Whoever last pressed Space in
     /// `handleSpace()` set `panel.dataSource = self`, so `dataSource` is the
     /// ownership record — checked here, not re-decided.
-    private func ownsPreviewPanel() -> Bool {
-        QLPreviewPanel.shared().dataSource as AnyObject? === self
-    }
+    private func ownsPreviewPanel() -> Bool { ownsPreview }
 
     /// Re-queries the panel's data source (`numberOfPreviewItems`,
     /// `previewItemAt:`, both of which read `selectedArtifact` live) so an
@@ -637,5 +653,23 @@ private final class ArtifactCellView: NSTableCellView {
                 self.thumb.image = rep.nsImage
             }
         }
+    }
+}
+
+/// Selected-row background for the artifacts drawer. Mirrors
+/// `ScriptRowBackground` in ScriptsPanel so the two lists highlight
+/// identically, rather than one inheriting AppKit's light default and
+/// rendering cream text on top of it.
+private final class ArtifactRowBackground: NSTableRowView {
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard selectionHighlightStyle != .none else { return }
+        let body = bounds.insetBy(dx: 2, dy: 0)
+        OpusTheme.cream(0.09).setFill()
+        NSBezierPath(roundedRect: body,
+                     xRadius: OpusTheme.radiusControl, yRadius: OpusTheme.radiusControl).fill()
+
+        let accent = NSRect(x: body.minX, y: body.minY + 3, width: 2.5, height: body.height - 6)
+        OpusTheme.cyan.withAlphaComponent(0.9).setFill()
+        NSBezierPath(roundedRect: accent, xRadius: 1.25, yRadius: 1.25).fill()
     }
 }
