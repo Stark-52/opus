@@ -529,30 +529,6 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         return selectedArtifact?.resolvedPath == nil ? 0 : 1
     }
 
-    /// Where the panel should zoom FROM. Without this it has nowhere to come
-    /// out of, so it plays its slow default entrance from the middle of the
-    /// screen; the two-press behaviour felt instant only because the second
-    /// press landed on an already-open panel and skipped the animation
-    /// entirely. Anchored on the selected row, this reads as instant for the
-    /// same reason the Finder's does: it grows out of the thing you are
-    /// already looking at.
-    func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
-        let row = tableView.selectedRow
-        guard row >= 0, let window = tableView.window else { return .zero }
-        let inTable = tableView.rect(ofRow: row)
-        let inWindow = tableView.convert(inTable, to: nil)
-        return window.convertToScreen(inWindow)
-    }
-
-    /// What to draw while it flies. Handing over the row's own icon means the
-    /// animation has real content from its first frame instead of expanding
-    /// an empty box and filling it in afterwards.
-    func previewPanel(_ panel: QLPreviewPanel!, transitionImageFor item: QLPreviewItem!,
-                      contentRect: UnsafeMutablePointer<NSRect>!) -> Any! {
-        guard let path = selectedArtifact?.resolvedPath else { return nil }
-        return NSWorkspace.shared.icon(forFile: path)
-    }
-
     func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         guard let path = selectedArtifact?.resolvedPath else { return nil }
         return URL(fileURLWithPath: path) as NSURL
