@@ -1,11 +1,10 @@
 // ArtifactsEmptyReason — why the drawer has nothing to show.
 //
-// Added after the drawer shipped and failed its owner on first contact. He
-// opened it on a pane Opus had spawned but nobody had typed in, so Claude
-// had never written a transcript for that session id. The drawer said "No
-// artifacts in this session": true, and useless. He had no way to tell that
-// from "the session is fine but produced nothing", or from "your filter
-// hides everything".
+// Added after the drawer shipped and failed on first contact: opened on a
+// pane Opus had spawned but nobody had typed in, so Claude had never written
+// a transcript for that session id. The drawer said "No artifacts in this
+// session": true, and useless. Nothing told those apart from "the session is
+// fine but produced nothing", or from "your filter hides everything".
 //
 // An earlier review flagged the collapse of these situations into one
 // sentence and it was accepted on the grounds that the todo drawer and the

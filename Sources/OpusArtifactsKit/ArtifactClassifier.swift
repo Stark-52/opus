@@ -76,7 +76,7 @@ public enum ArtifactClassifier {
     /// Paths that exist on disk and are still not artifacts.
     ///
     /// Added by the final whole-branch review, which ran the shipped code
-    /// over the owner's three largest real transcripts and found the drawer
+    /// over the three largest real transcripts on hand and found the drawer
     /// dominated by navigational context rather than by anything Claude
     /// made. The existence filter cannot help here, because every one of
     /// these genuinely exists:
@@ -99,8 +99,8 @@ public enum ArtifactClassifier {
     /// Both sides are standardized the same way `resolvePath` standardizes
     /// its output, otherwise a cwd carrying a trailing slash or an
     /// unresolved symlink would never compare equal. The incoming path
-    /// needs it too, and not only in theory: measured on the owner's three
-    /// largest transcripts, an ELLIPSIS in prose ("...") resolved to
+    /// needs it too, and not only in theory: measured on the three largest
+    /// transcripts on hand, an ELLIPSIS in prose ("...") resolved to
     /// `<cwd>/...`, which does not exist, and then `firstExisting`'s
     /// trailing-dot retry turned it into `<cwd>/`, which does — so the
     /// project root appeared a SECOND time under a different dedup key.

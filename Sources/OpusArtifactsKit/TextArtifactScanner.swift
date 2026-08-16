@@ -141,8 +141,8 @@ public enum TextArtifactScanner {
     /// from a filename, only existence does.
     ///
     /// The letter-or-digit rule is the one exception, added by the final
-    /// whole-branch review after running this over the owner's real
-    /// transcripts. Punctuation-only tokens name nothing, but they are not
+    /// whole-branch review after running this over real transcripts.
+    /// Punctuation-only tokens name nothing, but they are not
     /// harmless: `///` (74 occurrences in one session, from Swift doc
     /// comment markers in assistant prose) is 3 characters and contains a
     /// `/`, so it passed, resolved to `/`, and `/` exists — which means the

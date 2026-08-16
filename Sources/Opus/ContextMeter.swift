@@ -5,11 +5,9 @@
 // by that migration, only its consumer moved from ContextMeterBar to
 // StatusRailView).
 //
-// Real transcript shape (confirmed by inspecting this machine's OWN live
-// session transcript while writing this file —
-// ~/.claude/projects/<cwd-with-slashes-as-dashes>/
-// <session-id>.jsonl, the transcript this very task
-// was worked from — 616 matching records found):
+// Real transcript shape, confirmed against a live transcript under
+// ~/.claude/projects/<cwd-with-slashes-as-dashes>/<session-id>.jsonl
+// (616 matching records):
 //   {"type":"assistant","message":{"model":"claude-fable-5", "usage": {
 //       "input_tokens": 2,
 //       "cache_creation_input_tokens": 2752,
