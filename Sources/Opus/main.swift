@@ -568,7 +568,15 @@ final class QuickTerminalPanel: NSObject {
 
         // Cmd+T / Cmd+W / Cmd+1..9 intercept for tab management.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
-            self?.handleKeyEvent(ev) ?? ev
+            // Optional-chaining flattens here: a nil from a deallocated
+            // self and a nil meaning "handleKeyEvent consumed the key"
+            // are the same value, and the `?? ev` that used to sit here
+            // could not tell them apart — so it revived every consumed
+            // event and let the key fire a second time downstream. See
+            // MainTerminalWindow.installKeyMonitor for the paste symptom.
+            // Unwrapping self first separates the two cases.
+            guard let self else { return ev }
+            return self.handleKeyEvent(ev)
         }
 
         NotificationCenter.default.addObserver(
