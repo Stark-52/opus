@@ -188,6 +188,7 @@ private final class SecretRowCellView: NSTableCellView {
     private var valueWidthConstraint: NSLayoutConstraint!
     let eyeButton: HoverIconButton
     let copyButton: HoverIconButton
+    let editButton: HoverIconButton
     let trashButton: HoverIconButton
 
     override init(frame frameRect: NSRect) {
@@ -198,6 +199,13 @@ private final class SecretRowCellView: NSTableCellView {
         // without widening the row or growing its height.
         copyButton = makeIconButton(symbolName: "doc.on.doc", tint: OpusTheme.cream(0.55),
                                      accessibilityLabel: "copier la valeur", toolTip: "Copier la valeur")
+        // Renaming and replacing a value are one affordance, not two: a
+        // row already carries three icons, and the panel's own deposit
+        // block is where both edits are typed, so the pencil opens that
+        // block on this secret rather than growing an editor per row.
+        editButton = makeIconButton(symbolName: "pencil", tint: OpusTheme.cream(0.55),
+                                     accessibilityLabel: "modifier ce secret",
+                                     toolTip: "Modifier le nom ou la valeur")
         trashButton = makeIconButton(symbolName: "trash", tint: OpusTheme.red,
                                       accessibilityLabel: "supprimer ce secret", toolTip: "Supprimer (⌘⌫)")
         super.init(frame: frameRect)
@@ -231,6 +239,7 @@ private final class SecretRowCellView: NSTableCellView {
         addSubview(lengthLabel)
         addSubview(eyeButton)
         addSubview(copyButton)
+        addSubview(editButton)
         addSubview(trashButton)
 
         let valueWidth = valueLabel.widthAnchor.constraint(equalToConstant: Self.defaultValueColumnWidth)
@@ -259,12 +268,19 @@ private final class SecretRowCellView: NSTableCellView {
             lengthLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             lengthLabel.trailingAnchor.constraint(lessThanOrEqualTo: eyeButton.leadingAnchor, constant: -6),
 
-            // Ordered look, take, destroy — with the destructive one
-            // furthest from where the eye lands first.
+            // Ordered look, take, change, destroy — with the destructive
+            // one furthest from where the eye lands first. Each button
+            // hangs off the NEXT one's leading edge, so inserting one means
+            // re-pointing its neighbour (copy now hangs off edit, not
+            // trash) AND paying for it in measuredValueColumnWidth, which
+            // counts these by hand.
             trashButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             trashButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            copyButton.trailingAnchor.constraint(equalTo: trashButton.leadingAnchor, constant: -4),
+            editButton.trailingAnchor.constraint(equalTo: trashButton.leadingAnchor, constant: -4),
+            editButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            copyButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -4),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             eyeButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -4),
@@ -396,6 +412,14 @@ final class SecretsPanel: NSObject {
     /// and only when it still holds this, so something copied in the
     /// meantime is never destroyed. Never re-read mid-session — the
     /// remaining candidates already live in `candidates`.
+    /// The name typed into the deposit field when the panel last closed,
+    /// restored on the next open(). Names are not secrets — the value is,
+    /// and close() still wipes that — but losing the name is what made a
+    /// trip to go copy the value cost a full retype of the name too, since
+    /// leaving the panel to fetch something is exactly what dismisses it.
+    /// Cleared by commit(), so a name that reached the store is not
+    /// re-suggested as an unfinished draft.
+    private var draftName: String = ""
     private var capturedClipboard: String?
     private var candidates: [SecretCandidate] = []
     private var candidateIndex = 0
@@ -427,6 +451,11 @@ final class SecretsPanel: NSObject {
     /// the keyDown monitor's general "any other key" rule and from every
     /// mouse action that doesn't itself confirm this exact name.
     private var pendingDeleteName: String?
+    /// The secret the deposit block is currently editing, or nil when the
+    /// block means "deposit a new one". Editing borrows the same two
+    /// fields and the same Return, so this is what commit() reads to tell
+    /// the two apart.
+    private var editingName: String?
     /// Set right before a delete's refreshSecrets() call; consumed once by
     /// the renderSecrets() that follows to select whatever row now sits at
     /// the deleted one's old index (or clear selection if the list is now
@@ -797,6 +826,12 @@ final class SecretsPanel: NSObject {
         nameField.stringValue = ""
         valueField.stringValue = ""
         valueFieldPlain.stringValue = ""
+        // Asserted here as well as in close(), for the same reason reveal
+        // is: not every path into "not visible" is guaranteed to have gone
+        // through close().
+        editingName = nil
+        valueField.placeholderString = nil
+        valueFieldPlain.placeholderString = nil
         previewLabel.stringValue = ""
         statusLabel.stringValue = ""
         pendingOverwrite = nil
@@ -819,6 +854,13 @@ final class SecretsPanel: NSObject {
         relayout(recenter: true)
 
         captureClipboard()
+        // After captureClipboard, so a draft name outranks the SUGGESTED
+        // name a fresh candidate brings with it — the candidate's value is
+        // left exactly as applied. That ordering is the point: the trip
+        // that dismisses the panel is usually the trip to go copy the
+        // value, so coming back with the value on the clipboard should
+        // fill the value and keep the name already chosen, not rename it.
+        if !draftName.isEmpty { nameField.stringValue = draftName }
         scanGeneration += 1
         refreshSecrets(generation: scanGeneration)
 
@@ -847,6 +889,14 @@ final class SecretsPanel: NSObject {
         // reset so the panel never reopens already showing values.
         valueField.stringValue = ""
         valueFieldPlain.stringValue = ""
+        // An edit holds an EXISTING secret's name, which is not an
+        // unfinished deposit: keeping it would make the next open() offer
+        // a name already in the store, one Return away from an overwrite
+        // prompt nobody asked for.
+        draftName = editingName == nil ? nameField.stringValue : ""
+        editingName = nil
+        valueField.placeholderString = nil
+        valueFieldPlain.placeholderString = nil
         nameField.stringValue = ""
         capturedClipboard = nil
         candidates = []
@@ -911,6 +961,10 @@ final class SecretsPanel: NSObject {
     /// always has. (A pending delete confirmation is cancelled by the
     /// keyDown monitor's general rule before this even runs.)
     private func handleEscape() {
+        // Most specific state first: an armed edit is the one thing on
+        // screen that Escape should give back before the filter or the
+        // panel itself, otherwise the only way out of it is to commit.
+        if cancelEdit() { return }
         guard searchField.stringValue.isEmpty else {
             searchField.stringValue = ""
             applyFilter()
@@ -1137,10 +1191,13 @@ final class SecretsPanel: NSObject {
     private func measuredValueColumnWidth() -> CGFloat {
         // Every fixed horizontal cost in SecretRowCellView's constraints,
         // in row order: leading inset, name column, gap, [value], gap,
-        // length column, gap, eye, gap, copy, gap, trash, trailing inset.
+        // length column, gap, eye, gap, copy, gap, edit, gap, trash,
+        // trailing inset. Nothing makes this follow the constraints
+        // automatically — a button added up there and not counted here
+        // simply slides under the value column, with no layout complaint.
         let fixed: CGFloat = 6 + SecretRowCellView.nameColumnWidth + 10
             + 8 + SecretRowCellView.lengthColumnWidth + 6
-            + 20 + 4 + 20 + 4 + 20 + 8
+            + 20 + 4 + 20 + 4 + 20 + 4 + 20 + 8
         let rowWidth = Self.width - OpusTheme.insetPanel * 2
         // The floor matters only if the panel is ever narrowed: a negative
         // or tiny width would collapse the column rather than scroll it.
@@ -1221,6 +1278,12 @@ final class SecretsPanel: NSObject {
                 attr.append(NSAttributedString(string: " · ", attributes: dim))
             }
             attr.append(NSAttributedString(string: text, attributes: attrs))
+        }
+        // Editing is a mode, and the only one this panel has: say so, and
+        // say how to leave it, before listing what is otherwise available.
+        if editingName != nil {
+            addSegment("⏎ appliquer", warn)
+            addSegment("⎋ annuler", dim)
         }
         if !filteredSecrets.isEmpty {
             addSegment("↑↓ parcourir", dim)
@@ -1430,6 +1493,13 @@ final class SecretsPanel: NSObject {
     // MARK: Commit
 
     private func commit() {
+        // Editing borrows this block's two fields and its Return, so the
+        // branch is here rather than on a second key: whatever the user
+        // typed goes to the same place their eye is.
+        if let editingName {
+            commitEdit(original: editingName)
+            return
+        }
         // The user types roughly ("stripe key", "RESEND_API_KEY") and the
         // panel normalizes rather than rejecting: slug() is the same
         // normalization already applied to labels extracted from the
@@ -1486,6 +1556,10 @@ final class SecretsPanel: NSObject {
 
         let hasMoreCandidates = candidateIndex + 1 < candidates.count
         guard hasMoreCandidates else {
+            // Stored, so it is no longer an unfinished draft: blanking the
+            // field here leaves close()'s draft capture nothing to keep,
+            // rather than adding a second flag for close() to consult.
+            nameField.stringValue = ""
             close()
             return
         }
@@ -1500,6 +1574,70 @@ final class SecretsPanel: NSObject {
         applyCandidate()
         scanGeneration += 1
         refreshSecrets(generation: scanGeneration)
+    }
+
+    /// Applies whatever the edit block was left holding: a new name, a
+    /// new value, or both. Every outcome reports in the status line and
+    /// the panel STAYS OPEN — unlike a deposit, an edit is worth seeing
+    /// land in the list right underneath, and the partial failures below
+    /// are ones the user has to act on rather than dismiss.
+    private func commitEdit(original: String) {
+        let typedName = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        let outcome = SecretEditor.edit(store, original: original,
+                                        rawNewName: typedName,
+                                        newValue: valueField.stringValue)
+
+        func fail(_ message: String) {
+            statusLabel.textColor = OpusTheme.red
+            statusLabel.stringValue = message
+            relayout(recenter: false)
+        }
+        func done(_ message: String) {
+            cancelEdit()
+            statusLabel.textColor = OpusTheme.cream(0.6)
+            statusLabel.stringValue = message
+            scanGeneration += 1
+            refreshSecrets(generation: scanGeneration)
+            relayout(recenter: false)
+        }
+
+        switch outcome {
+        case .unchanged:
+            fail("rien à modifier.")
+        case .renamed(let newName):
+            done("renommée en « \(newName) ».")
+        case .valueReplaced(let name):
+            done("valeur de « \(name) » remplacée.")
+        case .renamedAndValueReplaced(let newName):
+            done("renommée en « \(newName) », valeur remplacée.")
+        case .invalidNewName(let raw):
+            fail(raw.isEmpty ? "il manque un nom."
+                             : "ce nom ne contient aucun caractère utilisable.")
+        case .newNameAlreadyExists(let newName):
+            fail("« \(newName) » existe déjà.")
+        case .notFound:
+            // The row was there when the pencil was clicked. Leaving edit
+            // mode armed on a name the store no longer has would let the
+            // next Return recreate it from nothing.
+            cancelEdit()
+            fail("« \(original) » n'est plus dans le trousseau.")
+            scanGeneration += 1
+            refreshSecrets(generation: scanGeneration)
+        case .renamedButValueFailed(let newName, let error):
+            // Point at the NEW name: that is where the secret lives now,
+            // still carrying the OLD value.
+            cancelEdit()
+            fail("renommée en « \(newName) » mais la valeur n'a pas changé : \(error)")
+            scanGeneration += 1
+            refreshSecrets(generation: scanGeneration)
+        case .newWrittenOldRemains(let newName, let oldName, let removeError):
+            cancelEdit()
+            fail("« \(newName) » écrite mais « \(oldName) » subsiste : \(removeError)")
+            scanGeneration += 1
+            refreshSecrets(generation: scanGeneration)
+        case .storeError(let message):
+            fail(message)
+        }
     }
 
     // MARK: Button actions
@@ -1547,6 +1685,59 @@ final class SecretsPanel: NSObject {
         statusLabel.stringValue = "« \(secret.name) » copiée dans le presse-papier"
         reloadTableContent()
         updateHint()
+    }
+
+    @objc private func rowEditButtonClicked(_ sender: NSButton) {
+        let row = tableView.row(for: sender)
+        guard filteredSecrets.indices.contains(row) else { return }
+        cancelPendingDelete()
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        enterEditMode(name: filteredSecrets[row].name)
+    }
+
+    /// Loads an existing secret into the deposit block. The VALUE is
+    /// deliberately NOT prefilled: it is the one thing on this panel that
+    /// close() goes out of its way to wipe, and parking it back in a field
+    /// to support "change the name only" would undo that for the far more
+    /// common edit. An empty value means "keep the stored one", which the
+    /// placeholder says outright.
+    private func enterEditMode(name: String) {
+        editingName = name
+        pendingOverwrite = nil
+        nameField.stringValue = name
+        valueField.stringValue = ""
+        valueFieldPlain.stringValue = ""
+        valueField.placeholderString = "laisser vide pour garder la valeur"
+        valueFieldPlain.placeholderString = "laisser vide pour garder la valeur"
+        statusLabel.textColor = OpusTheme.cream(0.6)
+        statusLabel.stringValue = "modification de « \(name) » — Entrée pour appliquer, ⎋ pour annuler"
+        updatePreview()
+        panel.makeFirstResponder(nameField)
+        nameField.currentEditor()?.selectAll(nil)
+        updateHint()
+        relayout(recenter: false)
+    }
+
+    /// Leaves edit mode without touching the store. Also the path every
+    /// reset goes through, so "not editing" is one shape everywhere:
+    /// fields blank, placeholder gone, no stale row name held.
+    @discardableResult
+    private func cancelEdit() -> Bool {
+        guard editingName != nil else { return false }
+        editingName = nil
+        nameField.stringValue = ""
+        valueField.stringValue = ""
+        valueFieldPlain.stringValue = ""
+        valueField.placeholderString = nil
+        valueFieldPlain.placeholderString = nil
+        pendingOverwrite = nil
+        statusLabel.textColor = OpusTheme.cream(0.6)
+        statusLabel.stringValue = ""
+        updatePreview()
+        panel.makeFirstResponder(nameField)
+        updateHint()
+        relayout(recenter: false)
+        return true
     }
 
     @objc private func rowTrashButtonClicked(_ sender: NSButton) {
@@ -1620,6 +1811,8 @@ extension SecretsPanel: NSTableViewDataSource, NSTableViewDelegate {
             cell.eyeButton.action = #selector(rowEyeButtonClicked(_:))
             cell.copyButton.target = self
             cell.copyButton.action = #selector(rowCopyButtonClicked(_:))
+            cell.editButton.target = self
+            cell.editButton.action = #selector(rowEditButtonClicked(_:))
             cell.trashButton.target = self
             cell.trashButton.action = #selector(rowTrashButtonClicked(_:))
         }
