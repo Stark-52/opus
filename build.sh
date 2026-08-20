@@ -93,4 +93,41 @@ else
     codesign --force --sign - --deep Opus.app
 fi
 
-echo "✔ Opus.app ready ($(du -sh Opus.app | cut -f1))"
+SIZE="$(du -sh Opus.app | cut -f1)"
+
+# Installed, not left in the repo. The script already installs opus-attach to
+# ~/.local/bin; leaving the .app behind was the odd one out, and the cost was
+# real: a bundle in the repo AND one in ~/Applications share
+# com.stark52.opus at two paths, so macOS lists Opus twice and "which one did
+# I just launch" becomes a question you have to ask. One bundle, one answer.
+#
+# OPUS_NO_INSTALL=1 keeps the bundle in the repo instead — for inspecting what
+# was built without touching the installed copy.
+if [[ "${OPUS_NO_INSTALL:-0}" == "1" ]]; then
+    echo "✔ Opus.app ready ($SIZE) — not installed (OPUS_NO_INSTALL=1)"
+    exit 0
+fi
+
+APP_DEST="$HOME/Applications/Opus.app"
+if pgrep -f "Opus.app/Contents/MacOS/Opus" >/dev/null 2>&1; then
+    WAS_RUNNING=1
+else
+    WAS_RUNNING=0
+fi
+
+echo "→ installing Opus.app to $APP_DEST"
+mkdir -p "$HOME/Applications"
+# Delete first: ditto MERGES into an existing bundle, which would leave files
+# from the previous build sitting inside this one.
+rm -rf "$APP_DEST"
+# ditto rather than cp -R: it carries extended attributes and the code
+# signature across intact, so TCC still recognizes the app and does not
+# re-prompt for every permission it was already granted.
+ditto Opus.app "$APP_DEST"
+codesign --verify --deep --strict "$APP_DEST"
+rm -rf Opus.app
+
+echo "✔ Opus installed at $APP_DEST ($SIZE)"
+if (( WAS_RUNNING )); then
+    echo "  ⚠ Opus is running the PREVIOUS build — quit and relaunch to pick this one up."
+fi
