@@ -45,7 +45,18 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
             guard let self, ev.window === self.window else { return ev }
-            return self.handleKey(ev) ?? ev
+            // handleKey's nil means CONSUMED, and it is returned as-is.
+            // A `?? ev` here would turn every one of its `return nil`
+            // branches back into a live event and let it continue to
+            // normal dispatch, so the shortcut would fire twice: once in
+            // this monitor, once in whatever downstream handler also
+            // claims the key. That is invisible until something
+            // downstream claims one — the Edit menu's Cmd+V reaching
+            // NSText.paste through the responder chain made the terminal
+            // paste twice. handleKey already returns `ev` for every key
+            // it does not claim, so passing its result straight through
+            // is both the consuming path and the fall-through path.
+            return self.handleKey(ev)
         }
     }
 
