@@ -15,9 +15,19 @@
 //            it, and the existing ~/bin/secret script would stop being
 //            able to read them. One write path keeps the two compatible.
 //
-// The value is passed to `security` on STDIN, twice (the tool prompts for
-// the password then for a confirmation). It is never placed in argv,
-// where `ps` would expose it for the lifetime of the call.
+// Writes go through `security -i`, the tool's interactive mode: the whole
+// add-generic-password line arrives on STDIN, so the value is still never
+// in argv, where `ps` would expose it for the lifetime of the call. It
+// travels as hex through `-X` rather than as the answer to `-w`'s prompt.
+//
+// The prompt is what forced that. `-w` with no argument reads its answer
+// through readpassphrase(), whose buffer is _PASSWORD_LEN — 128 bytes —
+// and the rest of the line is discarded. The confirmation line was cut at
+// the same 128 bytes, so the two still matched, so `security` exited 0 and
+// this store reported success on a value it had just truncated. Every
+// credential longer than 128 bytes (an OpenAI project key runs ~164) was
+// stored broken, and nothing anywhere said so. `-X` takes the bytes as an
+// argument and never prompts, so there is no buffer to overrun.
 
 import Foundation
 import Security
@@ -63,17 +73,27 @@ public protocol SecretStore {
 // diverge on what they accept.
 public enum SecretValueValidator {
     /// Same ceiling as SecretExtractor.maximumBlobBytes, deliberately: the
-    /// panel and the store agree on one limit. The value is fed to
-    /// `security` twice, so this caps stdin at 16 KB, comfortably under a
-    /// pipe's default capacity — which is what keeps `run`'s write-then-read
+    /// panel and the store agree on one limit. The value reaches `security`
+    /// hex-encoded, so this caps stdin at 16 KB, comfortably under a pipe's
+    /// default capacity — which is what keeps `run`'s write-then-read
     /// ordering from being able to stall.
+    ///
+    /// This is the store's OWN limit, not the tool's. It was once both, and
+    /// the pair silently disagreed: this said 8 KB while the write path cut
+    /// at 128. Anything that changes how a value reaches `security` has to
+    /// be measured against a real Keychain, not against this constant —
+    /// KeychainSecretStoreTests is where that measurement lives.
     public static let maximumValueBytes = 8 * 1024
 
     static func validate(name: String, value: String) throws {
         guard SecretName.isValid(name) else { throw SecretStoreError.invalidName(name) }
-        // `security -w` reads the value line by line, so a newline would
-        // truncate it and desynchronise the confirmation prompt. Refuse it
-        // here rather than let `security` fail with "passwords don't match".
+        // Refused on the READ side now, not the write side: `-X` carries a
+        // newline through storage without complaint, but
+        // `find-generic-password -w` prints the value as hex instead of as
+        // itself as soon as it holds a byte outside printable ASCII —
+        // verified with 0x610a62, which reads back as the four characters
+        // "610a62". A value this store cannot hand back unchanged has no
+        // business going in.
         //
         // Byte-level on purpose. Swift groups CR+LF into ONE extended
         // grapheme cluster, so `value.contains("\n")` is FALSE for a CRLF
@@ -84,6 +104,23 @@ public enum SecretValueValidator {
         guard !value.utf8.contains(0x0A), !value.utf8.contains(0x0D) else {
             throw SecretStoreError.invalidValue(
                 "valeur multi-ligne : le Trousseau est mono-ligne ici. Une clé PEM (.p8) reste dans un fichier."
+            )
+        }
+        // Everything else outside printable ASCII, for the same read-side
+        // reason as the newline above. Measured boundary: 0x20 and 0x7E read
+        // back as themselves, 0x1F, 0x7F, 0x80 and a UTF-8 e-acute all read
+        // back as hex digits.
+        //
+        // Refused rather than decoded, because decoding is not merely harder
+        // but destructive: `-w` renders the literal value "610a" and the
+        // value "A\tBC" as the same shape, plain hex digits, so a decoder
+        // cannot tell a hex-encoded control byte from a credential that
+        // happens to be hex. Several real secrets ARE pure hex. Refusing
+        // costs the rare accented passphrase; decoding would corrupt tokens
+        // silently, which is the failure this whole file just came back from.
+        if let offender = value.utf8.first(where: { $0 < 0x20 || $0 > 0x7E }) {
+            throw SecretStoreError.invalidValue(
+                "octet hors ASCII imprimable (0x\(String(format: "%02x", offender))) : le Trousseau relirait la valeur en hexadécimal au lieu d'elle-même."
             )
         }
         guard value.utf8.count <= maximumValueBytes else {
@@ -168,14 +205,24 @@ public final class KeychainSecretStore: SecretStore {
 
     public func put(name: String, value: String) throws {
         try SecretValueValidator.validate(name: name, value: value)
-        // -U updates in place when the item already exists. -w with no
-        // argument reads the value from stdin; the tool asks twice, so the
-        // value is fed twice.
-        let (status, _, err) = Self.run(
-            arguments: ["add-generic-password", "-U", "-s", service, "-a", name, "-w"],
-            stdin: value + "\n" + value + "\n"
-        )
+        let (status, _, err) = Self.run(arguments: ["-i"], stdin: putCommand(name: name, value: value))
         guard status == 0 else { throw SecretStoreError.commandFailed(err) }
+    }
+
+    /// The single line handed to `security -i`. `-U` updates in place when
+    /// the item already exists, which is what lets a truncated secret be
+    /// repaired by re-entering it.
+    ///
+    /// Interactive mode tokenises this line itself, so a value holding a
+    /// space or a quote would need quoting — and a quoting bug here
+    /// corrupts a credential without a word. Hex deletes the question
+    /// rather than answering it: `-X` accepts [0-9a-f] and nothing else,
+    /// `service` is a constant this type owns, and `name` has already been
+    /// through SecretName's grammar, so no field on this line can carry a
+    /// character the tokeniser reacts to.
+    func putCommand(name: String, value: String) -> String {
+        let hex = value.utf8.map { String(format: "%02x", $0) }.joined()
+        return "add-generic-password -U -s \(service) -a \(name) -X \(hex)\n"
     }
 
     public func remove(name: String) throws {
