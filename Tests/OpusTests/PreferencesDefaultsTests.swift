@@ -34,10 +34,10 @@ final class PreferencesDefaultsTests: XCTestCase {
 
     func testEditorCommandDefault() {
         UserDefaults.standard.removeObject(forKey: "opus.editorCommand")
-        XCTAssertEqual(OpusPreferences.shared.editorCommand, "code -g {target}")
+        XCTAssertEqual(OpusPreferences.shared.editorCommand, OpusPreferences.defaultEditorCommand())
         OpusPreferences.shared.editorCommand = "subl {target}"
         XCTAssertEqual(OpusPreferences.shared.editorCommand, "subl {target}")
-        OpusPreferences.shared.editorCommand = "code -g {target}"   // restore
+        UserDefaults.standard.removeObject(forKey: "opus.editorCommand")   // restore
     }
 
     func testBumpFontSizeClampsAtBounds() {

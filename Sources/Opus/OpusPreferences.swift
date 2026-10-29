@@ -138,8 +138,22 @@ final class OpusPreferences {
     /// fallback applied elsewhere — there's no equivalent of `.claude`'s
     /// preset system for this one setting.
     var editorCommand: String {
-        get { defaults.string(forKey: K.editorCommand) ?? "code -g {target}" }
+        get { defaults.string(forKey: K.editorCommand) ?? Self.defaultEditorCommand() }
         set { write(K.editorCommand, newValue) }
+    }
+
+    /// `code -g` needs VS Code's "Install 'code' command in PATH" to have
+    /// been run; without it the command exits 127 and Cmd+click falls back
+    /// to the file's default app, which loses the line. The same CLI ships
+    /// inside the app bundle, so the default runs that one when it exists.
+    static func defaultEditorCommand(
+        home: String = NSHomeDirectory(),
+        isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> String {
+        let cli = "Visual Studio Code.app/Contents/Resources/app/bin/code"
+        let bundled = ["/Applications/\(cli)", "\(home)/Applications/\(cli)"].first(where: isExecutable)
+
+        return bundled.map { "'\($0)' -g {target}" } ?? "code -g {target}"
     }
 
     /// `--permission-mode` preset applied to spawned claude processes (global,
