@@ -51,6 +51,9 @@ enum SpawnEnvironment {
         }
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
+        // Read by the status line command: inside Opus the rail carries
+        // the figures, so the terminal footer stays empty.
+        env["OPUS_PANE"] = "1"
         if (env["LANG"] ?? "").isEmpty {
             env["LANG"] = "en_US.UTF-8"
         }

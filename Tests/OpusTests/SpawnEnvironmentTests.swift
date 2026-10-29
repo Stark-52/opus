@@ -15,6 +15,12 @@ final class SpawnEnvironmentTests: XCTestCase {
         XCTAssertEqual(value("PATH", in: env), "/usr/bin:/bin:/usr/sbin:/sbin")
     }
 
+    func testTheSessionKnowsItRunsInsideOpus() {
+        // The status line command reads it: inside Opus the rail shows the
+        // figures, so the terminal footer prints nothing.
+        XCTAssertEqual(value("OPUS_PANE", in: SpawnEnvironment.make(base: [:])), "1")
+    }
+
     func testBasePathKeptInFrontAndMissingSystemDirsAppended() {
         // A Dock-launched app can carry a partial PATH; a ~/.zshenv running
         // `brew shellenv` on an empty PATH produces exactly this shape. The

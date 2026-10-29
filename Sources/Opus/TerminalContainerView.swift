@@ -50,6 +50,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// recompose the full tooltip from this plus the current activity
     /// without redoing the context math. See `updateStatusRailTooltip`.
     private var contextTooltipSentence: String?
+    /// One line per running usage window, after the context and activity
+    /// lines in the rail's tooltip.
+    private var usageTooltipLines: [String] = []
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
@@ -613,12 +616,30 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         guard contextMeterTimer == nil else { return }
         let timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.refreshContextMeter()
+            self?.refreshUsage()
         }
         timer.tolerance = 2
         contextMeterTimer = timer
         // Fire once immediately rather than leaving the bar blank (alpha 0,
         // its initial state) for up to 10s after the window appears.
         refreshContextMeter()
+        refreshUsage()
+    }
+
+    /// The plan's usage windows, from the file the status line command
+    /// keeps (see UsageLimits). Account-wide, so read on its own rather than
+    /// behind `activeSessionId()`: a tab with no bound session still shows
+    /// it. A window whose reset has passed drops out on the next tick.
+    private func refreshUsage() {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let windows = UsageLimits.current(UsageLimits.read())
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.statusRail.usage = windows
+                self.usageTooltipLines = windows.map { UsageLimits.tooltip($0) }
+                self.updateStatusRailTooltip()
+            }
+        }
     }
 
     private func stopContextMeterTimer() {
@@ -811,17 +832,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// can be the only thing visible on the strip and still deserves an
     /// explanation on hover.
     private func updateStatusRailTooltip() {
-        let activityLine = activityTooltipLine(statusRail.activity)
-        switch (contextTooltipSentence, activityLine) {
-        case let (.some(context), .some(activity)):
-            statusRail.tooltipText = "\(context)\n\(activity)"
-        case let (.some(context), nil):
-            statusRail.tooltipText = context
-        case let (nil, .some(activity)):
-            statusRail.tooltipText = activity
-        case (nil, nil):
-            statusRail.tooltipText = nil
-        }
+        let lines = [contextTooltipSentence, activityTooltipLine(statusRail.activity)].compactMap { $0 }
+            + usageTooltipLines
+        statusRail.tooltipText = lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     // MARK: Cockpit — todo drawer (v1.6 backlog Task 3, Cmd+Shift+T)

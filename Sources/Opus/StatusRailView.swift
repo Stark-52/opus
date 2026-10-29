@@ -11,10 +11,13 @@
 //   [activity dot, OpusTheme.dotSize]
 //   [OpusTheme.controlGap]
 //   [readout label — fixed labelColumnWidth (72pt), text right-aligned
-//    within it, column pinned to the trailing edge — see labelColumnWidth's
-//    doc comment below (Fix round 1) for why this is fixed rather than
-//    intrinsic: an intrinsic-width label made the dot and the rail's right
-//    edge visibly shift every time the readout's digit count changed]
+//    within it — see labelColumnWidth's doc comment below (Fix round 1)
+//    for why this is fixed rather than intrinsic: an intrinsic-width label
+//    made the dot and the rail's right edge visibly shift every time the
+//    readout's digit count changed]
+//   [OpusTheme.controlGap, then the plan usage column, as wide as its text
+//    and pinned to the trailing edge; both collapse to zero when there is
+//    no usage figure, which puts the readout back on the edge]
 //
 // The rail is vertically centered on the label's baseline row. Intrinsic
 // height is the label's own height (measured 13pt for the 10pt monospaced-
@@ -87,6 +90,65 @@ final class StatusRailView: NSView {
         didSet { toolTip = tooltipText }
     }
 
+    /// The plan's usage windows still running, five-hour first, drawn in a
+    /// column after the readout. Account-wide, so independent of `fraction`:
+    /// it shows even before the active session has a context figure. Empty
+    /// collapses the column and gives its width back to the rail.
+    var usage: [UsageWindow] = [] {
+        didSet {
+            guard usage != oldValue else { return }
+            let text = Self.usageText(usage)
+            usageLabel.attributedStringValue = text
+            usageWidth.constant = usage.isEmpty ? 0 : ceil(text.size().width) + 2
+            readoutToUsage.constant = usage.isEmpty ? 0 : -OpusTheme.controlGap
+            needsLayout = true
+            needsDisplay = true
+        }
+    }
+
+    private let usageLabel: NSTextField = {
+        let l = NSTextField(labelWithString: "")
+        l.font = StatusRailView.labelFont
+        l.alignment = .left
+        l.lineBreakMode = .byClipping
+        return l
+    }()
+
+    private static let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+
+    // The usage column fits its text, unlike the readout's fixed column: a
+    // fixed width sized for the widest figures left a blank strip at the
+    // trailing edge most of the time, and these figures move a digit a few
+    // times per five hours where the readout moves every refresh.
+    private lazy var usageWidth = usageLabel.widthAnchor.constraint(equalToConstant: 0)
+    private lazy var readoutToUsage = label.trailingAnchor.constraint(equalTo: usageLabel.leadingAnchor)
+
+    /// "│ 5h 42% ↺22:47 · 7j 83% ↺dim": each window in its level's colour,
+    /// cream at rest like the readout, amber then red as it fills.
+    static func usageText(_ windows: [UsageWindow]) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        guard !windows.isEmpty else { return text }
+
+        func append(_ string: String, _ color: NSColor) {
+            text.append(NSAttributedString(string: string, attributes: [.font: labelFont, .foregroundColor: color]))
+        }
+
+        append("│ ", OpusTheme.cream(0.25))
+        for (index, window) in windows.enumerated() {
+            if index > 0 { append(" · ", OpusTheme.cream(0.35)) }
+            append(UsageLimits.label(window), usageColor(UsageLimits.level(percent: window.percent)))
+        }
+        return text
+    }
+
+    private static func usageColor(_ level: UsageLimits.Level) -> NSColor {
+        switch level {
+        case .nominal: return OpusTheme.cream(0.55)
+        case .attention: return OpusTheme.amber
+        case .critical: return OpusTheme.red
+        }
+    }
+
     private let label: NSTextField = {
         let l = NSTextField(labelWithString: "")
         l.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
@@ -112,9 +174,14 @@ final class StatusRailView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         addSubview(label)
+        addSubview(usageLabel)
         label.translatesAutoresizingMaskIntoConstraints = false
+        usageLabel.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            usageLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            usageLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            usageWidth,
+            readoutToUsage,
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.widthAnchor.constraint(equalToConstant: Self.labelColumnWidth)
         ])
@@ -265,8 +332,9 @@ final class StatusRailView: NSView {
 
         let dotSize = OpusTheme.dotSize
         let gap = OpusTheme.controlGap
-        let labelWidth = label.frame.width
-        let railWidth = bounds.width - dotSize - labelWidth - 2 * gap
+        // From the readout's own frame, not from the view's trailing edge:
+        // the usage column may sit between the two.
+        let railWidth = label.frame.minX - dotSize - 2 * gap
         guard railWidth > 0 else { return }
 
         let railY = bounds.midY - OpusTheme.railHeight / 2
@@ -297,8 +365,7 @@ final class StatusRailView: NSView {
         guard let color = OpusTheme.activityColor(activity) else { return }
         let dotSize = OpusTheme.dotSize
         let gap = OpusTheme.controlGap
-        let labelWidth = label.frame.width
-        let dotX = bounds.width - labelWidth - gap - dotSize
+        let dotX = label.frame.minX - gap - dotSize
         let dotY = bounds.midY - dotSize / 2
         let dotRect = NSRect(x: dotX, y: dotY, width: dotSize, height: dotSize)
         color.setFill()
