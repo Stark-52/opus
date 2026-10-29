@@ -109,7 +109,10 @@ if [[ "${OPUS_NO_INSTALL:-0}" == "1" ]]; then
 fi
 
 APP_DEST="$HOME/Applications/Opus.app"
-if pgrep -f "Opus.app/Contents/MacOS/Opus" >/dev/null 2>&1; then
+# ps rather than pgrep: run from a Claude session (which Opus itself may be
+# hosting), pgrep finds no Opus at all while ps lists it. No grep -q: under
+# pipefail its early exit fails ps with SIGPIPE, and the test reads false.
+if ps -axo command= | grep "Opus.app/Contents/MacOS/Opus$" >/dev/null; then
     WAS_RUNNING=1
 else
     WAS_RUNNING=0
