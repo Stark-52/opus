@@ -11,6 +11,7 @@
 // prompt's text needs more room to read than a session title.
 
 import AppKit
+import OpusSearchKit
 import OpusSecretsKit
 
 /// NSPanel returns false for canBecomeKey by default; override so the search
@@ -330,17 +331,8 @@ final class PromptPalettePanel: NSObject {
     // MARK: Filtering
 
     private func applyFilter() {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base: [PromptEntry]
-        if query.isEmpty {
-            base = allEntries
-        } else {
-            let tokens = query.lowercased().split(separator: " ").map(String.init)
-            base = allEntries.filter { e in
-                let haystack = (e.text + " " + e.project).lowercased()
-                return tokens.allSatisfy { haystack.contains($0) }
-            }
-        }
+        let query = SearchQuery(searchField.stringValue)
+        let base = query.isEmpty ? allEntries : allEntries.filter { query.matches($0.text, $0.project) }
         // Current-project prompts first, then everything else. `base` is
         // already newest-first (PromptHistory.load's own ordering), and a
         // plain two-pass filter preserves that relative order within each

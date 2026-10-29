@@ -24,7 +24,11 @@ let package = Package(
             name: "OpusSecretsKit"
         ),
         .target(
-            name: "OpusScriptsKit"
+            name: "OpusSearchKit"
+        ),
+        .target(
+            name: "OpusScriptsKit",
+            dependencies: ["OpusSearchKit"]
         ),
         .target(
             name: "OpusArtifactsKit"
@@ -35,7 +39,8 @@ let package = Package(
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
                 "OpusSecretsKit",
                 "OpusScriptsKit",
-                "OpusArtifactsKit"
+                "OpusArtifactsKit",
+                "OpusSearchKit"
             ]
         ),
         .executableTarget(
@@ -47,7 +52,7 @@ let package = Package(
         ),
         .testTarget(
             name: "OpusTests",
-            dependencies: ["Opus", "OpusSecretsKit", "OpusScriptsKit", "OpusArtifactsKit"]
+            dependencies: ["Opus", "OpusSecretsKit", "OpusScriptsKit", "OpusArtifactsKit", "OpusSearchKit"]
         )
     ]
 )

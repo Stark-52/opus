@@ -116,6 +116,14 @@ final class ScriptRegistryTests: XCTestCase {
 
     // MARK: Filtering
 
+    func testFilterTakesWordsInAnyOrderAcrossNameAndSummary() throws {
+        try write("a.sh", "#!/bin/zsh\n# opus: Sauvegarde photos\n# opus-desc: vers le NAS\n")
+        try write("b.sh", "#!/bin/zsh\n# opus: Nettoyage caches\n")
+        let all = try ScriptRegistry.scan(directory: root)
+        XCTAssertEqual(ScriptRegistry.filter(all, query: "nas sauvegarde").map(\.displayName),
+                       ["Sauvegarde photos"])
+    }
+
     func testFilterMatchesDisplayNameAndSummaryCaseInsensitively() throws {
         try write("a.sh", "#!/bin/zsh\n# opus: Sauvegarde photos\n# opus-desc: vers le NAS\n")
         try write("b.sh", "#!/bin/zsh\n# opus: Nettoyage caches\n")

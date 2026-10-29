@@ -14,6 +14,7 @@ import AppKit
 import Quartz
 import QuickLookThumbnailing
 import OpusArtifactsKit
+import OpusSearchKit
 import OpusSecretsKit
 
 final class ArtifactsDrawerView: NSView {
@@ -278,12 +279,9 @@ final class ArtifactsDrawerView: NSView {
     /// would land on a blank list just as surely as stepping onto a kind the
     /// session never produced.
     private var textFiltered: [Artifact] {
-        let needle = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !needle.isEmpty else { return artifacts }
-        return artifacts.filter {
-            $0.displayName.lowercased().contains(needle)
-                || $0.displayDetail.lowercased().contains(needle)
-        }
+        let query = SearchQuery(filterField.stringValue)
+        guard !query.isEmpty else { return artifacts }
+        return artifacts.filter { query.matches($0.displayName, $0.displayDetail) }
     }
 
     private func applyFilter() {

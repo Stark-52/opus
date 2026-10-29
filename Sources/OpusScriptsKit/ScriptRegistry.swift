@@ -1,4 +1,5 @@
 import Foundation
+import OpusSearchKit
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -65,12 +66,9 @@ public enum ScriptRegistry {
     /// query is not a filter — it returns everything rather than nothing,
     /// which is what an empty search field should mean.
     public static func filter(_ scripts: [ScriptDefinition], query: String) -> [ScriptDefinition] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return scripts }
-        return scripts.filter {
-            $0.displayName.localizedCaseInsensitiveContains(needle)
-                || $0.summary.localizedCaseInsensitiveContains(needle)
-        }
+        let search = SearchQuery(query)
+        guard !search.isEmpty else { return scripts }
+        return scripts.filter { search.matches($0.displayName, $0.summary) }
     }
 
     /// Falls back to the default glyph when a script declares nothing, or

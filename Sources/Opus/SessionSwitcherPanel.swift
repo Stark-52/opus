@@ -10,6 +10,7 @@
 // search field's placeholder/tooltip rather than silently surprising anyone.
 
 import AppKit
+import OpusSearchKit
 
 /// NSPanel returns false for canBecomeKey by default; override so the search
 /// field can take keyboard focus when the palette opens. Same technique as
@@ -334,16 +335,8 @@ final class SessionSwitcherPanel: NSObject {
     // MARK: Filtering
 
     private func applyFilter() {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            filtered = allSessions
-        } else {
-            let tokens = query.lowercased().split(separator: " ").map(String.init)
-            filtered = allSessions.filter { s in
-                let haystack = (s.title + " " + s.cwd).lowercased()
-                return tokens.allSatisfy { haystack.contains($0) }
-            }
-        }
+        let query = SearchQuery(searchField.stringValue)
+        filtered = query.isEmpty ? allSessions : allSessions.filter { query.matches($0.title, $0.cwd) }
         tableView.reloadData()
         if !filtered.isEmpty {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)

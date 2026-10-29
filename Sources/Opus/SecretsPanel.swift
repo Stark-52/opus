@@ -43,6 +43,7 @@
 // appear/dismiss motion of the panel as a whole.
 
 import AppKit
+import OpusSearchKit
 import OpusSecretsKit
 
 private final class SecretsPanelWindow: NSPanel {
@@ -1155,8 +1156,8 @@ final class SecretsPanel: NSObject {
     /// (open(), a filter edit, a fresh Keychain read) follow this with
     /// relayout(recenter:) themselves.
     private func applyFilter() {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        filteredSecrets = query.isEmpty ? rows : rows.filter { $0.name.lowercased().contains(query) }
+        let query = SearchQuery(searchField.stringValue)
+        filteredSecrets = query.isEmpty ? rows : rows.filter { query.matches($0.name) }
         // Defensive companion to tableViewSelectionDidChange: if the
         // revealed row filtered out of view (or vanished from a fresh
         // Keychain read) rather than simply losing selection, don't keep
