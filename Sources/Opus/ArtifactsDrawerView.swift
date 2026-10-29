@@ -1,5 +1,5 @@
 // ArtifactsDrawerView — the files, folders, images and links this session
-// produced. Sibling of TodoDrawerView and the same "dumb view, smart
+// produced. Sibling of ReplyDrawerView and the same "dumb view, smart
 // container" split: it owns no timer, no disk I/O and no session lookup.
 // TerminalContainerView resolves the session, reads off a background queue
 // and hands the resulting [Artifact] straight to `artifacts`.
@@ -79,7 +79,7 @@ final class ArtifactsDrawerView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = OpusTheme.panelBackground.cgColor
-        // Rounded on the left edge only, same reasoning as TodoDrawerView:
+        // Rounded on the left edge only, same reasoning as ReplyDrawerView:
         // the right edge sits flush against the container's trailing edge.
         layer?.cornerRadius = OpusTheme.radiusControl
         layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
@@ -124,7 +124,7 @@ final class ArtifactsDrawerView: NSView {
         tableView.rowSizeStyle = .custom
         tableView.rowHeight = 48
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        // Unlike TodoDrawerView, every row here IS actionable, so selection
+        // Every row here is actionable, so selection
         // has to be visible.
         tableView.selectionHighlightStyle = .regular
         tableView.style = .plain
@@ -181,7 +181,7 @@ final class ArtifactsDrawerView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    /// "Artifacts N". Pure formatter, same shape as TodoDrawerView.headerText.
+    /// "Artifacts N". Pure formatter, same shape as StatusRailView.readoutText.
     static func headerText(artifacts: [Artifact]) -> String {
         "Artifacts \(artifacts.count)"
     }
@@ -704,7 +704,7 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// to. Called from the dock's occupant-change seam (TerminalContainerView),
     /// not from `toggleArtifactsDrawer` directly, because that seam fires for
     /// every route that stops showing the artifacts drawer — the hotkey, the
-    /// todo drawer taking the dock instead, anything else RightDock ever
+    /// reply drawer taking the dock instead, anything else RightDock ever
     /// grows — while `toggleArtifactsDrawer` only covers its own call site.
     func closePreviewIfOpen() {
         // Same three-check order as reloadPreviewIfOpen, same reason: exists

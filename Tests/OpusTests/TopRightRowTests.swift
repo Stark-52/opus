@@ -2,7 +2,7 @@ import XCTest
 @testable import Opus
 
 /// Palette fix round — the panel's top-right button row (↗ / pin / shield)
-/// must travel as ONE unit when the Cmd+Shift+T todo drawer shrinks the
+/// must travel as ONE unit when the Cmd+Shift+C reply drawer shrinks the
 /// terminal area. In v1.6 only the shield moved (finding F2 pinned it to
 /// `terminalArea.trailingAnchor`); the pin button stayed pinned to the panel's
 /// own trailing edge and ended up floating inside the drawer's top-right
@@ -110,11 +110,11 @@ final class TopRightRowTests: XCTestCase {
 
         // Drawer open: terminal area shrinks, the button follows it, and the
         // row-wide shift is applied on top.
-        areaTrailing.constant = -TodoDrawerView.width
+        areaTrailing.constant = -ReplyDrawerView.width
         pinTrailing.constant = Row.trailingConstant(base: Row.pinBase, drawerOpen: true)
         blur.layoutSubtreeIfNeeded()
 
-        let terminalAreaRight = blurWidth - containerInset - TodoDrawerView.width
+        let terminalAreaRight = blurWidth - containerInset - ReplyDrawerView.width
         XCTAssertEqual(pin.frame.maxX,
                        terminalAreaRight + Row.trailingConstant(base: Row.pinBase, drawerOpen: true),
                        accuracy: 0.5)

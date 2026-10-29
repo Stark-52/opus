@@ -14,8 +14,8 @@ final class RightDockGeometryTests: XCTestCase {
 
     func testTasksKeepsItsHistoricalWidth() {
         // Changing this silently would move a drawer users already know.
-        XCTAssertEqual(RightDockGeometry.width(for: .tasks), 260)
-        XCTAssertEqual(RightDockGeometry.terminalTrailingConstant(for: .tasks), -260)
+        XCTAssertEqual(RightDockGeometry.width(for: .reply), 380)
+        XCTAssertEqual(RightDockGeometry.terminalTrailingConstant(for: .reply), -380)
     }
 
     func testArtifactsIsWiderToFitAThumbnail() {
@@ -24,7 +24,7 @@ final class RightDockGeometryTests: XCTestCase {
     }
 
     func testEitherOccupantCountsAsOpen() {
-        XCTAssertTrue(RightDockGeometry.isOpen(.tasks))
+        XCTAssertTrue(RightDockGeometry.isOpen(.reply))
         XCTAssertTrue(RightDockGeometry.isOpen(.artifacts))
     }
 }

@@ -109,7 +109,7 @@ final class OpusPreferences {
         static let editorCommand          = "opus.editorCommand"
         // Context meter (Task 2, v1.4.2 follow-up)
         static let contextLimitTokens     = "opus.contextLimitTokens"
-        static let tasksDrawerWidth       = "opus.tasksDrawerWidth"
+        static let replyDrawerWidth       = "opus.replyDrawerWidth"
         static let artifactsDrawerWidth   = "opus.artifactsDrawerWidth"
         // Send to Claude (v1.6 backlog, Task 2)
         static let sendToClaudeTemplate   = "opus.sendToClaudeTemplate"
@@ -452,7 +452,7 @@ final class OpusPreferences {
     /// no width to remember.
     private static func drawerWidthKey(_ occupant: RightDockGeometry.Occupant) -> String? {
         switch occupant {
-        case .tasks: return K.tasksDrawerWidth
+        case .reply: return K.replyDrawerWidth
         case .artifacts: return K.artifactsDrawerWidth
         case .none: return nil
         }

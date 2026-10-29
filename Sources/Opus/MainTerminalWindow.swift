@@ -72,7 +72,7 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         // while the drawer is the dock's current occupant, and BEFORE the
         // find-bar's own Cmd+F branch below so the drawer's filter wins
         // when it's open. Kept byte-identical to QuickTerminalPanel's copy
-        // of this block, the same way Cmd+Shift+T is duplicated between the
+        // of this block, the same way Cmd+Shift+C is duplicated between the
         // two hosts: fixing one host only would leave the other with the
         // bug. Escape, Space and Return carry no modifier, so each is gated
         // on one — Escape on the drawer actually holding the keyboard (an
@@ -160,12 +160,10 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
         if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "p" {
             PromptPalettePanel.shared.toggle(); return nil
         }
-        // Cmd+Shift+T — toggle the todo drawer (v1.6 backlog Task 3): the
-        // active pane's bound session's Claude Code task list. "T" for
-        // Tasks — plain Cmd+T (no Shift) already means "spawn new tab"
-        // above, a different key combination, so there's no collision.
-        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "t" {
-            container.toggleTodoDrawer(); return nil
+        // Cmd+Shift+C — toggle the reply drawer: Claude's latest answer
+        // with a copy button per block. "C" for Copier.
+        if mods == [.command, .shift], ev.charactersIgnoringModifiers?.lowercased() == "c" {
+            container.toggleReplyDrawer(); return nil
         }
         // Cmd+Shift+A — toggle the artifacts drawer (Lot artifacts-drawer,
         // Task 9): the active pane's bound session's files, images and

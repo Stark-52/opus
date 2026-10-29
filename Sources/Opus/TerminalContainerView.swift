@@ -28,6 +28,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var shieldButton: NSButton?
     /// Artifacts drawer toggle — see `installArtifactsButton()`.
     private var artifactsButton: NSButton?
+    /// Reply drawer toggle — see `installReplyButton()`.
+    private var replyButton: NSButton?
     /// Bottom status rail (visual-harmonization spec, section 1 "Rail de
     /// statut") — replaces the old top-right PaneActivityDot + "ctx NN%"
     /// label pair (v1.4.1/v1.4.2) AND the bottom ContextMeterBar strip. See
@@ -63,14 +65,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// doc comment for the staleness guard this enables.
     private var contextMeterGeneration = 0
 
-    // v1.6 backlog Task 3 — Cmd+Shift+T todo drawer. See the MARK section
-    // near `toggleTodoDrawer()` below for the full timer/refresh pipeline —
-    // deliberately the SAME shape as the context meter directly above
-    // (background read, generation-guarded main-thread apply, timer that
-    // only runs while the surface is actually visible), not a new pattern.
-    private var todoDrawer: TodoDrawerView!
+    // Cmd+Shift+C reply drawer: Claude's latest answer with a copy button
+    // per block. Same pipeline shape as the context meter directly above
+    // (background read, generation-guarded apply on main), with a timer that
+    // only runs while the drawer is open.
+    private var replyDrawer: ReplyDrawerView!
     /// Owns the container's right edge: the terminal's trailing constraint,
-    /// the top-right button row's shift, and (via `onChange`) the Tasks and
+    /// the top-right button row's shift, and (via `onChange`) the reply and
     /// artifacts timers' lifecycles. Optional, not implicitly unwrapped:
     /// `installShieldButton()` and `installArtifactsButton()` (both called
     /// from `init`, after `buildSubviews()`) read it through
@@ -92,34 +93,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// band without any drawer-specific magic numbers. See
     /// `buildSubviews()`'s installation site and task-3-report.md for the
     /// arithmetic this guarantees.
-    private var todoDrawerBottomConstraint: NSLayoutConstraint!
+    private var replyDrawerBottomConstraint: NSLayoutConstraint!
     /// Artifacts drawer (Lot artifacts-drawer, Task 8) — second occupant of
     /// the right dock, same top/trailing/width/bottom treatment as
-    /// `todoDrawer`/`todoDrawerBottomConstraint` above. See `buildSubviews`'
+    /// `replyDrawer`/`replyDrawerBottomConstraint` above. See `buildSubviews`'
     /// installation site.
     private var artifactsDrawer: ArtifactsDrawerView!
     private var artifactsDrawerBottomConstraint: NSLayoutConstraint!
-    private var todoDrawerTimer: Timer?
-    /// Bumped on every `refreshTodoDrawer()` call — same staleness guard as
-    /// `contextMeterGeneration` above; see `refreshTodoDrawer`'s doc comment.
-    private var todoDrawerGeneration = 0
-    /// Fix round finding F3: `refreshTodoDrawer()` fires on EVERY
-    /// `.opusPaneActivityChanged` post (prompt submitted, each tool
-    /// start/stop) via `paneActivityChanged` below, not just the 5s timer —
-    /// a tool-use burst can post several of those in quick succession. The
-    /// generation counter above already drops a STALE *result*, but it does
-    /// nothing about the *work*: each event still pays for its own
-    /// `contentsOfDirectory` + N file reads + N decodes before that result
-    /// is thrown away. This flag stops a new background read from being
-    /// kicked off at all while one is already in flight, so overlapping
-    /// refreshes don't stack up during a burst — set true right before
-    /// dispatching, cleared back on main once that read's result (used or
-    /// dropped) has been handled.
-    private var todoDrawerRefreshInFlight = false
-    private static let tasksDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/tasks")
+    private var replyDrawerTimer: Timer?
+    /// Bumped on every `refreshReplyDrawer()` call — same staleness guard as
+    /// `contextMeterGeneration` above; see `refreshReplyDrawer`'s doc comment.
+    private var replyDrawerGeneration = 0
+    /// `refreshReplyDrawer()` also fires on every activity change, and a
+    /// tool burst posts several in quick succession: while one read is in
+    /// flight, a new trigger is dropped rather than stacked behind it.
+    private var replyDrawerRefreshInFlight = false
 
     // Artifacts drawer (Lot artifacts-drawer, Task 9) — same shape as the
-    // todo drawer's timer/generation/in-flight trio directly above.
+    // reply drawer's timer/generation/in-flight trio directly above.
     private var artifactsGeneration = 0
     private var artifactsRefreshInFlight = false
     /// Byte offset into the current session's transcript. Reset whenever the
@@ -142,7 +133,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// panel's blur view one level up and get pinned into the row via
     /// `pinToTopRightRow`.
     ///
-    /// The row has to slide left with the terminal area when the todo drawer
+    /// The row has to slide left with the terminal area when the reply drawer
     /// opens. Fix round finding F2 did that for the shield alone by moving
     /// its anchor from the container's trailing edge to `terminalArea`'s —
     /// which left its row siblings behind, still pinned to the container,
@@ -182,6 +173,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         /// leaves a gap between the shield at -28 and this button at -88;
         /// on-screen checklist item, a one-constant fix if it reads badly.
         static let artifactsBase: CGFloat = -88
+        /// Reply drawer toggle, one more 30pt step to the left.
+        static let replyBase: CGFloat = -118
         /// Extra leftward travel applied to the WHOLE row while the drawer is
         /// open, so the rightmost button clears the drawer's leading edge.
         static let drawerOpenShift: CGFloat = -8
@@ -333,6 +326,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // falls, and — like installShieldButton() — after buildSubviews()
         // has already assigned `rightDock`, which pinToTopRightRow reads.
         installArtifactsButton()
+        installReplyButton()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -422,7 +416,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         statusRail = rail
         railBottomConstraint = railBottom
 
-        // Todo drawer (v1.6 backlog Task 3) — right-side, fixed 260pt width,
+        // Reply drawer (v1.6 backlog Task 3) — right-side, fixed 260pt width,
         // hidden by default. Top pinned flush to the container's own top
         // (same as terminalArea); trailing flush to the container's own
         // trailing (the drawer IS the container's rightmost edge while
@@ -441,7 +435,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // (by that existing arithmetic) to clear both the rail and the tab
         // bar in either tab-count state. See task-3-report.md for the
         // worked-out numbers.
-        let drawer = TodoDrawerView(frame: .zero)
+        let drawer = ReplyDrawerView(frame: .zero)
         drawer.translatesAutoresizingMaskIntoConstraints = false
         drawer.isHidden = true
         addSubview(drawer)
@@ -451,15 +445,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // the right edge), which is what makes opening a slide.
         let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: trailingAnchor)
         let drawerWidth = drawer.widthAnchor.constraint(
-            equalToConstant: OpusPreferences.shared.drawerWidth(for: .tasks))
+            equalToConstant: OpusPreferences.shared.drawerWidth(for: .reply))
         NSLayoutConstraint.activate([
             drawer.topAnchor.constraint(equalTo: topAnchor),
             drawerTrailing,
             drawerWidth,
             drawerBottom
         ])
-        todoDrawer = drawer
-        todoDrawerBottomConstraint = drawerBottom
+        replyDrawer = drawer
+        replyDrawerBottomConstraint = drawerBottom
 
         // Artifacts drawer (Task 8) — second occupant of the right dock,
         // built the same way as the Tasks drawer directly above. Built and
@@ -477,7 +471,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // never the container's raw bottomAnchor: the status rail plus tab
         // bar band at the true bottom grows and shrinks with the tab count,
         // and the drawer must clear both in every state, not only the one
-        // on screen when it was built. Same reasoning as TodoDrawerView.
+        // on screen when it was built. Same reasoning as ReplyDrawerView.
         let artifactsBottom = artifactsDrawerView.bottomAnchor.constraint(
             equalTo: bottomAnchor, constant: -(14 + 4))
         let artifactsTrailing = artifactsDrawerView.trailingAnchor.constraint(
@@ -499,7 +493,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // width continuously and writes to preferences once, on mouse up:
         // persisting every frame would fire the preferences-changed
         // notification dozens of times per gesture.
-        for (occupant, view) in [(RightDockGeometry.Occupant.tasks, drawer as NSView),
+        for (occupant, view) in [(RightDockGeometry.Occupant.reply, drawer as NSView),
                                  (.artifacts, artifactsDrawerView as NSView)] {
             let handle = DrawerResizeHandle(
                 proposeWidth: { [weak self] proposed in
@@ -522,7 +516,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         rightDock = RightDock(
             panels: [
-                .tasks: RightDock.Panel(
+                .reply: RightDock.Panel(
                     view: drawer, trailing: drawerTrailing, width: drawerWidth),
                 .artifacts: RightDock.Panel(
                     view: artifactsDrawerView, trailing: artifactsTrailing,
@@ -534,7 +528,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             onChange: { [weak self] occupant in
                 guard let self else { return }
                 self.updateTopRightRow(drawerOpen: RightDockGeometry.isOpen(occupant))
-                // Runs for EVERY transition (including .artifacts → .tasks),
+                // Runs for EVERY transition (including .artifacts → .reply),
                 // same as updateTopRightRow above, so the toggle's tint never
                 // lags behind which drawer is actually showing. Safe even
                 // before installArtifactsButton() has run — it only reaches
@@ -543,14 +537,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 // has completed — and refreshArtifactsButton() itself is
                 // nil-safe on `artifactsButton` regardless.
                 self.refreshArtifactsButton()
+                self.refreshReplyButton()
                 // The layout pass moved into RightDock's animation group;
                 // running it here as well would settle the constraints
                 // instantly and cancel the slide.
-                if occupant == .tasks {
-                    self.refreshTodoDrawer()
-                    self.startTodoDrawerTimer()
+                if occupant == .reply {
+                    self.refreshReplyDrawer()
+                    self.startReplyDrawerTimer()
                 } else {
-                    self.stopTodoDrawerTimer()
+                    self.stopReplyDrawerTimer()
                 }
 
                 // One refresh on open, then nothing until an event says
@@ -565,7 +560,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     self.artifactsDrawer.warmPreviewPanel()
                 } else {
                     // Every route out of the artifacts drawer lands here
-                    // (the hotkey, the todo drawer taking the dock instead,
+                    // (the hotkey, the reply drawer taking the dock instead,
                     // anything else RightDock ever grows) — unlike
                     // toggleArtifactsDrawer, which only covers its own call
                     // site. An open QuickLook preview has no other owner
@@ -654,7 +649,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     ///
     /// Two consumers as of v1.6 backlog Task 3: the context meter
     /// (`refreshContextMeter`, reading the session's transcript) and the
-    /// todo drawer (`refreshTodoDrawer`, reading the session's task list) —
+    /// reply drawer (`refreshReplyDrawer`, reading the session's task list) —
     /// both need exactly the same "which session is the user looking at
     /// right now" answer, so this is the one place that answers it rather
     /// than two independent copies of the tab/pane-index bookkeeping below.
@@ -673,9 +668,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// to a completely different pane is actively misleading — worse than
     /// showing nothing. No fallback: the bar (and, since Task 3, the
     /// drawer) just stays blank/empty for the few seconds until
-    /// `ClaudeStateStore` binds the real id. The todo drawer's empty state
+    /// `ClaudeStateStore` binds the real id. The reply drawer's empty state
     /// ("No tasks in this session") is this exact same rule applied to a
-    /// second surface — see `refreshTodoDrawer`'s doc comment.
+    /// second surface — see `refreshReplyDrawer`'s doc comment.
     /// The active pane's identity, resolved exactly like `activeSessionId()`
     /// below and kept adjacent to it so the two cannot drift apart and answer
     /// about different panes.
@@ -714,13 +709,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// live transcript can run to tens of megabytes. `nil` when the file
     /// doesn't exist (session id not yet flushed to disk, wrong cwd, or a
     /// stale id from a closed/replaced session) or can't be opened.
-    private static func readTranscriptTail(sessionId: String, cwd: String) -> Data? {
+    private static func readTranscriptTail(sessionId: String, cwd: String,
+                                           budget: Int = ContextMeter.tailBudgetBytes) -> Data? {
         guard let url = transcriptURL(sessionId: sessionId, cwd: cwd),
               let handle = try? FileHandle(forReadingFrom: url)
         else { return nil }
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd() else { return nil }
-        let tailStart = size > UInt64(ContextMeter.tailBudgetBytes) ? size - UInt64(ContextMeter.tailBudgetBytes) : 0
+        let tailStart = size > UInt64(budget) ? size - UInt64(budget) : 0
         guard (try? handle.seek(toOffset: tailStart)) != nil else { return nil }
         return try? handle.readToEnd()
     }
@@ -837,17 +833,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         statusRail.tooltipText = lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    // MARK: Cockpit — todo drawer (v1.6 backlog Task 3, Cmd+Shift+T)
-    //
-    // Same shape as the context meter block above: a Timer that only runs
-    // while the drawer is actually visible (unlike the context meter's,
-    // which — per that block's own doc comment — runs for the app's
-    // lifetime once started; the drawer's is explicitly narrower per the
-    // brief: "timer 5s uniquement quand le tiroir est visible"), a
-    // generation counter guarding the background→main handoff exactly like
-    // `contextMeterGeneration`, and a background read (TaskListReader.load,
-    // disk I/O + JSON parse) that only ever touches the drawer's `tasks`
-    // property back on main.
+    // MARK: Cockpit — reply drawer (Cmd+Shift+C)
 
     /// Pin `button`'s trailing edge into the top-right row (see
     /// `TopRightButtonRow`) at `base` points from the terminal area's
@@ -898,99 +884,80 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // anchor via `pinToTopRightRow`, and `updateTopRightRow` applies
     // the row-wide shift that keeps the rightmost one clear of the
     // drawer's leading edge.
-    func toggleTodoDrawer() {
-        rightDock?.toggle(.tasks)
+    func toggleReplyDrawer() {
+        rightDock?.toggle(.reply)
     }
 
-    private func startTodoDrawerTimer() {
-        guard todoDrawerTimer == nil else { return }
-        let timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.refreshTodoDrawer()
+    private func startReplyDrawerTimer() {
+        guard replyDrawerTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.refreshReplyDrawer()
         }
         timer.tolerance = 1
-        todoDrawerTimer = timer
+        replyDrawerTimer = timer
     }
 
-    /// Called from `toggleTodoDrawer()`'s close branch. Also the reason a
+    /// Called from `toggleReplyDrawer()`'s close branch. Also the reason a
     /// closed drawer's timer really does stop rather than silently leaking:
     /// `Timer.invalidate()` removes it from the run loop immediately (no
     /// further fires can land, in-flight or otherwise — a fire already
     /// dispatched to the background queue before invalidate() still lands,
-    /// but its result is dropped by `refreshTodoDrawer`'s own generation
+    /// but its result is dropped by `refreshReplyDrawer`'s own generation
     /// guard below once it hops back to main, same as any other stale
-    /// background read in this file), and `todoDrawerTimer = nil` lets the
-    /// next `startTodoDrawerTimer()` call (the drawer's next open) pass its
-    /// own `guard todoDrawerTimer == nil` and actually schedule a fresh one
+    /// background read in this file), and `replyDrawerTimer = nil` lets the
+    /// next `startReplyDrawerTimer()` call (the drawer's next open) pass its
+    /// own `guard replyDrawerTimer == nil` and actually schedule a fresh one
     /// instead of no-op'ing forever.
-    private func stopTodoDrawerTimer() {
-        todoDrawerTimer?.invalidate()
-        todoDrawerTimer = nil
+    private func stopReplyDrawerTimer() {
+        replyDrawerTimer?.invalidate()
+        replyDrawerTimer = nil
     }
 
-    /// Timer tick (and the immediate call from `toggleTodoDrawer`'s open
-    /// branch, plus `paneActivityChanged`/`switchTab`'s immediate
-    /// refreshes) — resolves the active session, reads+parses off a
-    /// background queue, then hops back to apply the result to the drawer.
-    /// Bumps `todoDrawerGeneration` and captures it BEFORE dispatching, so
-    /// a result that comes back after a NEWER refresh has already started
-    /// (e.g. two tab switches in quick succession while the drawer is open)
-    /// gets dropped instead of clobbering fresher state — identical
-    /// staleness guard to `refreshContextMeter`'s `contextMeterGeneration`,
-    /// see that function's own doc comment for the full rationale.
+    /// The open drawer's refresh: on opening, every 2s while open, and on
+    /// every activity change or tab switch. Resolves the active pane's
+    /// session, reads the transcript's tail off the main queue and hands the
+    /// latest answer to the drawer. The generation counter drops a result
+    /// that a newer refresh has overtaken; the in-flight flag keeps a burst
+    /// of activity events from stacking reads.
     ///
-    /// No bound session for the active pane (a brand-new pane whose
-    /// SessionStart hook hasn't landed yet, or a shared pane still waiting
-    /// on `sharedBackendDidSpawn`) → empty tasks, i.e. the drawer's own
-    /// "No tasks in this session" empty state. This is the SAME "no data
-    /// beats wrong data" rule `activeSessionId()`'s doc comment describes
-    /// for the context meter: showing some OTHER session's task list next
-    /// to a pane that isn't actually that session would be actively
-    /// misleading, not just incomplete, so this deliberately does not fall
-    /// back to "most recent session" or any other guess.
-    private func refreshTodoDrawer() {
-        // Guards every caller at once (the timer already only runs while
-        // visible — see startTodoDrawerTimer/stopTodoDrawerTimer — but
-        // paneActivityChanged and switchTab below call this unconditionally
-        // on every activity change / tab switch, which fire far more often
-        // than the drawer is actually open; a hidden drawer has nothing on
-        // screen worth a disk read+parse for).
-        guard rightDock?.occupant == .tasks else { return }
-        // Fix round finding F3: a refresh already in flight covers whatever
-        // this call would have asked for too (it started more recently than
-        // this event), so drop this trigger rather than paying for a second
-        // overlapping disk read — the timer (while open) and every other
-        // activity/tab-switch event during the burst will still land a
-        // fresh read the moment the in-flight one clears the flag below.
-        guard !todoDrawerRefreshInFlight else { return }
-        todoDrawerGeneration += 1
-        let generation = todoDrawerGeneration
+    /// No bound session for the active pane means no answer rather than
+    /// some other session's: the same "no data beats wrong data" rule as
+    /// the context meter (see `activeSessionId()`).
+    private func refreshReplyDrawer() {
+        guard rightDock?.occupant == .reply else { return }
+        guard !replyDrawerRefreshInFlight else { return }
+        replyDrawerGeneration += 1
+        let generation = replyDrawerGeneration
 
         guard let sessionId = activeSessionId() else {
-            todoDrawer.tasks = []
+            replyDrawer.reply = nil
             return
         }
-        todoDrawerRefreshInFlight = true
+        let cwd = OpusPreferences.shared.workingDirectory
+        replyDrawerRefreshInFlight = true
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let tasks = TaskListReader.load(sessionId: sessionId, tasksDir: Self.tasksDir)
+            let reply = ReplyReader.lastReply { budget in
+                Self.readTranscriptTail(sessionId: sessionId, cwd: cwd, budget: budget)
+            }
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.todoDrawerRefreshInFlight = false
-                guard self.todoDrawerGeneration == generation else { return }
-                self.todoDrawer.tasks = tasks
+                self.replyDrawerRefreshInFlight = false
+                guard self.replyDrawerGeneration == generation else { return }
+                self.replyDrawer.reply = reply
             }
         }
     }
 
     // MARK: Artifacts drawer (Lot artifacts-drawer, Task 9, Cmd+Shift+A)
 
-    /// Same shape as the todo drawer's pipeline: a Timer that only runs
+    /// Same shape as the reply drawer's pipeline: a Timer that only runs
     /// while the drawer is the dock's occupant, a generation counter
     /// guarding the background to main handoff, and an in-flight flag so a
     /// burst of triggers does not stack overlapping disk reads.
     ///
-    /// The interval is 1.5s rather than the todo drawer's 5s because an
+    /// The interval is 1.5s rather than the reply drawer's 5s because an
     /// incremental read of the bytes appended since the last tick is far
-    /// cheaper than the todo drawer's full directory scan, and because a
+    /// cheaper than the reply drawer's full directory scan, and because a
     /// file Claude just wrote should show up while the user is still
     /// looking for it.
 
@@ -1184,6 +1151,38 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         artifactsButton?.toolTip = "Artifacts produced by this session (Cmd+Shift+A)"
     }
 
+    /// Same build as the artifacts toggle, one slot further left: a
+    /// shortcut alone would leave the drawer to whoever remembers it.
+    private func installReplyButton() {
+        let btn = NSButton(title: "", target: self, action: #selector(replyButtonTapped))
+        btn.isBordered = false
+        btn.imagePosition = .imageOnly
+        btn.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Réponse")
+        btn.setAccessibilityLabel("Reply drawer")
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(btn)
+        NSLayoutConstraint.activate([
+            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            btn.widthAnchor.constraint(equalToConstant: 24),
+            btn.heightAnchor.constraint(equalToConstant: 22)
+        ])
+        pinToTopRightRow(btn, base: TopRightButtonRow.replyBase)
+        replyButton = btn
+        refreshReplyButton()
+    }
+
+    @objc private func replyButtonTapped() {
+        toggleReplyDrawer()
+    }
+
+    /// Cyan while the reply drawer is open, dim otherwise, like the
+    /// artifacts toggle.
+    private func refreshReplyButton() {
+        replyButton?.contentTintColor =
+            rightDock?.occupant == .reply ? OpusTheme.cyan : OpusTheme.cream(0.45)
+        replyButton?.toolTip = "Dernière réponse, à copier morceau par morceau (Cmd+Shift+C)"
+    }
+
     // MARK: Dangerous-mode shield button
 
     /// Floating toggle at the container's top-right (the tab bar is hidden
@@ -1200,7 +1199,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // Fix round finding F2: pinned to `terminalArea.trailingAnchor`, NOT
         // the container's own `trailingAnchor` — `terminalArea`'s trailing
         // edge is the one that moves (`terminalAreaTrailingConstraint`, see
-        // `toggleTodoDrawer()`) when the todo drawer opens, so the shield
+        // `toggleReplyDrawer()`) when the reply drawer opens, so the shield
         // slides left in lockstep with the terminal area instead of sitting
         // fixed under the drawer's top-right corner. Offset preserved
         // (-28) relative to that anchor, same as it was relative to the
@@ -2161,11 +2160,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // because a stale-tab bar is a real, easily-hit correctness gap,
         // not a hypothetical.
         refreshContextMeter()
-        // Same reasoning for the todo drawer (v1.6 backlog Task 3): without
+        // Same reasoning for the reply drawer (v1.6 backlog Task 3): without
         // this, switching from a tab bound to session A to a tab bound to
         // session B while the drawer is open would keep showing A's tasks
         // for up to 5s. No-ops when the drawer is closed.
-        refreshTodoDrawer()
+        refreshReplyDrawer()
         // Same again for the artifacts drawer, whose own timer is 1.5s.
         // Safe only because refreshArtifacts now resolves the session and
         // resets identity ABOVE its in-flight guard: before that, this call
@@ -2503,16 +2502,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let terminalAreaBottomShown: CGFloat = -59   // -(14 + 26 + 4 + 15)
         let terminalAreaBottomHidden: CGFloat = -29  // -(14 + 15)
         terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
-        // Todo drawer (v1.6 backlog Task 3): own bottom constraint, switched
+        // Reply drawer (v1.6 backlog Task 3): own bottom constraint, switched
         // in lockstep with terminalAreaBottomConstraint using the EXACT SAME
         // two constants above (not a drawer-specific pair) — the drawer's
         // bottom edge must always land at the same y-position as
         // terminalArea's own bottom edge, which this arithmetic already
         // keeps clear of the rail/tab-bar band in both states. See
-        // buildSubviews()'s doc comment on todoDrawerBottomConstraint.
-        todoDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
+        // buildSubviews()'s doc comment on replyDrawerBottomConstraint.
+        replyDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
         // Artifacts drawer: identical treatment, same two constants, same
-        // reasoning as todoDrawerBottomConstraint immediately above — see
+        // reasoning as replyDrawerBottomConstraint immediately above — see
         // buildSubviews()'s doc comment on artifactsDrawerBottomConstraint.
         artifactsDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
         // Status rail: own constant, switched in lockstep with the two
@@ -2596,8 +2595,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // v1.6 backlog Task 3: an immediate refresh on every activity change
         // (prompt submitted, tool used/done, turn ended, …) — per the brief,
         // in addition to the drawer's own 5s timer. No-ops when the drawer
-        // is closed (see refreshTodoDrawer's own guard).
-        refreshTodoDrawer()
+        // is closed (see refreshReplyDrawer's own guard).
+        refreshReplyDrawer()
     }
 
     /// The active tab's active pane, marked as "seen" (clears a `.done`/

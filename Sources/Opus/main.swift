@@ -865,15 +865,12 @@ final class QuickTerminalPanel: NSObject {
            ev.charactersIgnoringModifiers?.lowercased() == "p" {
             PromptPalettePanel.shared.toggle(); return nil
         }
-        // Cmd+Shift+T — toggle the todo drawer (v1.6 backlog task 3): the
-        // active pane's bound session's Claude Code task list. Plain Cmd+T
-        // (no Shift) already means "spawn new tab" above — a different
-        // modifier combination, so no collision with that or with anything
-        // else in this handler (D/G/I/P are the only other Cmd+Shift letters
-        // claimed).
+        // Cmd+Shift+C — toggle the reply drawer: Claude's latest answer
+        // with a copy button per block. "C" for Copier; no other Cmd+Shift
+        // letter in this handler takes it.
         if mods == [.command, .shift],
-           ev.charactersIgnoringModifiers?.lowercased() == "t" {
-            container.toggleTodoDrawer(); return nil
+           ev.charactersIgnoringModifiers?.lowercased() == "c" {
+            container.toggleReplyDrawer(); return nil
         }
         // Cmd+Shift+A — toggle the artifacts drawer (Lot artifacts-drawer,
         // Task 9): the active pane's bound session's files, images and

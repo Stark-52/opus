@@ -17,7 +17,7 @@ import CoreGraphics
 public enum RightDockGeometry {
     public enum Occupant: Equatable, Sendable {
         case none
-        case tasks
+        case reply
         case artifacts
     }
 
@@ -32,11 +32,11 @@ public enum RightDockGeometry {
     public static func defaultWidth(for occupant: Occupant) -> CGFloat {
         switch occupant {
         case .none: return 0
-        /// Unchanged from v1.6. Users know where this edge is.
-        case .tasks: return 260
-        /// 40pt wider than tasks: a 40pt thumbnail plus two lines of text
-        /// does not fit in 260 without truncating the parent directory to
-        /// uselessness.
+        /// Formatted prose with a copy gutter reads at around 60
+        /// characters a line at 12pt, which needs this much.
+        case .reply: return 380
+        /// A 40pt thumbnail plus two lines of text does not fit in 260
+        /// without truncating the parent directory to uselessness.
         case .artifacts: return 300
         }
     }

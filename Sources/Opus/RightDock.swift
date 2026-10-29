@@ -116,7 +116,7 @@ final class RightDock {
     }
 
     /// Toggle: asking for the occupant that is already showing closes the
-    /// dock, which is what every caller of the old toggleTodoDrawer meant.
+    /// dock, which is what every caller of toggleReplyDrawer means.
     func toggle(_ requested: Occupant) {
         show(occupant == requested ? .none : requested)
     }

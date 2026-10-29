@@ -7,7 +7,7 @@
 // fine but produced nothing", or from "your filter hides everything".
 //
 // An earlier review flagged the collapse of these situations into one
-// sentence and it was accepted on the grounds that the todo drawer and the
+// sentence and it was accepted on the grounds that the reply drawer and the
 // context meter already do the same. That was the wrong call: those two
 // surfaces answer questions you can also answer by looking at the terminal,
 // and this one does not. The message is the ONLY thing the drawer can say

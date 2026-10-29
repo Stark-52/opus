@@ -8,7 +8,7 @@ import XCTest
 final class RightDockWidthTests: XCTestCase {
 
     func testDefaultsAreTheWidthsUsersAlreadyKnow() {
-        XCTAssertEqual(RightDockGeometry.defaultWidth(for: .tasks), 260)
+        XCTAssertEqual(RightDockGeometry.defaultWidth(for: .reply), 380)
         XCTAssertEqual(RightDockGeometry.defaultWidth(for: .artifacts), 300)
         XCTAssertEqual(RightDockGeometry.defaultWidth(for: .none), 0)
     }
@@ -16,7 +16,7 @@ final class RightDockWidthTests: XCTestCase {
     func testClampRefusesToGoBelowUsable() {
         XCTAssertEqual(RightDockGeometry.clampWidth(10, for: .artifacts),
                        RightDockGeometry.minimumWidth)
-        XCTAssertEqual(RightDockGeometry.clampWidth(-500, for: .tasks),
+        XCTAssertEqual(RightDockGeometry.clampWidth(-500, for: .reply),
                        RightDockGeometry.minimumWidth)
     }
 
@@ -27,14 +27,14 @@ final class RightDockWidthTests: XCTestCase {
 
     func testClampPassesSensibleWidthsThrough() {
         XCTAssertEqual(RightDockGeometry.clampWidth(340, for: .artifacts), 340)
-        XCTAssertEqual(RightDockGeometry.clampWidth(260, for: .tasks), 260)
+        XCTAssertEqual(RightDockGeometry.clampWidth(380, for: .reply), 380)
     }
 
     func testBothDefaultsSurviveTheirOwnClamp() {
         // A default outside its own bounds would mean a drawer that jumps the
         // first time it is dragged, which is the kind of thing nobody notices
         // until a user does.
-        for occupant in [RightDockGeometry.Occupant.tasks, .artifacts] {
+        for occupant in [RightDockGeometry.Occupant.reply, .artifacts] {
             let d = RightDockGeometry.defaultWidth(for: occupant)
             XCTAssertEqual(RightDockGeometry.clampWidth(d, for: occupant), d)
         }
