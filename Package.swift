@@ -15,7 +15,9 @@ let package = Package(
         .executable(name: "opus-secrets", targets: ["opus-secrets"])
     ],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0")
+        // 1.14 is the first to keep a scrolled-up view in place while output
+        // arrives; 1.99 is the line of breaking changes, so stay on 1.20.x.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", .upToNextMinor(from: "1.20.0"))
     ],
     targets: [
         .target(
