@@ -196,6 +196,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // lives for the app's lifetime, same as every NotificationCenter
     // observer registered in init below.
     private var commandClickMonitor: Any?
+    /// Plain click in Claude Code's input → arrow keys (see PromptClick).
+    private var promptClickMonitor: Any?
+    /// Where the current plain click went down, or nil once it moved, took a
+    /// modifier, or was a double click.
+    private var promptClickDown: NSPoint?
 
     // Cockpit (Lot 3, Task 7) — broadcast input to every pane of the ACTIVE
     // tab. See the MARK section near `broadcast(data:)` below for the full
@@ -302,6 +307,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         commandClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] ev in
             guard let self, ev.window === self.window, ev.modifierFlags.contains(.command) else { return ev }
             return self.handleCommandClick(at: ev.locationInWindow) ? nil : ev
+        }
+        // A plain single click that did not drag: never swallowed, so
+        // SwiftTerm still focuses the pane and clears any selection; it only
+        // also moves Claude Code's cursor when it landed in the input.
+        promptClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] ev in
+            guard let self, ev.window === self.window else { return ev }
+            let isPlain = ev.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+            if ev.type == .leftMouseDown {
+                self.promptClickDown = isPlain && ev.clickCount == 1 ? ev.locationInWindow : nil
+            } else if let down = self.promptClickDown {
+                self.promptClickDown = nil
+                let moved = hypot(ev.locationInWindow.x - down.x, ev.locationInWindow.y - down.y)
+                if isPlain, moved < 4 { self.handlePromptClick(at: ev.locationInWindow) }
+            }
+            return ev
         }
         if useSharedTab0 {
             NotificationCenter.default.addObserver(
@@ -1327,6 +1347,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// glyph area entirely (e.g. landed on the scroller strip) and there's
     /// no line to read at all.
     private func resolvePathClick(in terminal: TerminalView, at local: NSPoint) -> (text: String, col: Int)? {
+        guard let cell = Self.cell(in: terminal, at: local),
+              let bufferLine = terminal.getTerminal().getLine(row: cell.row) else { return nil }
+        return (bufferLine.translateToString(trimRight: true), cell.col)
+    }
+
+    /// The (column, on-screen row) of the cell under a point already known
+    /// to be inside `terminal`. The arithmetic and its two traps (the
+    /// scroller strip, the unflipped view) are explained inline.
+    private static func cell(in terminal: TerminalView, at local: NSPoint) -> (col: Int, row: Int)? {
         let term = terminal.getTerminal()
         let cols = term.cols
         let rows = term.rows
@@ -1374,8 +1403,47 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // any pane with scrollback beyond one screen, returning nil on
         // almost every real click. getTopVisibleRow() is therefore
         // deliberately NOT used here.
-        guard let bufferLine = term.getLine(row: rowOnScreen) else { return nil }
-        return (bufferLine.translateToString(trimRight: true), col)
+        return (col, rowOnScreen)
+    }
+
+    /// A plain click: when it landed in Claude Code's input on the live
+    /// screen, send the arrow keys that bring the cursor under it.
+    private func handlePromptClick(at windowPoint: NSPoint) {
+        guard tabPanes.indices.contains(activeTabIndex) else { return }
+        for pane in tabPanes[activeTabIndex] {
+            let terminal = pane.terminal
+            guard !terminal.isHidden else { continue }
+            let local = terminal.convert(windowPoint, from: nil)
+            guard terminal.bounds.contains(local) else { continue }
+            // Scrolled back through history, the rows under the click are
+            // not the input any more, whatever they show.
+            guard !terminal.canScroll || terminal.scrollPosition >= 1,
+                  let click = Self.cell(in: terminal, at: local) else { return }
+            let send: (ArraySlice<UInt8>) -> Void
+            if let wrapper = pane.wrapper {
+                send = { wrapper.sendInput(bytes: $0) }
+            } else {
+                send = { ClaudeBackend.shared.send(data: $0) }
+            }
+            moveCursor(in: terminal, to: click, send: send, allowVertical: true)
+            return
+        }
+    }
+
+    /// One step of the walk. A vertical step is followed, once Claude Code
+    /// has redrawn, by a second call that reads where the cursor landed and
+    /// sends the horizontal part; that call may not go vertical again, so a
+    /// row that cannot be reached ends the walk instead of looping.
+    private func moveCursor(in terminal: TerminalView, to click: (col: Int, row: Int),
+                            send: @escaping (ArraySlice<UInt8>) -> Void, allowVertical: Bool) {
+        guard let step = PromptClick.keys(in: terminal.getTerminal(), click: click, allowVertical: allowVertical)
+        else { return }
+        send(ArraySlice(step.keys))
+        if step.isVertical {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                self?.moveCursor(in: terminal, to: click, send: send, allowVertical: false)
+            }
+        }
     }
 
     /// Run `OpusPreferences.editorCommand` with `{target}` replaced by the
