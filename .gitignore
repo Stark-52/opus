@@ -5,3 +5,4 @@ Package.resolved
 Opus.app/
 *.xcuserstate
 xcuserdata/
+.superpowers/
