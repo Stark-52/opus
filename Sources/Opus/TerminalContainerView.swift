@@ -198,9 +198,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var commandClickMonitor: Any?
     /// Plain click in Claude Code's input → arrow keys (see PromptClick).
     private var promptClickMonitor: Any?
-    /// Where the current plain click went down, or nil once it moved, took a
-    /// modifier, or was a double click.
-    private var promptClickDown: NSPoint?
 
     // Cockpit (Lot 3, Task 7) — broadcast input to every pane of the ACTIVE
     // tab. See the MARK section near `broadcast(data:)` below for the full
@@ -265,6 +262,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         self.useSharedTab0 = useSharedTab0
         super.init(frame: frame)
         wantsLayer = true
+        // The package targets macOS 13, so AppKit keeps its pre-14 default
+        // and clips every view to its bounds. The tab bar hangs 8pt below
+        // this view, into the panel's padding (see buildSubviews), and lost
+        // its lower part to that clip.
+        if #available(macOS 14, *) { clipsToBounds = false }
         buildSubviews()
         bootstrapFirstTab()
         // Fix round 2 (v1.4.1): sync the tab bar / context meter / terminal-
@@ -308,19 +310,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             guard let self, ev.window === self.window, ev.modifierFlags.contains(.command) else { return ev }
             return self.handleCommandClick(at: ev.locationInWindow) ? nil : ev
         }
-        // A plain single click that did not drag: never swallowed, so
-        // SwiftTerm still focuses the pane and clears any selection; it only
-        // also moves Claude Code's cursor when it landed in the input.
-        promptClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] ev in
+        // A plain single press: never swallowed, so SwiftTerm still focuses
+        // the pane and starts its selection; it also moves Claude Code's
+        // cursor when it landed in the input. On the press, as a text field
+        // places its caret: a drag that follows still selects, since
+        // SwiftTerm keeps a selection through output.
+        promptClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] ev in
             guard let self, ev.window === self.window else { return ev }
             let isPlain = ev.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
-            if ev.type == .leftMouseDown {
-                self.promptClickDown = isPlain && ev.clickCount == 1 ? ev.locationInWindow : nil
-            } else if let down = self.promptClickDown {
-                self.promptClickDown = nil
-                let moved = hypot(ev.locationInWindow.x - down.x, ev.locationInWindow.y - down.y)
-                if isPlain, moved < 4 { self.handlePromptClick(at: ev.locationInWindow) }
-            }
+            if isPlain, ev.clickCount == 1 { self.handlePromptClick(at: ev.locationInWindow) }
             return ev
         }
         if useSharedTab0 {
@@ -1441,8 +1439,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         else { return }
         send(ArraySlice(step.keys))
         if step.isVertical {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+            afterCursorReaches(row: click.row, in: terminal, by: Date().addingTimeInterval(0.3)) { [weak self] in
                 self?.moveCursor(in: terminal, to: click, send: send, allowVertical: false)
+            }
+        }
+    }
+
+    /// Claude Code moves its cursor within a frame or two of an arrow key, so
+    /// the cursor is read every few milliseconds rather than after a fixed
+    /// wait. Past `deadline` the next step runs anyway, and ends the walk if
+    /// the row was not reached.
+    private func afterCursorReaches(row: Int, in terminal: TerminalView, by deadline: Date,
+                                    then next: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.008) { [weak self] in
+            guard let self, let screen = terminal.terminalContentSnapshot(region: .viewport) else { return }
+            if screen.cursorRow - screen.capturedRange.lowerBound == row || Date() >= deadline {
+                next()
+            } else {
+                self.afterCursorReaches(row: row, in: terminal, by: deadline, then: next)
             }
         }
     }
