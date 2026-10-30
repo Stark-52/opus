@@ -198,7 +198,7 @@ Observed via `Notification.Name.opusPreferencesDidChange` so changes apply live 
 |---|---|---|
 | `opus.initialCommandPreset` | `OpusInitialCommandPreset` (claude/shell/custom) | `claude` |
 | `opus.customCommand` | String | "" |
-| `opus.workingDirectory` | String | `~/Documents/GitHub/Workspace` |
+| `opus.workingDirectory` | String | `~` (home) |
 | `opus.displayMode` | `OpusDisplayMode` (nativeAndPanel/panelAndMain/panelOnly/mainOnly) | `nativeAndPanel` |
 | `opus.onboardingShown` | Bool | `false` |
 | `opus.appearanceMode` | String (default/transparent/tint/image) | `default` |

@@ -209,7 +209,7 @@ final class OpusPreferences {
     var workingDirectory: String {
         get {
             defaults.string(forKey: K.workingDirectory)
-                ?? (NSHomeDirectory() + "/Documents/GitHub/Workspace")
+                ?? NSHomeDirectory()
         }
         set {
             // Two notifications fire (workingDirectory + recentProjects);
