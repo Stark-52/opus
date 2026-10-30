@@ -20,4 +20,21 @@ final class ArtifactsDrawerViewTests: XCTestCase {
         let code = Artifact(key: "/r/main.swift", kind: .file, resolvedPath: "/r/main.swift", urlString: nil)
         XCTAssertEqual(ArtifactsDrawerView.headerText(artifacts: [file(1), code]), "Artifacts 1")
     }
+
+    func testTheDrawerShowsRowsForTheSelectedChipOnly() {
+        let now = Date()
+        let code = Artifact(key: "/r/main.swift", kind: .file, resolvedPath: "/r/main.swift",
+                            urlString: nil, timestamp: now)
+        let image = Artifact(key: "/r/shot.png", kind: .image, resolvedPath: "/r/shot.png",
+                             urlString: nil, timestamp: now)
+        let drawer = ArtifactsDrawerView(frame: NSRect(x: 0, y: 0, width: 300, height: 600))
+        drawer.update(artifacts: [code, image], hasSession: true, hasTranscript: true)
+
+        XCTAssertFalse(drawer.displayedRows.contains(.item(code)))
+        XCTAssertTrue(drawer.displayedRows.contains(.images([image])))
+
+        drawer.select(kindFilter: .code)
+        XCTAssertTrue(drawer.displayedRows.contains(.item(code)))
+        XCTAssertFalse(drawer.displayedRows.contains { if case .images = $0 { return true } else { return false } })
+    }
 }

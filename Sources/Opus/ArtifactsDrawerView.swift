@@ -20,6 +20,8 @@ import OpusSecretsKit
 final class ArtifactsDrawerView: NSView {
     static let width: CGFloat = RightDockGeometry.width(for: .artifacts)
     private static let cellID = NSUserInterfaceItemIdentifier("ArtifactCell")
+    private static let headerCellID = NSUserInterfaceItemIdentifier("ArtifactHeader")
+    private static let stripCellID = NSUserInterfaceItemIdentifier("ArtifactStrip")
 
     /// Assigned only through `update(artifacts:hasSession:hasTranscript:)`.
     /// It used to be settable directly with a `didSet` that re-filtered, but
@@ -52,7 +54,18 @@ final class ArtifactsDrawerView: NSView {
     /// What the table was last told to draw. `applyFilter` compares against
     /// this and skips `reloadData()` entirely when nothing changed, because
     /// reloading destroys the selection and with it any open preview.
-    private var previouslyRendered: [Artifact] = []
+    private var previouslyRendered: [ArtifactRow] = []
+    /// The rows the table draws (see ArtifactRows), rebuilt from `visible`.
+    private(set) var displayedRows: [ArtifactRow] = []
+    /// `visible` in the order the rows show it, which the arrow keys walk.
+    private var displayOrder: [Artifact] = []
+    /// The selected artifact. A thumbnail in an image strip is not a table
+    /// row of its own, so the table's selection cannot carry it.
+    private var selectedKey: String?
+    /// Set while `syncSelection` drives the table, so the table's own
+    /// selection callback does not read the change back as a click.
+    private var syncingSelection = false
+    private var lastTableWidth: CGFloat = 0
 
     /// Whether THIS drawer currently drives the shared QuickLook panel.
     /// Tracked explicitly rather than inferred from the panel's `dataSource`,
@@ -63,7 +76,7 @@ final class ArtifactsDrawerView: NSView {
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No artifacts in this session")
     private let filterField = NSTextField(frame: .zero)
-    private let tableView = NSTableView(frame: .zero)
+    private let tableView = ArtifactTableView(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
 
     /// Per-kind lens, composed with the text filter by AND. Lives in memory
@@ -122,7 +135,9 @@ final class ArtifactsDrawerView: NSView {
         tableView.headerView = nil
         tableView.backgroundColor = .clear
         tableView.rowSizeStyle = .custom
-        tableView.rowHeight = 48
+        tableView.onVerticalArrow = { [weak self] step in
+            self?.moveSelection(step: step, previewableOnly: false) ?? false
+        }
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         // Every row here is actionable, so selection
         // has to be visible.
@@ -187,11 +202,76 @@ final class ArtifactsDrawerView: NSView {
         "Artifacts \(ArtifactKindFilter.apply(.all, to: artifacts).count)"
     }
 
+    /// The artifact a single-artifact row shows; nil for headers and strips.
     func artifact(at row: Int) -> Artifact? {
-        visible.indices.contains(row) ? visible[row] : nil
+        guard displayedRows.indices.contains(row), case .item(let artifact) = displayedRows[row] else { return nil }
+        return artifact
     }
 
-    var selectedArtifact: Artifact? { artifact(at: tableView.selectedRow) }
+    var selectedArtifact: Artifact? {
+        selectedKey.flatMap { key in displayOrder.first { $0.key == key } }
+    }
+
+    /// The row that shows `key`, whether as a row of its own or in a strip.
+    private func row(showing key: String) -> Int? {
+        displayedRows.firstIndex { row in
+            switch row {
+            case .header: return false
+            case .images(let images): return images.contains { $0.key == key }
+            case .item(let artifact): return artifact.key == key
+            }
+        }
+    }
+
+    func select(key: String?) {
+        selectedKey = key
+        syncSelection()
+        if let key, let row = row(showing: key) { tableView.scrollRowToVisible(row) }
+        reloadPreviewIfOpen()
+    }
+
+    /// Shows `selectedKey`: the table selects an item's row, and deselects
+    /// for a thumbnail, which its strip outlines itself.
+    private func syncSelection() {
+        syncingSelection = true
+        defer { syncingSelection = false }
+        if let key = selectedKey, let row = row(showing: key), artifact(at: row) != nil {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else {
+            tableView.deselectAll(nil)
+        }
+        for row in displayedRows.indices {
+            (tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ArtifactImageStripView)?
+                .selectedKey = selectedKey
+        }
+    }
+
+    /// One step through `displayOrder`, clamped at both ends like the Finder.
+    /// From an open preview only artifacts with a file behind them count:
+    /// a selected link means zero preview items, and a panel with zero items
+    /// closes itself, so arrowing past a link would dismiss it mid-browse.
+    @discardableResult
+    private func moveSelection(step: Int, previewableOnly: Bool) -> Bool {
+        let candidates = displayOrder.filter { !previewableOnly || $0.resolvedPath != nil }
+        guard !candidates.isEmpty else { return true }
+        let target: Artifact
+        if let index = candidates.firstIndex(where: { $0.key == selectedKey }) {
+            target = candidates[min(max(index + step, 0), candidates.count - 1)]
+        } else {
+            target = step > 0 ? candidates[0] : candidates[candidates.count - 1]
+        }
+        select(key: target.key)
+        return true
+    }
+
+    override func layout() {
+        super.layout()
+        // Strips are as tall as their square tiles are wide.
+        guard tableView.bounds.width != lastTableWidth else { return }
+        lastTableWidth = tableView.bounds.width
+        let strips = displayedRows.indices.filter { if case .images = displayedRows[$0] { return true } else { return false } }
+        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(strips))
+    }
 
     // MARK: Kind filter chips
 
@@ -236,7 +316,7 @@ final class ArtifactsDrawerView: NSView {
     /// The single seam every chip change goes through: the mouse, the arrow
     /// keys in the drawer, and the arrow keys inside an open preview. Guarded
     /// on an actual change so re-picking the current chip costs nothing.
-    private func select(kindFilter next: ArtifactKindFilter) {
+    func select(kindFilter next: ArtifactKindFilter) {
         guard next != kindFilter else { return }
         kindFilter = next
         restyleChips()
@@ -315,17 +395,19 @@ final class ArtifactsDrawerView: NSView {
         // closed on its own. The tell was that the preview survived for varying
         // lengths of time depending on where in the refresh cycle it was
         // opened.
-        guard visible != previouslyRendered else { return }
-        previouslyRendered = visible
+        let rows = ArtifactRows.make(ArtifactSections.build(visible, now: Date(), calendar: .current),
+                                     calendar: .current)
+        guard rows != previouslyRendered else { return }
+        previouslyRendered = rows
+        displayedRows = rows
+        displayOrder = ArtifactRows.displayOrder(rows)
+        if let key = selectedKey, !displayOrder.contains(where: { $0.key == key }) { selectedKey = nil }
 
-        // Even a real change must not silently move the selection. Remember
-        // what was selected by identity, not by index: a new artifact
-        // arriving at the top shifts every index below it.
-        let selectedKey = selectedArtifact?.key
+        // Even a real change must not silently move the selection: it is
+        // held by key, not by row, since a new artifact arriving at the top
+        // shifts every row below it.
         tableView.reloadData()
-        if let selectedKey, let row = visible.firstIndex(where: { $0.key == selectedKey }) {
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        }
+        syncSelection()
         // A refresh can drop the artifact an open preview is showing (the
         // session moved on, or the filter now excludes it) even when the
         // selected INDEX doesn't change, which reloadData's own
@@ -418,34 +500,56 @@ extension ArtifactsDrawerView: NSTextFieldDelegate {
 // MARK: - NSTableViewDataSource / Delegate
 
 extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
-    func numberOfRows(in tableView: NSTableView) -> Int { visible.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { displayedRows.count }
 
-    /// AppKit's own highlight is a light fill, and every label in a row is
-    /// cream, so a selected row rendered as near-white on near-white and was
-    /// unreadable. Same shape as ScriptsPanel's row background: a dim panel
-    /// fill plus a cyan edge, cyan meaning "active" exactly as it does
-    /// everywhere else in this app.
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         ArtifactRowBackground()
     }
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let artifact = artifact(at: row) else { return nil }
-        let cell: ArtifactCellView
-        if let reused = tableView.makeView(withIdentifier: Self.cellID, owner: self) as? ArtifactCellView {
-            cell = reused
-        } else {
-            cell = ArtifactCellView()
-            cell.identifier = Self.cellID
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard displayedRows.indices.contains(row) else { return 48 }
+        switch displayedRows[row] {
+        case .header: return 26
+        case .images: return ArtifactImageStripView.height(forWidth: tableView.bounds.width > 100 ? tableView.bounds.width : bounds.width)
+        case .item: return 48
         }
-        cell.configure(artifact: artifact)
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        artifact(at: row) != nil
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard displayedRows.indices.contains(row) else { return nil }
+        switch displayedRows[row] {
+        case .header(let title):
+            let cell = reuse(Self.headerCellID) { ArtifactHeaderView() }
+            cell.title = title
+            return cell
+        case .images(let images):
+            let cell = reuse(Self.stripCellID) { ArtifactImageStripView() }
+            cell.onSelect = { [weak self] artifact in
+                guard let self else { return }
+                self.window?.makeFirstResponder(self.tableView)
+                self.select(key: artifact.key)
+            }
+            cell.onOpen = { ArtifactActions.open($0) }
+            cell.configure(images: images, selectedKey: selectedKey)
+            return cell
+        case .item(let artifact):
+            let cell = reuse(Self.cellID) { ArtifactCellView() }
+            cell.configure(artifact: artifact)
+            return cell
+        }
+    }
+
+    private func reuse<Cell: NSView>(_ id: NSUserInterfaceItemIdentifier, make: () -> Cell) -> Cell {
+        if let reused = tableView.makeView(withIdentifier: id, owner: self) as? Cell { return reused }
+        let cell = make()
+        cell.identifier = id
         return cell
     }
 
-    /// Drag a row out to the Finder, the Desktop, a mail composer, Slack.
-    /// The real file goes, not a reference to it. This is the action that
-    /// removes the original round trip entirely: no more asking Claude to
-    /// copy something to the Desktop just to reach it.
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
         guard let artifact = artifact(at: row) else { return nil }
         if let path = artifact.resolvedPath { return URL(fileURLWithPath: path) as NSURL }
@@ -463,6 +567,11 @@ extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
     /// drawer's whole promise is showing the right file, so this is the
     /// gesture that most needs the panel told to catch up.
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !syncingSelection else { return }
+        if let artifact = artifact(at: tableView.selectedRow) {
+            selectedKey = artifact.key
+            syncSelection()
+        }
         reloadPreviewIfOpen()
     }
 }
@@ -475,13 +584,23 @@ extension ArtifactsDrawerView: NSMenuDelegate, ArtifactMenuTarget {
     /// selecting it keeps the two in agreement.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = tableView.clickedRow
-        guard let artifact = artifact(at: row) else { return }
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        guard let artifact = artifactUnderClick() else { return }
+        select(key: artifact.key)
         for item in ArtifactActions.menu(for: artifact, target: self).items {
             menu.addItem(item.copy() as! NSMenuItem)
         }
         for item in menu.items { item.target = self }
+    }
+
+    /// The artifact a right click landed on: a row's, or the thumbnail under
+    /// the pointer in a strip.
+    private func artifactUnderClick() -> Artifact? {
+        let row = tableView.clickedRow
+        if let artifact = artifact(at: row) { return artifact }
+        guard let strip = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ArtifactImageStripView,
+              let window
+        else { return nil }
+        return strip.artifact(at: strip.convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 
     func menuOpen() { if let a = selectedArtifact { ArtifactActions.open(a) } }
@@ -597,37 +716,12 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
         guard event?.type == .keyDown else { return false }
         switch event.keyCode {
-        case 125: return selectPreviewableRow(step: 1)      // Down
-        case 126: return selectPreviewableRow(step: -1)     // Up
+        case 125: return moveSelection(step: 1, previewableOnly: true)      // Down
+        case 126: return moveSelection(step: -1, previewableOnly: true)     // Up
         case 124: return stepPreviewKindFilter(direction: 1)   // Right
         case 123: return stepPreviewKindFilter(direction: -1)  // Left
         default: return false
         }
-    }
-
-    /// Moves the selection to the next row that QuickLook can actually show,
-    /// skipping link rows rather than stopping on one: a selected link means
-    /// zero preview items, and a panel with zero items closes itself, so
-    /// arrowing past a link would dismiss the preview mid-browse.
-    ///
-    /// Clamps at both ends instead of wrapping, matching the Finder.
-    @discardableResult
-    private func selectPreviewableRow(step: Int) -> Bool {
-        let rows = visible.indices.filter { visible[$0].resolvedPath != nil }
-        guard !rows.isEmpty else { return true }
-        let target: Int
-        if let position = rows.firstIndex(of: tableView.selectedRow) {
-            target = rows[min(max(position + step, 0), rows.count - 1)]
-        } else {
-            // No selection, or one sitting on a link: enter the list from the
-            // end the arrow came from.
-            target = step > 0 ? rows[0] : rows[rows.count - 1]
-        }
-        tableView.selectRowIndexes(IndexSet(integer: target), byExtendingSelection: false)
-        tableView.scrollRowToVisible(target)
-        // The selection change is what refreshes the panel, through
-        // `tableViewSelectionDidChange`. Nothing to do here.
-        return true
     }
 
     /// Steps the chips from inside an open preview, counting only artifacts
@@ -643,7 +737,7 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
         // in both chips stays on screen and the preview does not flicker.
         // When it is gone, start at the top of the new chip rather than
         // leaving the panel with nothing.
-        if selectedArtifact?.resolvedPath == nil { selectPreviewableRow(step: 1) }
+        if selectedArtifact?.resolvedPath == nil { moveSelection(step: 1, previewableOnly: true) }
         return true
     }
 
@@ -659,18 +753,15 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// being needed.
     func previewPanel(_ panel: QLPreviewPanel!, sourceFrameOnScreenFor item: QLPreviewItem!) -> NSRect {
         guard let url = item as? URL ?? (item as? NSURL) as URL?,
-              let row = previewRowInTable(forPath: url.path),
+              let artifact = displayOrder.first(where: { $0.resolvedPath == url.path }),
+              let row = row(showing: artifact.key),
               let window = tableView.window
         else { return .zero }
-        let inWindow = tableView.convert(tableView.rect(ofRow: row), to: nil)
-        return window.convertToScreen(inWindow)
-    }
-
-    /// Row index in the TABLE for a previewed path. Looked up by path rather
-    /// than assumed to be the selected row: the panel's index space is its
-    /// own, and a filter change can reorder the table under it.
-    private func previewRowInTable(forPath path: String) -> Int? {
-        visible.firstIndex { $0.resolvedPath == path }
+        let strip = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ArtifactImageStripView
+        if let strip, let tile = strip.tileFrame(for: artifact.key) {
+            return window.convertToScreen(strip.convert(tile, to: nil))
+        }
+        return window.convertToScreen(tableView.convert(tableView.rect(ofRow: row), to: nil))
     }
 
     /// The shared panel is process-wide, but this app runs TWO independent
@@ -733,6 +824,9 @@ private final class ArtifactCellView: NSTableCellView {
     private let thumb = NSImageView(frame: .zero)
     private let nameLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
+    /// Shown while the pointer is over a row with a file or folder behind it.
+    private let revealButton = NSButton(title: "Afficher dans le Finder", target: nil, action: nil)
+    private var artifact: Artifact?
     /// Bumped on every configure so a thumbnail that arrives after the cell
     /// was recycled for a different artifact is dropped instead of drawn on
     /// top of the wrong row.
@@ -763,10 +857,21 @@ private final class ArtifactCellView: NSTableCellView {
         detailLabel.refusesFirstResponder = true
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        revealButton.bezelStyle = .inline
+        revealButton.controlSize = .small
+        revealButton.font = .systemFont(ofSize: 10.5)
+        revealButton.target = self
+        revealButton.action = #selector(revealTapped)
+        revealButton.isHidden = true
+        revealButton.translatesAutoresizingMaskIntoConstraints = false
+
         addSubview(thumb)
         addSubview(nameLabel)
         addSubview(detailLabel)
+        addSubview(revealButton)
         NSLayoutConstraint.activate([
+            revealButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
+            revealButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             thumb.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
             thumb.centerYAnchor.constraint(equalTo: centerYAnchor),
             thumb.widthAnchor.constraint(equalToConstant: 40),
@@ -783,7 +888,28 @@ private final class ArtifactCellView: NSTableCellView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        revealButton.isHidden = artifact?.resolvedPath == nil
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        revealButton.isHidden = true
+    }
+
+    @objc private func revealTapped() {
+        if let artifact { ArtifactActions.revealInFinder(artifact) }
+    }
+
     func configure(artifact: Artifact) {
+        self.artifact = artifact
+        revealButton.isHidden = true
         generation += 1
         let token = generation
 
@@ -803,17 +929,9 @@ private final class ArtifactCellView: NSTableCellView {
         thumb.image = NSWorkspace.shared.icon(forFile: path)
         guard artifact.kind == .image || artifact.kind == .file else { return }
 
-        let request = QLThumbnailGenerator.Request(
-            fileAt: URL(fileURLWithPath: path),
-            size: CGSize(width: 80, height: 80),
-            scale: window?.backingScaleFactor ?? 2,
-            representationTypes: .thumbnail)
-        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] rep, _ in
-            guard let rep else { return }
-            DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.thumb.image = rep.nsImage
-            }
+        requestThumbnail(path: path, side: 80, scale: window?.backingScaleFactor ?? 2) { [weak self] image in
+            guard let self, self.generation == token else { return }
+            self.thumb.image = image
         }
     }
 }
@@ -833,5 +951,185 @@ private final class ArtifactRowBackground: NSTableRowView {
         let accent = NSRect(x: body.minX, y: body.minY + 3, width: 2.5, height: body.height - 6)
         OpusTheme.cyan.withAlphaComponent(0.9).setFill()
         NSBezierPath(roundedRect: accent, xRadius: 1.25, yRadius: 1.25).fill()
+    }
+}
+
+/// Hands the up and down arrows to the drawer, which walks thumbnails as well
+/// as rows; everything else is the table's.
+private final class ArtifactTableView: NSTableView {
+    var onVerticalArrow: ((Int) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 125 where onVerticalArrow?(1) == true: return     // Down
+        case 126 where onVerticalArrow?(-1) == true: return    // Up
+        default: super.keyDown(with: event)
+        }
+    }
+}
+
+/// A moment's title ("Dernière heure", "Hier"…), quiet small capitals.
+private final class ArtifactHeaderView: NSTableCellView {
+    private let label = NSTextField(labelWithString: "")
+
+    var title: String = "" {
+        didSet {
+            label.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
+                .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                .foregroundColor: OpusTheme.cream(0.45),
+                .kern: 0.4,
+            ])
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+}
+
+/// Up to three images side by side, square, filling the row's width.
+private final class ArtifactImageStripView: NSTableCellView {
+    static let gap: CGFloat = OpusTheme.controlGap
+
+    static func tileSide(forWidth width: CGFloat) -> CGFloat {
+        let columns = CGFloat(ArtifactRows.imagesPerRow)
+        return max(40, floor((width - 2 * OpusTheme.insetPanel - (columns - 1) * gap) / columns))
+    }
+
+    static func height(forWidth width: CGFloat) -> CGFloat { tileSide(forWidth: width) + gap }
+
+    var onSelect: ((Artifact) -> Void)?
+    var onOpen: ((Artifact) -> Void)?
+    var selectedKey: String? {
+        didSet { tiles.forEach { $0.isSelected = $0.artifact != nil && $0.artifact?.key == selectedKey } }
+    }
+    private let tiles = (0..<ArtifactRows.imagesPerRow).map { _ in ArtifactTileView() }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        for tile in tiles {
+            tile.onSelect = { [weak self] in self?.onSelect?($0) }
+            tile.onOpen = { [weak self] in self?.onOpen?($0) }
+            addSubview(tile)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func configure(images: [Artifact], selectedKey: String?) {
+        for (index, tile) in tiles.enumerated() {
+            tile.artifact = images.indices.contains(index) ? images[index] : nil
+            tile.isHidden = tile.artifact == nil
+        }
+        self.selectedKey = selectedKey
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let side = Self.tileSide(forWidth: bounds.width)
+        for (index, tile) in tiles.enumerated() {
+            tile.frame = NSRect(x: OpusTheme.insetPanel + CGFloat(index) * (side + Self.gap),
+                                y: (bounds.height - side) / 2, width: side, height: side)
+        }
+    }
+
+    func artifact(at point: NSPoint) -> Artifact? {
+        tiles.first { !$0.isHidden && $0.frame.contains(point) }?.artifact
+    }
+
+    func tileFrame(for key: String) -> NSRect? {
+        tiles.first { $0.artifact?.key == key }?.frame
+    }
+}
+
+/// One image of a strip: the thumbnail cropped to a square, its name over the
+/// bottom edge. A click selects, a double click opens, a drag carries the file.
+private final class ArtifactTileView: NSView, NSDraggingSource {
+    var onSelect: ((Artifact) -> Void)?
+    var onOpen: ((Artifact) -> Void)?
+    var isSelected = false { didSet { layer?.borderWidth = isSelected ? 2 : 0 } }
+    var artifact: Artifact? { didSet { if artifact != oldValue { reload() } } }
+
+    private let nameLabel = NSTextField(labelWithString: "")
+    private var generation = 0
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        layer?.masksToBounds = true
+        layer?.contentsGravity = .resizeAspectFill
+        layer?.backgroundColor = OpusTheme.cream(0.06).cgColor
+        layer?.borderColor = OpusTheme.cyan.cgColor
+
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.8)
+        shadow.shadowBlurRadius = 2
+        shadow.shadowOffset = NSSize(width: 0, height: -1)
+        nameLabel.font = .systemFont(ofSize: 9.5, weight: .medium)
+        nameLabel.textColor = .white
+        nameLabel.shadow = shadow
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(nameLabel)
+        NSLayoutConstraint.activate([
+            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -5),
+            nameLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func reload() {
+        generation += 1
+        let token = generation
+        nameLabel.stringValue = artifact?.displayName ?? ""
+        layer?.contents = nil
+        guard let path = artifact?.resolvedPath else { return }
+        layer?.contents = NSWorkspace.shared.icon(forFile: path)
+        requestThumbnail(path: path, side: 240, scale: window?.backingScaleFactor ?? 2) { [weak self] image in
+            guard let self, self.generation == token else { return }
+            self.layer?.contents = image
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let artifact else { return }
+        if event.clickCount >= 2 { onOpen?(artifact) } else { onSelect?(artifact) }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let path = artifact?.resolvedPath else { return }
+        let item = NSDraggingItem(pasteboardWriter: URL(fileURLWithPath: path) as NSURL)
+        item.setDraggingFrame(bounds, contents: layer?.contents)
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+
+    func draggingSession(_ session: NSDraggingSession,
+                         sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .outsideApplication ? .copy : []
+    }
+}
+
+/// Asks QuickLook for a thumbnail and hands it back on the main queue.
+/// QuickLook runs out of process and fails silently, so the caller keeps the
+/// workspace icon it already shows and this only ever upgrades it.
+private func requestThumbnail(path: String, side: CGFloat, scale: CGFloat,
+                              _ done: @escaping (NSImage) -> Void) {
+    let request = QLThumbnailGenerator.Request(
+        fileAt: URL(fileURLWithPath: path),
+        size: CGSize(width: side, height: side),
+        scale: scale,
+        representationTypes: .thumbnail)
+    QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { rep, _ in
+        guard let rep else { return }
+        DispatchQueue.main.async { done(rep.nsImage) }
     }
 }
