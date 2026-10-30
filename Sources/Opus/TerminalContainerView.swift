@@ -934,7 +934,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// one on screen at once; other tabs are hidden and out of scope) for
     /// the one containing `windowPoint`, read the terminal rows around the
     /// click, try to resolve a file reference, and open it if the file
-    /// actually exists. Returns `true` only when something was opened —
+    /// actually exists, or else a web address written without its scheme.
+    /// Returns `true` only when something was opened —
     /// that's what tells the installing monitor whether to swallow the
     /// click (suppress selection) or let it fall through to SwiftTerm.
     private func handleCommandClick(at windowPoint: NSPoint) -> Bool {
@@ -950,7 +951,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let fm = FileManager.default
             guard let found = PathDetector.resolve(rows: hit.rows, clickRow: hit.row, clickColumn: hit.col,
                                                    cwd: cwd, exists: { fm.fileExists(atPath: $0) })
-            else { return false }
+            else {
+                // Nothing on disk: a web address without its scheme, which
+                // SwiftTerm would block as a missing relative path.
+                guard let url = WebAddress.at(line: hit.rows[hit.row], clickColumn: hit.col) else { return false }
+                NSWorkspace.shared.open(url)
+                return true
+            }
             var isDirectory: ObjCBool = false
             _ = fm.fileExists(atPath: found.path, isDirectory: &isDirectory)
             open(Self.clickTarget(path: found.path, line: found.line, isDirectory: isDirectory.boolValue))
