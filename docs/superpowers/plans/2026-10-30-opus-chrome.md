@@ -15,7 +15,7 @@
 - Aucun tiret cadratin, dans aucun contenu : code, commentaires, textes d'interface, messages de commit.
 - Textes d'interface nouveaux en français (« contexte », « semaine », « mémoire », « Afficher dans le Finder », « Dernière heure »…), code et commentaires en anglais, densité de commentaires comme le code voisin.
 - Cible macOS 13 : AppKit garde `clipsToBounds = true` par défaut sur toute vue ; toute vue qui doit déborder le dit (`if #available(macOS 14, *) { clipsToBounds = false }`). Symboles SF disponibles sur macOS 13 uniquement.
-- Le terminal ne change jamais de largeur à l'ouverture d'un panneau (règle de `b427c28`). Changer de disposition dans les réglages peut le redimensionner une fois.
+- Le terminal ne change jamais de largeur à l'ouverture d'un panneau (règle de `f9e5e6c`). Changer de disposition dans les réglages peut le redimensionner une fois.
 - Raccourcis inchangés : Cmd+Shift+C (Copier), Cmd+Shift+A (Artifacts), raccourci global du trousseau (`SecretsPanel.shared.toggle()`), Cmd+T (`spawnNewTab()`).
 - Points d'activité des onglets : couleurs `OpusTheme.activityColor` inchangées.
 - Couleur réservée aux états qui demandent l'attention (seuils ambre puis rouge, points d'activité). Icônes monochromes `OpusTheme.cream`.

@@ -50,7 +50,7 @@ Aujourd'hui, de haut en bas :
 
 - Un élément d'interface qui recouvre le texte du terminal en permanence.
 - De la couleur sans signification (l'épingle bleue et le bouclier orange d'aujourd'hui). La couleur reste réservée à un état qui demande l'attention : seuils de contexte et d'usage (ambre puis rouge), points d'activité des onglets.
-- Un panneau qui redimensionne le terminal (règle posée par `b427c28` : Claude Code répète du texte quand la largeur change).
+- Un panneau qui redimensionne le terminal (règle posée par `f9e5e6c` : Claude Code répète du texte quand la largeur change).
 - Un geste qui gêne le défilement vertical ou la sélection de texte.
 
 ## Contraintes
