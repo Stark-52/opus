@@ -299,13 +299,25 @@ final class ArtifactsDrawerView: NSView {
             previous = button
         }
         // `lessThanOrEqualTo` rather than `equalTo`: this only guarantees the
-        // row never overflows chipRow's bounds. It does not by itself
-        // guarantee nothing clips — see the width computation in the task
-        // report, which confirms the five titles fit with room to spare.
+        // row never overflows chipRow's bounds. That nothing clips is
+        // DrawerGeometry.minimumWidth's job, held to `chipRowWidth()` by a
+        // test.
         if let last = previous {
             last.trailingAnchor.constraint(lessThanOrEqualTo: chipRow.trailingAnchor).isActive = true
         }
         restyleChips()
+    }
+
+    /// The chip row's natural width: every title at the chips' font, with
+    /// the gaps between them.
+    static func chipRowWidth() -> CGFloat {
+        let widths = ArtifactKindFilter.allCases.map { filter -> CGFloat in
+            let button = NSButton(title: filter.title, target: nil, action: nil)
+            button.isBordered = false
+            button.font = .systemFont(ofSize: 10)
+            return button.fittingSize.width
+        }
+        return widths.reduce(0, +) + CGFloat(max(0, widths.count - 1)) * OpusTheme.controlGap
     }
 
     @objc private func chipTapped(_ sender: NSButton) {
@@ -566,13 +578,22 @@ extension ArtifactsDrawerView: NSTableViewDataSource, NSTableViewDelegate {
     /// previous file while the table shows a different row selected: the
     /// drawer's whole promise is showing the right file, so this is the
     /// gesture that most needs the panel told to catch up.
+    /// The table's own selection moved (a click, the keyboard): a row's
+    /// artifact becomes the selection, and a click in the empty space below
+    /// the list clears it, as the highlight already shows.
+    func tableSelectionChanged(toRow row: Int) {
+        if let artifact = artifact(at: row) {
+            selectedKey = artifact.key
+        } else if row < 0 {
+            selectedKey = nil
+        }
+        syncSelection()
+        reloadPreviewIfOpen()
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard !syncingSelection else { return }
-        if let artifact = artifact(at: tableView.selectedRow) {
-            selectedKey = artifact.key
-            syncSelection()
-        }
-        reloadPreviewIfOpen()
+        tableSelectionChanged(toRow: tableView.selectedRow)
     }
 }
 

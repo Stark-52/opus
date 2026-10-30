@@ -22,7 +22,9 @@ public enum DrawerGeometry {
 
     /// Below this a row's name, its parent directory and a 40pt thumbnail
     /// stop coexisting and the drawer is worse than closed.
-    public static let minimumWidth: CGFloat = 220
+    /// It is also the narrowest width the Artifacts chip row (six titles)
+    /// fits in.
+    public static let minimumWidth: CGFloat = 244
     /// Above this the drawer is taking more of the window than the terminal
     /// it is meant to annotate.
     public static let maximumWidth: CGFloat = 640

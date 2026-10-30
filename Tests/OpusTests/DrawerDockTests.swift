@@ -166,4 +166,16 @@ final class DrawerDockTests: XCTestCase {
         firstSlideEnd?()
         XCTAssertFalse(copyDrawer.isHidden, "the drawer under the fingers stays visible")
     }
+
+    func testAClickDuringASwipeWins() {
+        dock.beginInteractive(.reply)
+        dock.setInteractiveProgress(0.5)
+        dock.show(.artifacts)
+        settle()
+        dock.setInteractiveProgress(0.9)
+        dock.endInteractive(open: true)
+        settle()
+        XCTAssertEqual(dock.occupant, .artifacts)
+        XCTAssertEqual(copyDrawer.frame.minX, -300)
+    }
 }

@@ -1041,18 +1041,30 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         return (col, rowOnScreen)
     }
 
+    /// A scroll event's phases as a swipe phase: momentum first, then the
+    /// gesture's own; nil for a wheel (no phase) or a gesture that has not
+    /// begun moving (`.mayBegin`).
+    static func swipePhase(phase: NSEvent.Phase, momentumPhase: NSEvent.Phase) -> DrawerSwipeTracker.Phase? {
+        if !momentumPhase.isEmpty { return .momentum }
+        if phase.contains(.began) { return .began }
+        if phase.contains(.changed) { return .changed }
+        if phase.contains(.ended) { return .ended }
+        if phase.contains(.cancelled) { return .cancelled }
+        return nil
+    }
+
     /// One scroll event of a possible drawer swipe; true when it was the
     /// swipe's and must not reach the terminal. A gesture counts only if it
     /// starts over the terminal area, drawers included.
     private func handleSwipe(_ event: NSEvent) -> Bool {
         guard let dock = drawerDock else { return false }
-        let phase: DrawerSwipeTracker.Phase
-        if !event.momentumPhase.isEmpty { phase = .momentum }
-        else if event.phase.contains(.began) { phase = .began }
-        else if event.phase.contains(.changed) { phase = .changed }
-        else if event.phase.contains(.ended) { phase = .ended }
-        else if event.phase.contains(.cancelled) { phase = .cancelled }
-        else { return false }
+        guard let phase = Self.swipePhase(phase: event.phase, momentumPhase: event.momentumPhase) else { return false }
+        if phase == .began, let lost = swipeTarget {
+            // The previous swipe never reported its end: put its drawer back
+            // where it was before starting over.
+            swipeTarget = nil
+            dock.endInteractive(open: dock.occupant == lost)
+        }
         if phase == .began, !terminalArea.bounds.contains(terminalArea.convert(event.locationInWindow, from: nil)) {
             // Forget the previous gesture, so its momentum rule cannot leak
             // into this one.

@@ -132,7 +132,11 @@ final class DrawerDock {
     }
 
     func show(_ requested: Occupant) {
-        guard requested != occupant else { return }
+        // A click or a shortcut during a swipe wins: the swipe's remaining
+        // events move nothing, and a drawer it had half pulled goes back.
+        let wasSwiping = interactive != nil
+        interactive = nil
+        guard requested != occupant || wasSwiping else { return }
         settle(to: requested)
     }
 

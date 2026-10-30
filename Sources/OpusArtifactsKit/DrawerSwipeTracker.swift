@@ -49,6 +49,10 @@ public struct DrawerSwipeTracker {
     private var state: State = .idle
     private var sumX: CGFloat = 0
     private var sumY: CGFloat = 0
+    /// Travel on each axis, direction aside: a scroll that reverses within
+    /// its first points has still moved vertically.
+    private var travelX: CGFloat = 0
+    private var travelY: CGFloat = 0
     /// The last two (time, sumX) samples, for the release velocity.
     private var samples: [(time: TimeInterval, x: CGFloat)] = []
 
@@ -74,6 +78,8 @@ public struct DrawerSwipeTracker {
             state = .undecided
             sumX = 0
             sumY = 0
+            travelX = 0
+            travelY = 0
             samples = []
             return track(fingerDX, dy, time, open, width)
 
@@ -110,11 +116,13 @@ public struct DrawerSwipeTracker {
                                 _ width: (DrawerGeometry.Occupant) -> CGFloat) -> Output {
         sumX += dx
         sumY += dy
+        travelX += abs(dx)
+        travelY += abs(dy)
         samples = Array((samples + [(time, sumX)]).suffix(2))
 
         if case .undecided = state {
-            guard max(abs(sumX), abs(sumY)) >= Self.axisLockDistance else { return .passThrough }
-            guard abs(sumX) >= Self.horizontalRatio * abs(sumY) else {
+            guard max(travelX, travelY) >= Self.axisLockDistance else { return .passThrough }
+            guard travelX >= Self.horizontalRatio * travelY else {
                 state = .notOurs
                 return .passThrough
             }

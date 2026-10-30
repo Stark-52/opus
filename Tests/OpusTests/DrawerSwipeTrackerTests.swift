@@ -96,4 +96,11 @@ final class DrawerSwipeTrackerTests: XCTestCase {
         feed(.changed, 20, at: 0.05)
         XCTAssertEqual(feed(.ended, 0, at: 1.05), .finish(.reply, open: false))
     }
+
+    func testAVerticalScrollThatReversesStaysVertical() {
+        feed(.began, 0, at: 0)
+        feed(.changed, 0, 6, at: 0.02)
+        XCTAssertEqual(feed(.changed, 0, -5, at: 0.04), .passThrough)
+        XCTAssertEqual(feed(.changed, 9, 0, at: 0.06), .passThrough, "the reversal still counted as vertical travel")
+    }
 }
