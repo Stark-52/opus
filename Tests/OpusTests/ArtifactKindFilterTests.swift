@@ -39,6 +39,29 @@ final class ArtifactKindFilterTests: XCTestCase {
         XCTAssertEqual(ArtifactKindFilter.apply(.folders, to: sample).map(\.displayName), ["d"])
     }
 
+    func testAllLeavesCodeOut() {
+        let mixed = [make(.file, "doc.md"), make(.file, "main.swift"), make(.image, "shot.png")]
+        XCTAssertEqual(ArtifactKindFilter.apply(.all, to: mixed).map(\.displayName), ["doc.md", "shot.png"])
+    }
+
+    func testFilesLeavesCodeOut() {
+        let mixed = [make(.file, "doc.md"), make(.file, "main.swift"), make(.image, "shot.png")]
+        XCTAssertEqual(ArtifactKindFilter.apply(.files, to: mixed).map(\.displayName), ["doc.md"])
+    }
+
+    func testCodeKeepsOnlyCode() {
+        let mixed = [make(.file, "doc.md"), make(.file, "main.swift"), make(.image, "shot.png")]
+        XCTAssertEqual(ArtifactKindFilter.apply(.code, to: mixed).map(\.displayName), ["main.swift"])
+    }
+
+    func testEveryArtifactFallsInExactlyOneOfFilesImagesLinksFoldersCode() {
+        let mixed = sample + [make(.file, "Package.swift"), make(.file, "config.yml")]
+        for artifact in mixed {
+            let homes = [ArtifactKindFilter.files, .images, .links, .folders, .code].filter { $0.matches(artifact) }
+            XCTAssertEqual(homes.count, 1, artifact.displayName)
+        }
+    }
+
     func testEveryChipPartitionsTheListExactlyOnce() {
         // Files plus Images plus Links plus Folders must reconstruct All,
         // with nothing counted twice and nothing missing. This is the
@@ -62,7 +85,7 @@ final class ArtifactKindFilterTests: XCTestCase {
 
     func testTitlesAreStableAndEnglish() {
         XCTAssertEqual(ArtifactKindFilter.allCases.map(\.title),
-                       ["All", "Files", "Images", "Links", "Folders"])
+                       ["All", "Files", "Images", "Links", "Folders", "Code"])
     }
 
     // MARK: Stepping the chips with the arrow keys

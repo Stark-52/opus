@@ -181,9 +181,10 @@ final class ArtifactsDrawerView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    /// "Artifacts N". Pure formatter, same shape as StatusRailView.readoutText.
+    /// "Artifacts N", N being what the "All" chip shows: code files have
+    /// their own chip and stay out of the count.
     static func headerText(artifacts: [Artifact]) -> String {
-        "Artifacts \(artifacts.count)"
+        "Artifacts \(ArtifactKindFilter.apply(.all, to: artifacts).count)"
     }
 
     func artifact(at row: Int) -> Artifact? {

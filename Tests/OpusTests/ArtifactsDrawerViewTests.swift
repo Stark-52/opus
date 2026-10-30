@@ -15,4 +15,9 @@ final class ArtifactsDrawerViewTests: XCTestCase {
         XCTAssertEqual(ArtifactsDrawerView.headerText(artifacts: []), "Artifacts 0")
         XCTAssertEqual(ArtifactsDrawerView.headerText(artifacts: [file(1), file(2)]), "Artifacts 2")
     }
+
+    func testHeaderCountsWhatAllShowsSoCodeIsLeftOut() {
+        let code = Artifact(key: "/r/main.swift", kind: .file, resolvedPath: "/r/main.swift", urlString: nil)
+        XCTAssertEqual(ArtifactsDrawerView.headerText(artifacts: [file(1), code]), "Artifacts 1")
+    }
 }

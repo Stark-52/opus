@@ -9,11 +9,15 @@
 // `files` deliberately excludes images. Two chips whose sets overlapped
 // would show counts that do not add up to the whole, and the partition
 // test below is what keeps that honest.
+//
+// `code` (see ArtifactCode) sits outside that partition: "All" and "Files"
+// leave source and configuration files out, so they never crowd the files
+// a person came for, and the "Code" chip is the one place they show.
 
 import Foundation
 
 public enum ArtifactKindFilter: String, CaseIterable, Equatable, Sendable {
-    case all, files, images, links, folders
+    case all, files, images, links, folders, code
 
     public var title: String {
         switch self {
@@ -22,21 +26,23 @@ public enum ArtifactKindFilter: String, CaseIterable, Equatable, Sendable {
         case .images: return "Images"
         case .links: return "Links"
         case .folders: return "Folders"
+        case .code: return "Code"
         }
     }
 
     public func matches(_ artifact: Artifact) -> Bool {
         switch self {
-        case .all: return true
-        case .files: return artifact.kind == .file
+        case .all: return !ArtifactCode.isCode(artifact)
+        case .files: return artifact.kind == .file && !ArtifactCode.isCode(artifact)
         case .images: return artifact.kind == .image
         case .links: return artifact.kind == .url
         case .folders: return artifact.kind == .folder
+        case .code: return ArtifactCode.isCode(artifact)
         }
     }
 
     public static func apply(_ filter: ArtifactKindFilter, to artifacts: [Artifact]) -> [Artifact] {
-        filter == .all ? artifacts : artifacts.filter { filter.matches($0) }
+        artifacts.filter { filter.matches($0) }
     }
 
     /// The next chip left or right of `current`, wrapping around the row.
