@@ -56,7 +56,7 @@ Opus.app
 ├── StatusRailView (v1.5) — bottom status rail replacing the old top-right "ctx NN%" label + PaneActivityDot + the 4pt ContextMeterBar strip
 │     └── context-usage gauge + the active tab's activity dot + a "NN% · NNk" readout, wired by TerminalContainerView.applyContextMeterResult
 │
-├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text
+├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text, across wrapped rows and spaces in names
 │     └── TerminalContainerView resolves the result against cwd and opens it via `OpusPreferences.editorCommand`
 │
 ├── TerminalContainerView (NSView)

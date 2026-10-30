@@ -120,4 +120,59 @@ final class PathDetectorTests: XCTestCase {
         XCTAssertEqual(result?.path, "/Users/dev/project/résumé.pdf")
         XCTAssertNil(result?.line)
     }
+
+    // MARK: resolve — the rows around the click, checked on disk
+
+    func testAPathWrappedAtTheSpaceInItsNameIsFoundFromEitherRow() {
+        // Claude Code wraps its own output: the space in "Mes Images" became
+        // the row break, and the next row is indented like its paragraph.
+        let folder = NSHomeDirectory() + "/Documents/Mes Images/export/2026-10-30"
+        let rows = [
+            "  Le rendu est dans ~/Documents/Mes",
+            "  Images/export/2026-10-30/.",
+            "",
+        ]
+        let exists: (String) -> Bool = { $0 == folder }
+        let onSecondRow = PathDetector.resolve(rows: rows, clickRow: 1, clickColumn: 8, cwd: cwd, exists: exists)
+        XCTAssertEqual(onSecondRow?.path, folder)
+        let onFirstRow = PathDetector.resolve(rows: rows, clickRow: 0, clickColumn: 25, cwd: cwd, exists: exists)
+        XCTAssertEqual(onFirstRow?.path, folder)
+    }
+
+    func testAPathLongerThanARowIsJoinedWithoutASpaceAndBeatsTheFolderItPassesThrough() {
+        let file = "/Users/someone/projet/rendus/lot0/turntable/frame.png"
+        let rows = ["  /Users/someone/projet/rendus/lot0/", "  turntable/frame.png:12"]
+        let exists: (String) -> Bool = { $0 == file || $0 == "/Users/someone/projet/rendus/lot0" }
+        let result = PathDetector.resolve(rows: rows, clickRow: 0, clickColumn: 10, cwd: cwd, exists: exists)
+        XCTAssertEqual(result?.path, file)
+        XCTAssertEqual(result?.line, 12)
+    }
+
+    func testANameWithSpacesOnOneRow() {
+        let file = "/Users/someone/Desktop/Capture d’écran 2026-10-30 à 21.28.57.png"
+        let line = "Voir (/Users/someone/Desktop/Capture d’écran 2026-10-30 à 21.28.57.png), puis"
+        let result = PathDetector.resolve(rows: [line], clickRow: 0, clickColumn: 60, cwd: cwd,
+                                          exists: { $0 == file })
+        XCTAssertEqual(result?.path, file)
+    }
+
+    func testTheClickedTokenAloneStillResolvesWithItsLineAndWithoutTheSentenceDot() {
+        let rows = ["The fix is in src/Foo.swift. Please check.", "Then (src/Bar.swift:3), done."]
+        let exists: (String) -> Bool = {
+            $0 == "/Users/dev/project/src/Foo.swift" || $0 == "/Users/dev/project/src/Bar.swift"
+        }
+        XCTAssertEqual(PathDetector.resolve(rows: rows, clickRow: 0, clickColumn: 18, cwd: cwd, exists: exists)?.path,
+                       "/Users/dev/project/src/Foo.swift")
+        let bar = PathDetector.resolve(rows: rows, clickRow: 1, clickColumn: 9, cwd: cwd, exists: exists)
+        XCTAssertEqual(bar?.path, "/Users/dev/project/src/Bar.swift")
+        XCTAssertEqual(bar?.line, 3)
+    }
+
+    func testNothingOnDiskOrABlankRowBetweenGivesNothing() {
+        let rows = ["  see ~/Documents/Mes", "", "  Images/export/"]
+        let folder = NSHomeDirectory() + "/Documents/Mes Images/export"
+        XCTAssertNil(PathDetector.resolve(rows: rows, clickRow: 2, clickColumn: 4, cwd: cwd, exists: { $0 == folder }))
+        XCTAssertNil(PathDetector.resolve(rows: rows, clickRow: 0, clickColumn: 5, cwd: cwd, exists: { _ in true }),
+                     "a click on a space names nothing")
+    }
 }

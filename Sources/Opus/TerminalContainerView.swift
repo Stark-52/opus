@@ -932,7 +932,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// Hit-test every visible pane in the ACTIVE tab (splits put more than
     /// one on screen at once; other tabs are hidden and out of scope) for
-    /// the one containing `windowPoint`, read the terminal line under the
+    /// the one containing `windowPoint`, read the terminal rows around the
     /// click, try to resolve a file reference, and open it if the file
     /// actually exists. Returns `true` only when something was opened —
     /// that's what tells the installing monitor whether to swallow the
@@ -945,48 +945,32 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let local = terminal.convert(windowPoint, from: nil)
             guard terminal.bounds.contains(local), reaches(terminal, at: windowPoint) else { continue }
 
-            guard let hit = resolvePathClick(in: terminal, at: local) else { return false }
+            guard let hit = Self.resolvePathClick(in: terminal, at: local) else { return false }
             let cwd = OpusPreferences.shared.workingDirectory
-            guard let candidate = PathDetector.extract(line: hit.text, clickColumn: hit.col, cwd: cwd)
-            else { return false }
-
-            // A bare file mention ending a sentence ("...in src/Foo.swift.
-            // Please check.") swallows the sentence-ending period into the
-            // token — '.' is a legitimate path character (dotfiles,
-            // extensions), so the scan can't tell it apart from one that
-            // isn't. If the primary candidate doesn't exist, retry once
-            // with trailing dots stripped before giving up. Line-number
-            // handling is untouched: a real `:line` citation never has a
-            // trailing dot in the first place (the suffix parse stops at
-            // the first non-digit), so this retry only ever fires for the
-            // no-line-number shape.
             let fm = FileManager.default
+            guard let found = PathDetector.resolve(rows: hit.rows, clickRow: hit.row, clickColumn: hit.col,
+                                                   cwd: cwd, exists: { fm.fileExists(atPath: $0) })
+            else { return false }
             var isDirectory: ObjCBool = false
-            if fm.fileExists(atPath: candidate.path, isDirectory: &isDirectory) {
-                open(Self.clickTarget(path: candidate.path, line: candidate.line, isDirectory: isDirectory.boolValue))
-                return true
-            }
-            if let stripped = PathDetector.trailingDotStripped(candidate.path),
-               fm.fileExists(atPath: stripped, isDirectory: &isDirectory) {
-                open(Self.clickTarget(path: stripped, line: candidate.line, isDirectory: isDirectory.boolValue))
-                return true
-            }
-            return false
+            _ = fm.fileExists(atPath: found.path, isDirectory: &isDirectory)
+            open(Self.clickTarget(path: found.path, line: found.line, isDirectory: isDirectory.boolValue))
+            return true
         }
         return false
     }
 
-    /// Maps a click already known to be inside `terminal`'s bounds to
-    /// (line text, column). Returns `nil` on any out-of-range math rather
-    /// than clamping here — PathDetector.extract does its own column
-    /// clamping against the LINE text it's given, but a column outside the
-    /// terminal's actual `cols`/`rows` grid means the click missed the
-    /// glyph area entirely (e.g. landed on the scroller strip) and there's
-    /// no line to read at all.
-    private func resolvePathClick(in terminal: TerminalView, at local: NSPoint) -> (text: String, col: Int)? {
-        guard let cell = Self.cell(in: terminal, at: local),
-              let text = terminal.visibleRowsText(cell.row..<(cell.row + 1)).first else { return nil }
-        return (text, cell.col)
+    /// Maps a click already known to be inside `terminal`'s bounds to the
+    /// rows around it, the clicked one's index among them and the column.
+    /// Two rows either side cover a path Claude Code wrapped onto a second or
+    /// third row. Returns `nil` when the column falls outside the terminal's
+    /// actual `cols`/`rows` grid: the click missed the glyph area entirely
+    /// (e.g. landed on the scroller strip) and there's no line to read.
+    static func resolvePathClick(in terminal: TerminalView, at local: NSPoint) -> (rows: [String], row: Int, col: Int)? {
+        guard let cell = Self.cell(in: terminal, at: local) else { return nil }
+        let around = max(0, cell.row - 2)..<min(terminal.terminalDimensions.rows, cell.row + 3)
+        let rows = terminal.visibleRowsText(around)
+        guard rows.count == around.count else { return nil }
+        return (rows, cell.row - around.lowerBound, cell.col)
     }
 
     /// The (column, on-screen row) of the cell under a point already known

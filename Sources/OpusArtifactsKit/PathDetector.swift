@@ -3,8 +3,10 @@
 // maximal run of "path-ish" characters around that column, parses an
 // optional trailing `:line` or `:line:col` suffix (col discarded — the
 // return type has nowhere to put it), and resolves the result against a
-// working directory. No FileManager, no AppKit — existence-checking and
-// opening are TerminalContainerView's job, not this one's.
+// working directory. `resolve` widens that to the rows around the click,
+// for paths Claude Code wrapped or that hold spaces, and leaves the disk
+// check to the `exists` closure it is given. No FileManager, no AppKit —
+// existence-checking and opening are TerminalContainerView's job.
 
 import Foundation
 
@@ -82,6 +84,103 @@ public enum PathDetector {
         }
         let joined = (cwd as NSString).appendingPathComponent(expanded)
         return (joined as NSString).standardizingPath
+    }
+
+    /// How many words either side of the clicked one a name can take in.
+    static let maxWordsAround = 6
+
+    /// The file or folder a Cmd+click means, read from the rows around it
+    /// (`rows[clickRow]` is the clicked one) and checked with `exists`.
+    /// Claude Code wraps its own output, so a path can run onto the next row,
+    /// broken at a space in a name ("Mes Images") or, when longer than a row,
+    /// mid-word, and the break does not say which; a name can also hold
+    /// spaces on one row. Every reading around the click is tried, longest
+    /// first, so a folder cut short at the break never wins over the file it
+    /// leads to; the clicked token alone, as `extract` reads it, comes last.
+    /// A blank row ends the search, as it ends a paragraph.
+    public static func resolve(rows: [String], clickRow: Int, clickColumn: Int, cwd: String,
+                               exists: (String) -> Bool) -> (path: String, line: Int?)? {
+        guard rows.indices.contains(clickRow) else { return nil }
+        let clicked = Array(rows[clickRow])
+        guard !clicked.isEmpty else { return nil }
+        let col = min(max(clickColumn, 0), clicked.count - 1)
+        guard isTokenChar(clicked[col]) else { return nil }
+
+        let isBlank = { (row: String) in row.allSatisfy(\.isWhitespace) }
+        var first = clickRow, last = clickRow
+        while first > 0, !isBlank(rows[first - 1]) { first -= 1 }
+        while last < rows.count - 1, !isBlank(rows[last + 1]) { last += 1 }
+
+        // Each word with what separates it from the one before: the spaces
+        // between them on a row, or nil for a row break.
+        var words: [(text: String, gap: String?)] = []
+        var clickedWord: Int?
+        for row in first...last {
+            let chars = Array(rows[row])
+            var start = 0
+            var previousEnd: Int?
+            while start < chars.count {
+                guard !chars[start].isWhitespace else { start += 1; continue }
+                var end = start
+                while end + 1 < chars.count, !chars[end + 1].isWhitespace { end += 1 }
+                if row == clickRow, (start...end).contains(col) { clickedWord = words.count }
+                words.append((String(chars[start...end]), previousEnd.map { String(chars[($0 + 1)..<start]) }))
+                previousEnd = end
+                start = end + 1
+            }
+        }
+        guard let k = clickedWord else { return nil }
+
+        var spans: [String] = []
+        for i in max(0, k - maxWordsAround)...k {
+            for j in k...min(words.count - 1, k + maxWordsAround) where j > i {
+                let breaks = ((i + 1)...j).filter { words[$0].gap == nil }
+                for spaced in 0..<(1 << breaks.count) {
+                    var text = words[i].text
+                    for m in (i + 1)...j {
+                        if let gap = words[m].gap {
+                            text += gap
+                        } else if let bit = breaks.firstIndex(of: m), spaced & (1 << bit) != 0 {
+                            text += " "
+                        }
+                        text += words[m].text
+                    }
+                    spans.append(text)
+                }
+            }
+        }
+        for span in spans.sorted(by: { $0.count > $1.count }) {
+            for reading in readings(of: span, cwd: cwd) where exists(reading.path) {
+                return reading
+            }
+        }
+
+        guard let own = extract(line: rows[clickRow], clickColumn: col, cwd: cwd) else { return nil }
+        if exists(own.path) { return own }
+        if let stripped = trailingDotStripped(own.path), exists(stripped) { return (stripped, own.line) }
+        return nil
+    }
+
+    /// What a stretch of text can name: without the punctuation wrapping it,
+    /// then also without a sentence-ending dot, each with its `:line` (and
+    /// `:col`) suffix split off.
+    private static func readings(of span: String, cwd: String) -> [(path: String, line: Int?)] {
+        var token = span
+        while let f = token.first, leadingWrap.contains(f) { token.removeFirst() }
+        while let l = token.last, trailingWrap.contains(l) { token.removeLast() }
+        var withoutDot = token
+        while let l = withoutDot.last, l == "." || trailingWrap.contains(l) { withoutDot.removeLast() }
+
+        return (withoutDot == token ? [token] : [token, withoutDot]).compactMap { text in
+            var name = text
+            var line: Int?
+            if let suffix = text.range(of: #":[0-9]+(:[0-9]+)?$"#, options: .regularExpression) {
+                name = String(text[..<suffix.lowerBound])
+                line = Int(text[suffix].dropFirst().prefix { $0 != ":" })
+            }
+            guard name.contains("/") || name.contains(".") else { return nil }
+            return (resolvePath(name, cwd: cwd), line)
+        }
     }
 
     /// A path candidate with sentence-ending dots removed, nil when unchanged.
