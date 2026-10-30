@@ -510,9 +510,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // One grabbable strip per drawer, pinned to its leading edge and
         // sized in points, installed AFTER both drawers so it sits above
         // them in z-order and wins the hit test. The drag reports a proposed
-        // width continuously and writes to preferences once, on mouse up:
-        // persisting every frame would fire the preferences-changed
-        // notification dozens of times per gesture.
+        // width continuously; on mouse up the terminal takes the drawer's
+        // width and preferences store it, once: persisting every frame would
+        // fire the preferences-changed notification dozens of times per
+        // gesture, and resizing the terminal every frame would make Claude
+        // Code redraw for each.
         for (occupant, view) in [(RightDockGeometry.Occupant.reply, drawer as NSView),
                                  (.artifacts, artifactsDrawerView as NSView)] {
             let handle = DrawerResizeHandle(
@@ -521,6 +523,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 },
                 commit: { [weak self] in
                     guard let self, let dock = self.rightDock else { return }
+                    dock.finishResize(for: occupant)
                     OpusPreferences.shared.setDrawerWidth(
                         dock.currentWidth(for: occupant), for: occupant)
                 })

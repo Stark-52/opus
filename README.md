@@ -45,6 +45,7 @@ Opus opens as a slide-down panel from the top of the active screen (or as a full
 - **Prompt history palette** (`Cmd+Shift+P`, v1.6) — fuzzy-search every prompt you've ever typed into Claude Code on this machine, any project or session, not just the active pane's scrollback. Enter inserts the picked prompt into the active pane without submitting it — you review and hit Return yourself, same feel as a paste.
 - **Send to Claude** (`Cmd+Ctrl+S`, v1.6) — global hotkey, works from anywhere: sends the clipboard (or Finder-selected file paths, same handling as `Cmd+V`) straight into the active Claude session without submitting it. The payload template is configurable in Settings (`opus.sendToClaudeTemplate`, default `{clipboard}`).
 - **Reply drawer** (`Cmd+Shift+C`, or the clipboard button in the top-right row): Claude's latest answer, read off the transcript and drawn formatted (headings, emphasis, lists, code, aligned tables), with a copy button on each block that shows on hover. A paragraph or a list copies as plain text, a code block as its code, a table as written, a heading as its whole section; "Tout copier" takes the whole answer. Commentary written between tool calls is left out, and while a turn is still working the previous answer stays up. Replaces the v1.6 task drawer, which never had anything to show.
+- **Drawers slide over the terminal**: opening, closing or dragging the edge of a right-hand drawer changes the terminal's width once (after the slide when it narrows, before it when it widens, on release for a drag), so Claude Code redraws once instead of for every frame of the animation, which used to leave stray rows in the scrollback.
 
 Note: multi-line pastes, drag-dropped Finder paths, and text delivered by the palette/hotkey above are now wrapped in bracketed-paste markers before reaching claude, so embedded newlines land as data instead of triggering an early submit (fixed in v1.6 — see Changelog).
 
@@ -135,7 +136,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
-- 2026-10-30: SwiftTerm 2.0 line (1.99.x): a row Claude Code rewrites no longer keeps the soft wrap of the text it replaced, which used to scatter the scrollback on a diagonal after a resize. Clicks on the bottom rows land on their row.
+- 2026-10-30: SwiftTerm 2.0 line (1.99.x): a row Claude Code rewrites no longer keeps the soft wrap of the text it replaced, which used to scatter the scrollback on a diagonal after a resize. Drawers resize the terminal once. Clicks on the bottom rows land on their row.
 - v1.6 (2026-08-12): prompt history palette, global send-to-Claude hotkey, task drawer, bracketed paste for multi-line input.
 - v1.5 (2026-08-12): visual harmonization — bottom status rail, one color per meaning, shared theme tokens.
 - v1.4.2 (2026-08-12): clickable Cmd+K rows, arrow-key search navigation with a match counter, a visible context readout.
