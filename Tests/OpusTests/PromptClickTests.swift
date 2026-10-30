@@ -110,3 +110,36 @@ final class PromptClickTerminalTests: XCTestCase {
         XCTAssertNil(PromptClick.keys(in: term, click: (col: 3, row: 0), allowVertical: true))
     }
 }
+
+/// Which cell a click lands on. A pane is rarely a whole number of rows
+/// tall: SwiftTerm draws each row at its font's cell height from the top and
+/// leaves the leftover strip at the bottom, so the input, drawn on the last
+/// rows, is where a cell height guessed from the view's own height drifts.
+final class PromptClickHitTests: XCTestCase {
+    private func cellSize() -> (width: CGFloat, height: CGFloat) {
+        let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
+        let term = view.getTerminal()
+        let optimal = view.getOptimalFrameSize()
+        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: view.scrollerStyle)
+        return ((optimal.width - scroller) / CGFloat(term.cols), optimal.height / CGFloat(term.rows))
+    }
+
+    func testTheLastRowAndColumnAreHitWhateverTheLeftoverStrip() throws {
+        let cell = cellSize()
+        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
+        let (cols, rows) = (60, 30)
+        let view = TerminalView(frame: NSRect(x: 0, y: 0,
+                                              width: scroller + cell.width * (CGFloat(cols) + 0.9),
+                                              height: cell.height * (CGFloat(rows) + 0.9)))
+        XCTAssertEqual(view.getTerminal().rows, rows)
+        XCTAssertEqual(view.getTerminal().cols, cols)
+
+        // The middle of the bottom-right cell, in the view's unflipped space.
+        let point = NSPoint(x: (CGFloat(cols) - 0.5) * cell.width,
+                            y: view.bounds.height - (CGFloat(rows) - 0.5) * cell.height)
+        let hit = try XCTUnwrap(TerminalContainerView.cell(in: view, at: point))
+
+        XCTAssertEqual(hit.row, rows - 1)
+        XCTAssertEqual(hit.col, cols - 1)
+    }
+}

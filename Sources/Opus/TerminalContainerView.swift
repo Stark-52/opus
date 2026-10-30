@@ -1354,29 +1354,25 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     /// The (column, on-screen row) of the cell under a point already known
     /// to be inside `terminal`. The arithmetic and its two traps (the
-    /// scroller strip, the unflipped view) are explained inline.
-    private static func cell(in terminal: TerminalView, at local: NSPoint) -> (col: Int, row: Int)? {
+    /// cell size, the unflipped view) are explained inline.
+    static func cell(in terminal: TerminalView, at local: NSPoint) -> (col: Int, row: Int)? {
         let term = terminal.getTerminal()
         let cols = term.cols
         let rows = term.rows
         guard cols > 0, rows > 0 else { return nil }
 
-        // MacTerminalView always reserves a fixed-width vertical scroller
-        // strip on the trailing edge — `cols` itself is computed elsewhere
-        // (Mac/MacTerminalView.swift's `getEffectiveWidth`) from
-        // `(frame.width - scrollerWidth) / cellWidth`, NOT `frame.width /
-        // cellWidth`. Replicating `frame.width / cols` here (the brief's
-        // literal suggestion) would understate the true cell width and
-        // drift every hit column left of the actual click as x grows —
-        // small in a narrow pane, several columns off near the right edge
-        // of a wide one. `scrollerWidth` itself isn't exposed by SwiftTerm,
-        // but it's just `NSScroller.scrollerWidth(for:scrollerStyle:)` (a
-        // plain AppKit API) with the same `.regular`/`.legacy` arguments
-        // MacTerminalView hardcodes, so it's reproducible from outside.
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
-        let textWidth = max(terminal.bounds.width - scrollerWidth, 1)
-        let cellWidth = textWidth / CGFloat(cols)
-        let cellHeight = terminal.bounds.height / CGFloat(rows)
+        // The cell size is the font's, not the view's size over the grid:
+        // SwiftTerm fits as many whole cells as it can and leaves the rest
+        // as a strip at the bottom and, beside its scroller, at the right.
+        // Dividing the view by the grid spreads that strip over every cell,
+        // and the error adds up to a whole row by the bottom rows, where
+        // Claude Code draws its input. `getOptimalFrameSize` is the grid at
+        // the real cell size plus the scroller strip SwiftTerm reserves,
+        // `NSScroller.scrollerWidth` for its `scrollerStyle`.
+        let optimal = terminal.getOptimalFrameSize()
+        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: terminal.scrollerStyle)
+        let cellWidth = (optimal.width - scrollerWidth) / CGFloat(cols)
+        let cellHeight = optimal.height / CGFloat(rows)
         guard cellWidth > 0, cellHeight > 0 else { return nil }
 
         let col = Int(floor(local.x / cellWidth))
