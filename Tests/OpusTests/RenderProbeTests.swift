@@ -130,4 +130,37 @@ final class RenderProbeTests: XCTestCase {
         try RenderProbe.capture(host, size: NSSize(width: 900, height: 60),
                                 to: (out as NSString).appendingPathComponent("toolbar.png"))
     }
+
+    /// The bottom bar of layout A: memory on the left, figures on the right.
+    static func statusBar() -> NSView {
+        let bar = ChromeBar(edge: .maxY)
+        let status = ChromeStatusView(frame: .zero)
+        let resets = Date().addingTimeInterval(3 * 86_400)
+        status.memory = "mémoire : Atelier · Jeu: v.2"
+        status.contextFraction = 0.357
+        status.usage = [UsageWindow(kind: .fiveHour, percent: 2, resetsAt: resets),
+                        UsageWindow(kind: .sevenDay, percent: 23, resetsAt: resets)]
+        bar.addSubview(status)
+        NSLayoutConstraint.activate([
+            status.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: OpusTheme.insetPanel),
+            status.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -OpusTheme.insetPanel),
+            status.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+        ])
+        return bar
+    }
+
+    func testRenderStatusBar() throws {
+        let out = try folderOrSkip()
+        let host = NSView()
+        let bar = Self.statusBar()
+        host.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            bar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            bar.heightAnchor.constraint(equalToConstant: TerminalContainerView.statusBarHeight),
+        ])
+        try RenderProbe.capture(host, size: NSSize(width: 900, height: 50),
+                                to: (out as NSString).appendingPathComponent("status.png"))
+    }
 }

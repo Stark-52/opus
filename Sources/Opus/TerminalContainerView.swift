@@ -30,27 +30,19 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var tabStrip: ChromeTabStrip!
     private var buttonBar: ChromeButtonBar!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
-    /// Bottom status rail (visual-harmonization spec, section 1 "Rail de
-    /// statut") — replaces the old top-right PaneActivityDot + "ctx NN%"
-    /// label pair (v1.4.1/v1.4.2) AND the bottom ContextMeterBar strip. See
-    /// buildSubviews' install site for the geometry, applyContextMeterResult
-    /// for the context fraction/readout/tooltip wiring, and
-    /// refreshTabBarStates for the activity-dot wiring.
-    private var statusRail: StatusRailView!
-    /// The rail's bottom constraint to the container's bottom edge.
-    private var railBottomConstraint: NSLayoutConstraint!
-    /// The "NNk / NNk tokens (NN%)" half of the rail's tooltip, from the most
-    /// recent context-meter scan — `nil` when there's no context data to show
-    /// (the two `applyContextMeterResult`/`refreshContextMeter` nil branches,
-    /// where the rail's fill is invisible too). Kept separately from
-    /// `statusRail.tooltipText` so `refreshTabBarStates` — which fires on
-    /// every activity change, independent of the context-meter timer — can
-    /// recompose the full tooltip from this plus the current activity
-    /// without redoing the context math. See `updateStatusRailTooltip`.
-    private var contextTooltipSentence: String?
-    /// One line per running usage window, after the context and activity
-    /// lines in the rail's tooltip.
-    private var usageTooltipLines: [String] = []
+    /// The bottom bar and what it shows: memory, context, usage. See
+    /// ChromeStatusView, fed by applyContextMeterResult, refreshUsage and
+    /// refreshMemory.
+    private var bottomBar: ChromeBar!
+    private var statusBar: ChromeStatusView!
+    /// The latest context reading, for the status bar's tooltip; nil with
+    /// no data. Kept so `refreshTabBarStates`, which fires on every activity
+    /// change, can recompose the tooltip without redoing the context math.
+    private var contextTokens: (tokens: Int, limit: Int)?
+    /// The active pane's activity, for the tooltip's middle line.
+    private var activeActivity: PaneActivity = .idle
+    /// The plan's running usage windows, for the tooltip.
+    private var usageWindows: [UsageWindow] = []
     private var findBar: FindBarView?
     private var lastSearchTerm = ""
 
@@ -294,22 +286,26 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabStrip = tabs
         buttonBar = buttons
 
-        let rail = StatusRailView(frame: .zero)
-        rail.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(rail)
-        let railBottom = rail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+        let bottomBand = ChromeBar(edge: .maxY)
+        addSubview(bottomBand)
+        let status = ChromeStatusView(frame: .zero)
+        bottomBand.addSubview(status)
         NSLayoutConstraint.activate([
-            rail.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
-            rail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
-            railBottom
+            bottomBand.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bottomBand.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bottomBand.bottomAnchor.constraint(equalTo: bottomAnchor),
+            bottomBand.heightAnchor.constraint(equalToConstant: Self.statusBarHeight),
+            status.leadingAnchor.constraint(equalTo: bottomBand.leadingAnchor, constant: OpusTheme.insetPanel),
+            status.trailingAnchor.constraint(equalTo: bottomBand.trailingAnchor, constant: -OpusTheme.insetPanel),
+            status.centerYAnchor.constraint(equalTo: bottomBand.centerYAnchor),
         ])
-        statusRail = rail
-        railBottomConstraint = railBottom
+        bottomBar = bottomBand
+        statusBar = status
 
         let area = NSView()
         area.translatesAutoresizingMaskIntoConstraints = false
         addSubview(area, positioned: .below, relativeTo: top)
-        let bottom = area.bottomAnchor.constraint(equalTo: rail.topAnchor, constant: -6)
+        let bottom = area.bottomAnchor.constraint(equalTo: bottomBand.topAnchor, constant: -6)
         NSLayoutConstraint.activate([
             area.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 6),
             area.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
@@ -439,7 +435,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     //
     // A 10s Timer, started once this container's view first enters a window
     // (viewDidMoveToWindow — see below) and reads the ACTIVE tab's transcript
-    // tail on every fire to update `statusRail`. In practice it then
+    // tail on every fire to update the status bar. In practice it then
     // runs for the app's lifetime: both hosts hide via orderOut/alpha
     // (QuickTerminalPanel's slide-out, MainTerminalWindow's orderOut), never
     // by detaching the view from its window, so `window != nil` stays true
@@ -494,8 +490,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let windows = UsageLimits.current(UsageLimits.read())
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.statusRail.usage = windows
-                self.usageTooltipLines = windows.map { UsageLimits.tooltip($0) }
+                self.statusBar.usage = windows
+                self.usageWindows = windows
                 self.updateStatusRailTooltip()
             }
         }
@@ -506,14 +502,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// activity change, since a domain loads as a prompt or a tool call lands.
     private func refreshMemory() {
         guard let sessionId = activeSessionId() else {
-            statusRail.memory = nil
+            statusBar.memory = nil
             return
         }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let label = MemoryStatus.read(sessionId: sessionId)
             DispatchQueue.main.async {
                 guard let self, self.activeSessionId() == sessionId else { return }
-                self.statusRail.memory = label
+                self.statusBar.memory = label
             }
         }
     }
@@ -618,9 +614,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let generation = contextMeterGeneration
 
         guard let sessionId = activeSessionId() else {
-            statusRail.fraction = nil
-            statusRail.readout = nil
-            contextTooltipSentence = nil
+            statusBar.contextFraction = nil
+            contextTokens = nil
             updateStatusRailTooltip()
             return
         }
@@ -643,46 +638,26 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
-    /// Main-thread-only: paint the rail (or hide it) from a background
-    /// scan's result. `nil` (no transcript, no usage-bearing record yet, or
-    /// the session is otherwise unreadable) hides the rail's bar+label
-    /// entirely (`statusRail.fraction = nil`) rather than drawing a
-    /// misleading 0%. The rail's FILL color (cyan at/under 70%, amber to
-    /// 85%, red beyond — `OpusTheme.contextColor`) is StatusRailView's job,
-    /// not this container's; this function only feeds it fraction/readout/
-    /// tooltip. (The label's own color is a separate rule inside
-    /// StatusRailView.updateLabelColor: cream at/under 70%, matching
-    /// contextColor above that — cream is the resting text color, not part
-    /// of the cyan/amber/red fill scale.)
+    /// Main-thread-only: show a background scan's result in the status bar.
+    /// `nil` (no transcript, no usage-bearing record yet, or an unreadable
+    /// session) shows no context figure rather than a misleading 0 %. The
+    /// figure's colour is ChromeStatusView's job.
     private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
         guard let result, result.limit > 0 else {
-            statusRail.fraction = nil
-            statusRail.readout = nil
-            contextTooltipSentence = nil
+            statusBar.contextFraction = nil
+            contextTokens = nil
             updateStatusRailTooltip()
             return
         }
         let rawFraction = Double(result.tokens) / Double(result.limit)
         let clampedFraction = CGFloat(min(max(rawFraction, 0), 1))
-        statusRail.fraction = clampedFraction
-        statusRail.readout = StatusRailView.readoutText(tokens: result.tokens, limit: result.limit)
-        let kTokens = Int((Double(result.tokens) / 1000).rounded())
-        let kLimit = Int((Double(result.limit) / 1000).rounded())
-        // Deliberately computed from the UNCLAMPED rawFraction, unlike the
-        // rail's own `.fraction` above — a session that's blown past its
-        // limit should say so ("173%"), even though the rail's fill visually
-        // caps at a full-width fill.
-        let percent = Int((rawFraction * 100).rounded())
-        contextTooltipSentence = "\(kTokens)k / \(kLimit)k tokens (\(percent)%)"
+        statusBar.contextFraction = clampedFraction
+        contextTokens = (result.tokens, result.limit)
         updateStatusRailTooltip()
     }
 
-    /// Word describing `activity` for the tooltip's second line — mirrors
-    /// the per-state tooltips the deleted `PaneActivityDot` used to show
-    /// (Task 6 follow-up: `StatusRailView`'s single `tooltipText` otherwise
-    /// only ever carries the context sentence, so hovering the dot stopped
-    /// explaining what it means). `nil` for `.idle`, matching
-    /// `OpusTheme.activityColor` — no dot, no line.
+    /// Word describing `activity` for the tooltip's middle line; nil for
+    /// `.idle`, matching `OpusTheme.activityColor`: no dot, no line.
     private func activityTooltipLine(_ activity: PaneActivity) -> String? {
         switch activity {
         case .idle: return nil
@@ -692,31 +667,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
     }
 
-    /// Recomposes `statusRail.tooltipText` from the two independent signals
-    /// that feed it: `contextTooltipSentence` (the context-meter sentence,
-    /// `nil` when there's no data — rail fill invisible) and
-    /// `statusRail.activity`'s state word (`nil` when `.idle` — no dot
-    /// either). Called from BOTH refresh paths that can change either half —
-    /// `applyContextMeterResult`/`refreshContextMeter` when the context part
-    /// changes, and `refreshTabBarStates` when ONLY the activity part
-    /// changes — so hovering the rail always reflects the latest of both,
-    /// not just whichever path happened to run most recently.
-    ///
-    /// The activity line is kept even when there's no context sentence
-    /// (rail fill invisible): the dot has its own independent lifecycle
-    /// (StatusRailView.fraction's doc comment — Claude can be `.working`
-    /// before the first transcript read produces a usage fraction), so it
-    /// can be the only thing visible on the strip and still deserves an
-    /// explanation on hover.
+    /// The status bar's tooltip: the token count, what Claude is doing, then
+    /// each usage window with its reset moment. Recomposed from both paths
+    /// that can change a part, the context refresh and the activity refresh,
+    /// so hovering always shows the latest of each.
     private func updateStatusRailTooltip() {
-        let lines = [contextTooltipSentence, activityTooltipLine(statusRail.activity)].compactMap { $0 }
-            + usageTooltipLines
-        statusRail.tooltipText = lines.isEmpty ? nil : lines.joined(separator: "\n")
+        let core = ChromeStatus.tooltip(tokens: contextTokens?.tokens, limit: contextTokens?.limit, windows: [])
+        let usage = ChromeStatus.tooltip(tokens: nil, limit: nil, windows: usageWindows)
+        let lines = [core, activityTooltipLine(activeActivity) ?? "", usage].filter { !$0.isEmpty }
+        statusBar.tooltipText = lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     // MARK: Cockpit — reply drawer (Cmd+Shift+C)
 
     static let toolbarHeight: CGFloat = 32
+    static let statusBarHeight: CGFloat = 22
 
     /// The toolbar's "⋯" menu: the host's own entries first (pin, open in
     /// Terminal), then bypass permissions and the permission mode, which
@@ -2317,7 +2282,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // so every existing call site that keeps the tab-bar dots current
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.
-        statusRail.activity = tabStrip.states.indices.contains(activeTabIndex) ? tabStrip.states[activeTabIndex] : .idle
+        activeActivity = tabStrip.states.indices.contains(activeTabIndex) ? tabStrip.states[activeTabIndex] : .idle
         // Task 6 follow-up: this is the activity-only refresh path — it can
         // fire (e.g. a hook event flips .idle → .working) without the
         // context-meter timer having run at all, so the tooltip needs its

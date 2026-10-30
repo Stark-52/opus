@@ -22,14 +22,4 @@ final class MemoryStatusTests: XCTestCase {
         XCTAssertEqual(MemoryStatus.fileURL(sessionId: "abc").lastPathComponent, "abc.json")
         XCTAssertEqual(MemoryStatus.fileURL(sessionId: "abc").deletingLastPathComponent().lastPathComponent, "memory")
     }
-
-    func testTheRailNamesTheMemoryAfterTheUsage() {
-        let windows = [UsageWindow(kind: .fiveHour, percent: 12, resetsAt: Date(timeIntervalSince1970: 0))]
-        let both = StatusRailView.trailingText(usage: windows, memory: "mémoire : socle").string
-        XCTAssertTrue(both.hasPrefix("│ 5h 12%"), both)
-        XCTAssertTrue(both.hasSuffix(" │ mémoire : socle"), both)
-
-        XCTAssertEqual(StatusRailView.trailingText(usage: [], memory: "mémoire : socle").string, "│ mémoire : socle")
-        XCTAssertEqual(StatusRailView.trailingText(usage: [], memory: nil).string, "")
-    }
 }

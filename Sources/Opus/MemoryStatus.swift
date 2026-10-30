@@ -1,5 +1,5 @@
 // MemoryStatus — the memory domains the memory-router mod has loaded in a
-// session, for the rail.
+// session, for the status bar.
 //
 // Inside Opus the mod draws no band above Claude Code's prompt. It writes
 // Application Support/Opus/memory/<session id>.json, `{"domains": [...]}`,
