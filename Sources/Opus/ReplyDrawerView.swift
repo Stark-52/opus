@@ -1,13 +1,14 @@
-// ReplyDrawerView — Cmd+Shift+C slide-in panel: Claude's latest answer,
+// ReplyDrawerView: the Cmd+Shift+C slide-in panel, Claude's latest answer,
 // formatted, with a copy button on every block.
 //
 // The terminal hard-wraps a reply at its width and indents it, so text
 // selected there pastes with line breaks and spaces in the wrong places.
 // This drawer reads the answer off the transcript instead (ReplyReader),
 // cuts it into blocks (ReplyMarkdown) and draws each one formatted, with a
-// copy button that shows on hover: a paragraph or a list copies as plain
-// text, a code block as its code, a heading as its whole section. "Tout
-// copier" takes the whole answer. Text stays selectable for the odd phrase.
+// copy button that shows on hover: a paragraph or a list copies with its
+// formatting and as plain text alongside (ReplyClipboard), a code block as
+// its code, a heading as its whole section. "Tout copier" takes the whole
+// answer. Text stays selectable for the odd phrase.
 //
 // A dumb view like the other drawers: the container finds the active
 // session, reads off the main queue and hands the text to `reply`.
@@ -57,11 +58,8 @@ final class ReplyDrawerView: NSView {
         header.translatesAutoresizingMaskIntoConstraints = false
 
         copyAllButton.translatesAutoresizingMaskIntoConstraints = false
-        copyAllButton.toolTip = "Copier toute la réponse, en texte simple"
-        copyAllButton.onCopy = { [weak self] in
-            guard let self else { return nil }
-            return ReplyMarkdown.plainText(self.blocks)
-        }
+        copyAllButton.toolTip = "Copier toute la réponse, avec sa mise en forme"
+        copyAllButton.onCopy = { [weak self] in self?.blocks ?? [] }
 
         emptyLabel.font = .systemFont(ofSize: 12)
         emptyLabel.textColor = OpusTheme.cream(0.45)
@@ -129,8 +127,8 @@ final class ReplyDrawerView: NSView {
 
         for (index, block) in blocks.enumerated() {
             let row = BlockRow(block: block) { [weak self] in
-                guard let self else { return nil }
-                return ReplyMarkdown.sectionText(startingAt: index, in: self.blocks)
+                guard let self else { return [] }
+                return ReplyMarkdown.section(startingAt: index, in: self.blocks)
             }
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor,
@@ -153,7 +151,7 @@ private final class BlockRow: NSView {
     private let copyButton = CopyButton(title: nil)
     private var tracking: NSTrackingArea?
 
-    init(block: ReplyBlock, copyText: @escaping () -> String?) {
+    init(block: ReplyBlock, copyBlocks: @escaping () -> [ReplyBlock]) {
         self.block = block
         label = NSTextField(labelWithAttributedString: ReplyRendering.text(for: block))
         label.isSelectable = true
@@ -168,7 +166,7 @@ private final class BlockRow: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.onCopy = copyText
+        copyButton.onCopy = copyBlocks
         copyButton.toolTip = Self.tooltip(for: block.kind)
         copyButton.alphaValue = 0
         copyButton.isHidden = block.kind == .rule
@@ -192,7 +190,7 @@ private final class BlockRow: NSView {
         case .heading: return "Copier la section"
         case .code: return "Copier le code"
         case .table: return "Copier le tableau"
-        default: return "Copier, en texte simple"
+        default: return "Copier"
         }
     }
 
@@ -231,7 +229,8 @@ private final class BlockRow: NSView {
 /// A borderless "copy" glyph (with an optional title) that turns into a
 /// tick for a moment after copying, so a click visibly did something.
 private final class CopyButton: NSButton {
-    var onCopy: (() -> String?)?
+    /// The blocks a click copies (ReplyClipboard says in what form).
+    var onCopy: (() -> [ReplyBlock])?
     private let restingTitle: String?
     private var resetWork: DispatchWorkItem?
 
@@ -263,9 +262,7 @@ private final class CopyButton: NSButton {
     }
 
     @objc private func copyNow() {
-        guard let text = onCopy?(), !text.isEmpty else { return }
-        ReplyDrawerView.pasteboard.clearContents()
-        ReplyDrawerView.pasteboard.setString(text, forType: .string)
+        guard let blocks = onCopy?(), ReplyClipboard.write(blocks, to: ReplyDrawerView.pasteboard) else { return }
         show(copied: true)
         resetWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.show(copied: false) }

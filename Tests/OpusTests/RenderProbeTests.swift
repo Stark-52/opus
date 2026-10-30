@@ -202,4 +202,51 @@ final class RenderProbeTests: XCTestCase {
                                     to: (out as NSString).appendingPathComponent(name))
         }
     }
+
+    /// A reply copied from the reply drawer, then pasted the way a Cocoa
+    /// editor (Notes, Mail, TextEdit) pastes it, on a light page and a dark
+    /// one. The HTML and RTF land beside the captures for a browser and
+    /// Quick Look.
+    func testRenderReplyCopyPastedIntoATextView() throws {
+        let out = try folderOrSkip()
+        let reply = """
+        ## Ce qui change
+
+        Le **scroll** reste en place, voir `ScrollFollowTests` et [la doc](https://example.com). Déjà testé.
+
+        - premier point, *en italique*
+          - un sous-point
+        - second point
+
+        1. un
+        2. deux
+
+        ```swift
+        let x = 1 < 2
+        ```
+
+        | Fichier | État |
+        |---|---|
+        | `Opus.app` | **installé** |
+
+        > une citation
+        """
+        let board = NSPasteboard(name: NSPasteboard.Name("opus-render-probe-paste"))
+        defer { board.releaseGlobally() }
+        XCTAssertTrue(ReplyClipboard.write(ReplyMarkdown.blocks(reply), to: board))
+        try XCTUnwrap(board.string(forType: .html)).write(toFile: (out as NSString).appendingPathComponent("reply-copy.html"),
+                                                         atomically: true, encoding: .utf8)
+        try XCTUnwrap(board.data(forType: .rtf)).write(to: URL(fileURLWithPath: (out as NSString).appendingPathComponent("reply-copy.rtf")))
+
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 560))
+            text.appearance = NSAppearance(named: appearance)
+            text.usesAdaptiveColorMappingForDarkAppearance = true
+            text.textContainerInset = NSSize(width: 16, height: 16)
+            XCTAssertTrue(text.readSelection(from: board))
+            print("reply probe pasted as", text.preferredPasteboardType(from: board.types ?? [], restrictedToTypesFrom: nil) ?? "none")
+            try RenderProbe.capture(text, size: NSSize(width: 520, height: 560),
+                                    to: (out as NSString).appendingPathComponent("reply-pasted-\(name).png"))
+        }
+    }
 }

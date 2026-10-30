@@ -1,11 +1,12 @@
-// ReplyMarkdown — a reply cut into the blocks the reply drawer draws and
+// ReplyMarkdown: a reply cut into the blocks the reply drawer draws and
 // copies one by one.
 //
 // Line-based and deliberately small: headings, paragraphs, lists, fenced
 // code, tables, quotes and rules, which is what Claude's answers are made
-// of. Prose copies as plain text, markers stripped, because it is pasted
-// into messages and posts; code copies as the code; a table copies as
-// written, since that is how it pastes into Notion or a README.
+// of. The plain text a copy carries (ReplyClipboard adds the formatted
+// version beside it): prose with its markers stripped, for messages and
+// posts; code as the code; a table as written, since that is how it pastes
+// into a README.
 
 import Foundation
 
@@ -141,15 +142,19 @@ enum ReplyMarkdown {
     /// next heading of the same or a higher level. Any other block copies
     /// itself.
     static func sectionText(startingAt index: Int, in blocks: [ReplyBlock]) -> String {
-        guard blocks.indices.contains(index) else { return "" }
-        guard case .heading(let level) = blocks[index].kind else { return blocks[index].copyText }
+        plainText(section(startingAt: index, in: blocks))
+    }
+
+    static func section(startingAt index: Int, in blocks: [ReplyBlock]) -> [ReplyBlock] {
+        guard blocks.indices.contains(index) else { return [] }
+        guard case .heading(let level) = blocks[index].kind else { return [blocks[index]] }
 
         var end = index + 1
         while end < blocks.count {
             if case .heading(let next) = blocks[end].kind, next <= level { break }
             end += 1
         }
-        return plainText(Array(blocks[index..<end]))
+        return Array(blocks[index..<end])
     }
 
     static func plainText(_ blocks: [ReplyBlock]) -> String {
@@ -159,13 +164,7 @@ enum ReplyMarkdown {
     /// A table's rows as the drawer draws them, in a monospaced font: cells
     /// in plain text, padded to their column's width, the `|---|` row gone.
     static func alignedTable(_ rows: [String]) -> [String] {
-        let cells = rows.map { row in
-            row.trimmingCharacters(in: CharacterSet(charactersIn: "| "))
-                .components(separatedBy: "|")
-                .map { plain($0.trimmingCharacters(in: .whitespaces)) }
-        }.filter { row in
-            !row.allSatisfy { $0.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil }
-        }
+        let cells = tableCells(rows).map { $0.map(plain) }
         let columns = cells.map(\.count).max() ?? 0
         let widths = (0..<columns).map { column in
             cells.map { column < $0.count ? $0[column].count : 0 }.max() ?? 0
@@ -174,6 +173,18 @@ enum ReplyMarkdown {
             row.enumerated().map { column, cell in
                 column == row.count - 1 ? cell : cell.padding(toLength: widths[column], withPad: " ", startingAt: 0)
             }.joined(separator: "  ")
+        }
+    }
+
+    /// A table's cells as written (inline markdown kept), row by row, the
+    /// `|---|` row gone.
+    static func tableCells(_ rows: [String]) -> [[String]] {
+        rows.map { row in
+            row.trimmingCharacters(in: CharacterSet(charactersIn: "| "))
+                .components(separatedBy: "|")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        }.filter { row in
+            !row.allSatisfy { $0.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil }
         }
     }
 
