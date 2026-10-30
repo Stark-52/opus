@@ -638,6 +638,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.refreshContextMeter()
             self?.refreshUsage()
+            self?.refreshMemory()
         }
         timer.tolerance = 2
         contextMeterTimer = timer
@@ -645,6 +646,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // its initial state) for up to 10s after the window appears.
         refreshContextMeter()
         refreshUsage()
+        refreshMemory()
     }
 
     /// The plan's usage windows, from the file the status line command
@@ -659,6 +661,23 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 self.statusRail.usage = windows
                 self.usageTooltipLines = windows.map { UsageLimits.tooltip($0) }
                 self.updateStatusRailTooltip()
+            }
+        }
+    }
+
+    /// The memory domains the mod has loaded in the active session (see
+    /// MemoryStatus). Read on the rail's timer, on a tab switch and on every
+    /// activity change, since a domain loads as a prompt or a tool call lands.
+    private func refreshMemory() {
+        guard let sessionId = activeSessionId() else {
+            statusRail.memory = nil
+            return
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let label = MemoryStatus.read(sessionId: sessionId)
+            DispatchQueue.main.async {
+                guard let self, self.activeSessionId() == sessionId else { return }
+                self.statusRail.memory = label
             }
         }
     }
@@ -2227,6 +2246,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // because a stale-tab bar is a real, easily-hit correctness gap,
         // not a hypothetical.
         refreshContextMeter()
+        refreshMemory()
         // Same reasoning for the reply drawer (v1.6 backlog Task 3): without
         // this, switching from a tab bound to session A to a tab bound to
         // session B while the drawer is open would keep showing A's tasks
@@ -2659,6 +2679,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     @objc private func paneActivityChanged() {
         refreshTabBarStates()
+        refreshMemory()
         // v1.6 backlog Task 3: an immediate refresh on every activity change
         // (prompt submitted, tool used/done, turn ended, …) — per the brief,
         // in addition to the drawer's own 5s timer. No-ops when the drawer

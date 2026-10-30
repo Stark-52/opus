@@ -15,9 +15,10 @@
 //    for why this is fixed rather than intrinsic: an intrinsic-width label
 //    made the dot and the rail's right edge visibly shift every time the
 //    readout's digit count changed]
-//   [OpusTheme.controlGap, then the plan usage column, as wide as its text
-//    and pinned to the trailing edge; both collapse to zero when there is
-//    no usage figure, which puts the readout back on the edge]
+//   [OpusTheme.controlGap, then the trailing column, as wide as its text
+//    and pinned to the trailing edge: the plan usage, then the memory
+//    domains the session has loaded; both collapse to zero when there is
+//    neither, which puts the readout back on the edge]
 //
 // The rail is vertically centered on the label's baseline row. Intrinsic
 // height is the label's own height (measured 13pt for the 10pt monospaced-
@@ -97,13 +98,26 @@ final class StatusRailView: NSView {
     var usage: [UsageWindow] = [] {
         didSet {
             guard usage != oldValue else { return }
-            let text = Self.usageText(usage)
-            usageLabel.attributedStringValue = text
-            usageWidth.constant = usage.isEmpty ? 0 : ceil(text.size().width) + 2
-            readoutToUsage.constant = usage.isEmpty ? 0 : -OpusTheme.controlGap
-            needsLayout = true
-            needsDisplay = true
+            updateTrailingColumn()
         }
+    }
+
+    /// "mémoire : Atelier" (see MemoryStatus), drawn after the usage in
+    /// the same column; nil when the active session has no such file.
+    var memory: String? {
+        didSet {
+            guard memory != oldValue else { return }
+            updateTrailingColumn()
+        }
+    }
+
+    private func updateTrailingColumn() {
+        let text = Self.trailingText(usage: usage, memory: memory)
+        usageLabel.attributedStringValue = text
+        usageWidth.constant = text.length == 0 ? 0 : ceil(text.size().width) + 2
+        readoutToUsage.constant = text.length == 0 ? 0 : -OpusTheme.controlGap
+        needsLayout = true
+        needsDisplay = true
     }
 
     private let usageLabel: NSTextField = {
@@ -123,20 +137,26 @@ final class StatusRailView: NSView {
     private lazy var usageWidth = usageLabel.widthAnchor.constraint(equalToConstant: 0)
     private lazy var readoutToUsage = label.trailingAnchor.constraint(equalTo: usageLabel.leadingAnchor)
 
-    /// "│ 5h 42% ↺22:47 · 7j 83% ↺dim": each window in its level's colour,
-    /// cream at rest like the readout, amber then red as it fills.
-    static func usageText(_ windows: [UsageWindow]) -> NSAttributedString {
+    /// "│ 5h 42% ↺22:47 · 7j 83% ↺dim │ mémoire : socle": each window in its
+    /// level's colour, cream at rest like the readout, amber then red as it
+    /// fills; the memory a step dimmer, as quiet as the band it replaces.
+    static func trailingText(usage windows: [UsageWindow], memory: String?) -> NSAttributedString {
         let text = NSMutableAttributedString()
-        guard !windows.isEmpty else { return text }
 
         func append(_ string: String, _ color: NSColor) {
             text.append(NSAttributedString(string: string, attributes: [.font: labelFont, .foregroundColor: color]))
         }
 
-        append("│ ", OpusTheme.cream(0.25))
-        for (index, window) in windows.enumerated() {
-            if index > 0 { append(" · ", OpusTheme.cream(0.35)) }
-            append(UsageLimits.label(window), usageColor(UsageLimits.level(percent: window.percent)))
+        if !windows.isEmpty {
+            append("│ ", OpusTheme.cream(0.25))
+            for (index, window) in windows.enumerated() {
+                if index > 0 { append(" · ", OpusTheme.cream(0.35)) }
+                append(UsageLimits.label(window), usageColor(UsageLimits.level(percent: window.percent)))
+            }
+        }
+        if let memory, !memory.isEmpty {
+            append(text.length == 0 ? "│ " : " │ ", OpusTheme.cream(0.25))
+            append(memory, OpusTheme.cream(0.4))
         }
         return text
     }
