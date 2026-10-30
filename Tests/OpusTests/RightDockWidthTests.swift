@@ -52,7 +52,7 @@ final class RightDockWidthTests: XCTestCase {
     }
 
     func testTerminalTrailingConstantIsTheNegatedResolvedWidth() {
-        XCTAssertEqual(RightDockGeometry.terminalTrailingConstant(forWidth: 300), -300)
-        XCTAssertEqual(RightDockGeometry.terminalTrailingConstant(forWidth: 0), 0)
+        XCTAssertEqual(RightDockGeometry.edgeConstant(forWidth: 300), -300)
+        XCTAssertEqual(RightDockGeometry.edgeConstant(forWidth: 0), 0)
     }
 }

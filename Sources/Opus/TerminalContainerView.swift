@@ -80,11 +80,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// instead of a harmlessly closed drawer. Read as `rightDock?.occupant
     /// ?? .none` everywhere.
     private var rightDock: RightDock?
-    /// Own trailing constraint on `terminalArea` — `0` when the dock is
-    /// empty, `RightDockGeometry.terminalTrailingConstant(for:)` for
-    /// whichever drawer is showing, so the terminal never draws underneath
-    /// it. Written by `RightDock.show(_:)`, which owns that arithmetic.
-    private var terminalAreaTrailingConstraint: NSLayoutConstraint!
+    /// The part of `terminalArea` no drawer covers: a drawer lies over the
+    /// terminal, whose width never changes (see RightDock). The top-right
+    /// button row is pinned to its trailing edge.
+    private var uncoveredArea: NSLayoutGuide!
+    /// That guide's trailing constraint: `0` when the dock is empty,
+    /// `RightDockGeometry.edgeConstant(forWidth:)` for the drawer showing.
+    /// Written by RightDock, which owns that arithmetic.
+    private var uncoveredTrailingConstraint: NSLayoutConstraint!
     /// Own bottom constraint on the drawer, switched in `updateTabIndicator`
     /// alongside `terminalAreaBottomConstraint`/`railBottomConstraint` — the
     /// drawer's bottom edge tracks EXACTLY the same y-position as
@@ -126,7 +129,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// artifacts do not carry over to another tab's.
     private var artifactsSessionIds: Set<String> = []
 
-    /// Trailing offsets — all measured from `terminalArea.trailingAnchor` —
+    /// Trailing offsets — all measured from `uncoveredArea.trailingAnchor` —
     /// of the buttons that share the panel's top-right row: the shield
     /// (installed by this container) plus, in the Quick Terminal panel, the
     /// pin and "open in Terminal" (↗) buttons, which are subviews of the
@@ -143,13 +146,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// travel as one unit.
     ///
     /// `drawerOpenShift` covers the one button that does not fit that rule
-    /// on its own: the row's rightmost (↗) sits 4pt PAST the terminal area's
-    /// trailing edge, inside the panel's 14pt blur padding, where there is
-    /// nothing to collide with. With the drawer open that same +4 would land
-    /// on the drawer's leading edge (the drawer begins exactly where
-    /// `terminalArea` now ends — see buildSubviews). So while the drawer is
-    /// open the whole row shifts a further 8pt left, which puts the
-    /// rightmost button 4pt INSIDE the shrunken terminal area and preserves
+    /// on its own: the row's rightmost (↗) sits 4pt PAST the uncovered
+    /// area's trailing edge, inside the panel's 14pt blur padding, where
+    /// there is nothing to collide with. With the drawer open that same +4
+    /// would land on the drawer's leading edge (the drawer begins exactly
+    /// where `uncoveredArea` ends — see buildSubviews). So while the drawer
+    /// is open the whole row shifts a further 8pt left, which puts the
+    /// rightmost button 4pt INSIDE the uncovered area and preserves
     /// every gap between buttons. Closed, the shift is 0 and every button
     /// sits at exactly the pixel it always did.
     enum TopRightButtonRow {
@@ -360,21 +363,26 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // meterBottom below for why the default (single-tab) state has to be
         // right from construction, not just after the first tab change.
         let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
-        // v1.6 backlog Task 3: trailing constraint is now a variable, not a
-        // fixed pin — `0` (dock empty) by default, and
-        // `RightDockGeometry.terminalTrailingConstant(for:)` for whichever
-        // drawer the dock is showing, so the terminal area shrinks to make
-        // room instead of drawing underneath the drawer.
-        let trailing = area.trailingAnchor.constraint(equalTo: trailingAnchor)
         NSLayoutConstraint.activate([
             area.topAnchor.constraint(equalTo: topAnchor),
             area.leadingAnchor.constraint(equalTo: leadingAnchor),
-            trailing,
+            area.trailingAnchor.constraint(equalTo: trailingAnchor),
             bottom
         ])
         terminalArea = area
         terminalAreaBottomConstraint = bottom
-        terminalAreaTrailingConstraint = trailing
+
+        let uncovered = NSLayoutGuide()
+        addLayoutGuide(uncovered)
+        let uncoveredTrailing = uncovered.trailingAnchor.constraint(equalTo: trailingAnchor)
+        NSLayoutConstraint.activate([
+            uncovered.topAnchor.constraint(equalTo: area.topAnchor),
+            uncovered.leadingAnchor.constraint(equalTo: area.leadingAnchor),
+            uncovered.bottomAnchor.constraint(equalTo: area.bottomAnchor),
+            uncoveredTrailing
+        ])
+        uncoveredArea = uncovered
+        uncoveredTrailingConstraint = uncoveredTrailing
 
         let bar = OpusTabBar(frame: .zero)
         bar.isHidden = true
@@ -508,11 +516,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // One grabbable strip per drawer, pinned to its leading edge and
         // sized in points, installed AFTER both drawers so it sits above
         // them in z-order and wins the hit test. The drag reports a proposed
-        // width continuously; on mouse up the terminal takes the drawer's
-        // width and preferences store it, once: persisting every frame would
-        // fire the preferences-changed notification dozens of times per
-        // gesture, and resizing the terminal every frame would make Claude
-        // Code redraw for each.
+        // width continuously; on mouse up preferences store it, once:
+        // persisting every frame would fire the preferences-changed
+        // notification dozens of times per gesture.
         for (occupant, view) in [(RightDockGeometry.Occupant.reply, drawer as NSView),
                                  (.artifacts, artifactsDrawerView as NSView)] {
             let handle = DrawerResizeHandle(
@@ -521,7 +527,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 },
                 commit: { [weak self] in
                     guard let self, let dock = self.rightDock else { return }
-                    dock.finishResize(for: occupant)
                     OpusPreferences.shared.setDrawerWidth(
                         dock.currentWidth(for: occupant), for: occupant)
                 })
@@ -543,7 +548,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     view: artifactsDrawerView, trailing: artifactsTrailing,
                     width: artifactsWidth)
             ],
-            terminalTrailing: terminalAreaTrailingConstraint,
+            edge: uncoveredTrailingConstraint,
             widthProvider: { OpusPreferences.shared.drawerWidth(for: $0) },
             layout: { [weak self] in self?.layoutSubtreeIfNeeded() },
             onChange: { [weak self] occupant in
@@ -857,7 +862,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // MARK: Cockpit — reply drawer (Cmd+Shift+C)
 
     /// Pin `button`'s trailing edge into the top-right row (see
-    /// `TopRightButtonRow`) at `base` points from the terminal area's
+    /// `TopRightButtonRow`) at `base` points from the uncovered area's
     /// trailing edge, and keep it in step with the row across drawer
     /// toggles. `button` does NOT have to be a subview of this container —
     /// the Quick Terminal panel's pin/↗ buttons live in the panel's blur
@@ -866,7 +871,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// constraint at their nearest common ancestor.
     func pinToTopRightRow(_ button: NSView, base: CGFloat) {
         let constraint = button.trailingAnchor.constraint(
-            equalTo: terminalArea.trailingAnchor,
+            equalTo: uncoveredArea.trailingAnchor,
             constant: TopRightButtonRow.trailingConstant(
                 base: base, drawerOpen: RightDockGeometry.isOpen(rightDock?.occupant ?? .none)))
         topRightRowConstraints.append((constraint, base))
@@ -887,11 +892,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // than hiding the shield for the drawer's duration (which kills
     // the only at-a-glance "claude is running
     // --dangerously-skip-permissions" signal), the button's trailing
-    // anchor is now pinned to `terminalArea.trailingAnchor` instead
-    // of the container's — so flipping this same
-    // `terminalAreaTrailingConstraint` that shrinks the terminal
-    // area also slides the shield left with it, landing inside the
-    // now-narrower terminal area instead of under the drawer. No
+    // anchor is now pinned to `uncoveredArea.trailingAnchor` instead
+    // of the container's — the edge of the terminal no drawer covers,
+    // which slides with the drawer — so the shield lands beside the
+    // drawer instead of under it. No
     // shield-specific bookkeeping needed here anymore;
     // `refreshShieldButton()` still governs the button's visibility
     // on its own, unrelated axis (skip-permissions state, not drawer
@@ -1217,12 +1221,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         btn.setAccessibilityLabel("Skip permissions toggle")
         btn.translatesAutoresizingMaskIntoConstraints = false
         addSubview(btn)
-        // Fix round finding F2: pinned to `terminalArea.trailingAnchor`, NOT
-        // the container's own `trailingAnchor` — `terminalArea`'s trailing
-        // edge is the one that moves (`terminalAreaTrailingConstraint`, see
-        // `toggleReplyDrawer()`) when the reply drawer opens, so the shield
-        // slides left in lockstep with the terminal area instead of sitting
-        // fixed under the drawer's top-right corner. Offset preserved
+        // Fix round finding F2: pinned to `uncoveredArea.trailingAnchor`,
+        // NOT the container's own `trailingAnchor` — that edge slides with
+        // the drawer (see RightDock), so the shield moves left in lockstep
+        // with it instead of sitting fixed under the drawer's top-right
+        // corner. Offset preserved
         // (-28) relative to that anchor, same as it was relative to the
         // container's when the drawer never moved anything.
         //
@@ -1309,7 +1312,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let terminal = pane.terminal
             guard !terminal.isHidden else { continue }
             let local = terminal.convert(windowPoint, from: nil)
-            guard terminal.bounds.contains(local) else { continue }
+            guard terminal.bounds.contains(local), reaches(terminal, at: windowPoint) else { continue }
 
             guard let hit = resolvePathClick(in: terminal, at: local) else { return false }
             let cwd = OpusPreferences.shared.workingDirectory
@@ -1404,6 +1407,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         return (col, rowOnScreen)
     }
 
+    /// Whether a click at `windowPoint` reaches `terminal` itself: a drawer
+    /// lying over it, a button or an overlay takes the click instead.
+    private func reaches(_ terminal: TerminalView, at windowPoint: NSPoint) -> Bool {
+        guard let root = window?.contentView else { return false }
+        let point = root.superview?.convert(windowPoint, from: nil) ?? windowPoint
+        return root.hitTest(point)?.isDescendant(of: terminal) ?? false
+    }
+
     /// A plain click: when it landed in Claude Code's input on the live
     /// screen, send the arrow keys that bring the cursor under it.
     private func handlePromptClick(at windowPoint: NSPoint) {
@@ -1412,7 +1423,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let terminal = pane.terminal
             guard !terminal.isHidden else { continue }
             let local = terminal.convert(windowPoint, from: nil)
-            guard terminal.bounds.contains(local) else { continue }
+            guard terminal.bounds.contains(local), reaches(terminal, at: windowPoint) else { continue }
             // Scrolled back through history, the rows under the click are
             // not the input any more, whatever they show.
             guard !terminal.canScroll || terminal.scrollPosition >= 1,

@@ -10,16 +10,13 @@
 // One occupant at a time. Opening one closes the other, so the terminal
 // only ever pays for one drawer's width.
 //
-// The dock owns each drawer's OWN trailing constraint as well as the
-// terminal's. The drawer slides; the terminal never does. Every width the
-// terminal passes through is a resize Claude Code redraws its whole screen
-// for, and a redraw that lands after the width has moved on is drawn for
-// the wrong width and leaves stray rows in the scrollback. So the drawer
-// slides over the terminal, and the terminal takes its new width once:
-// before the slide when it grows (the drawer leaves over text already laid
-// out at full width), after it when it narrows (the drawer arrives over the
-// text it is about to cover). A dragged edge works the same way: the drawer
-// follows the pointer and the terminal follows on release.
+// The dock owns each drawer's OWN trailing constraint, and the edge of the
+// part of the terminal no drawer covers. A drawer lies over the terminal,
+// whose width never changes: on a new width Claude Code clears its screen
+// and prints its live region again, and since it never clears the
+// scrollback, the seam between the two layouts repeats text (narrowing) or
+// drops it (widening). The edge slides with the drawer and follows a
+// dragged one, so the top-right button row stays clear of it.
 //
 // Deliberately NOT clipped. A parked drawer sits one full width past the
 // container's trailing edge, and while closing it crosses that edge for the
@@ -55,7 +52,9 @@ final class RightDock {
     private(set) var occupant: Occupant = .none
 
     private let panels: [Occupant: Panel]
-    private let terminalTrailing: NSLayoutConstraint
+    /// Trailing constraint of the uncovered part of the terminal: 0 with no
+    /// drawer, minus the drawer's width with one.
+    private let edge: NSLayoutConstraint
     /// Resolves an occupant's current width, which is a stored preference
     /// rather than a constant now that the edge can be dragged. Injected so
     /// this class stays free of UserDefaults.
@@ -91,13 +90,13 @@ final class RightDock {
     }
 
     init(panels: [Occupant: Panel],
-         terminalTrailing: NSLayoutConstraint,
+         edge: NSLayoutConstraint,
          widthProvider: @escaping (Occupant) -> CGFloat,
          layout: @escaping () -> Void,
          onChange: @escaping (Occupant) -> Void,
          animate: @escaping Animator = RightDock.slide) {
         self.panels = panels
-        self.terminalTrailing = terminalTrailing
+        self.edge = edge
         self.widthProvider = widthProvider
         self.layout = layout
         self.onChange = onChange
@@ -115,30 +114,19 @@ final class RightDock {
 
     /// Apply a dragged width to the drawer immediately and without
     /// animation: a resize that eased toward the pointer would lag behind it
-    /// and feel broken. The terminal waits for `finishResize`. Writing the
-    /// value to preferences is the container's job, once, at the end of the
-    /// gesture.
+    /// and feel broken. Writing the value to preferences is the container's
+    /// job, once, at the end of the gesture.
     func setWidth(_ proposed: CGFloat, for target: Occupant) {
         guard let panel = panels[target] else { return }
         let width = RightDockGeometry.clampWidth(proposed, for: target)
         panel.width.constant = width
-        if target != occupant {
+        if target == occupant {
+            edge.constant = RightDockGeometry.edgeConstant(forWidth: width)
+        } else {
             // Parked: keep it exactly one width off the edge so it does not
             // reappear part-way on screen next time it opens.
             panel.trailing.constant = width
         }
-        layout()
-    }
-
-    /// The end of a drag: the terminal takes the width the drawer now has.
-    func finishResize(for target: Occupant) {
-        guard target == occupant, let panel = panels[target] else { return }
-        setTerminalTrailing(RightDockGeometry.terminalTrailingConstant(forWidth: panel.width.constant))
-    }
-
-    /// Outside the slide, so the terminal jumps to the width in one resize.
-    private func setTerminalTrailing(_ constant: CGFloat) {
-        terminalTrailing.constant = constant
         layout()
     }
 
@@ -166,24 +154,17 @@ final class RightDock {
         // the mirror of the same reasoning.
         panels[requested]?.view.isHidden = false
 
-        let opening = RightDockGeometry.isOpen(requested)
-        let terminalTarget = RightDockGeometry.terminalTrailingConstant(
-            forWidth: widthProvider(requested))
-        let terminalGrows = terminalTarget > terminalTrailing.constant
-        if terminalGrows { setTerminalTrailing(terminalTarget) }
-
-        animate(opening, { [self] in
+        animate(RightDockGeometry.isOpen(requested), { [self] in
             for (key, panel) in panels {
                 panel.trailing.constant = key == requested ? 0 : widthProvider(key)
             }
+            edge.constant = RightDockGeometry.edgeConstant(forWidth: widthProvider(requested))
             layout()
         }, { [weak self] in
-            guard let self, self.occupant == requested else { return }
             // Guarded on the occupant still being what this animation was
             // for: a fast second toggle would otherwise let an older
-            // completion hide the drawer that is now current, or narrow the
-            // terminal for a drawer that is already leaving.
-            if !terminalGrows { self.setTerminalTrailing(terminalTarget) }
+            // completion hide the drawer that is now current.
+            guard let self, self.occupant == requested else { return }
             for (key, panel) in self.panels where key != requested {
                 panel.view.isHidden = true
             }

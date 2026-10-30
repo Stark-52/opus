@@ -1,9 +1,9 @@
-// RightDockGeometry — the widths, and the terminal's trailing constant.
+// RightDockGeometry — the widths, and where a drawer's leading edge sits.
 //
 // TopRightButtonRow.drawerOpenShift stays where it is and stays -8: it
-// does not depend on the occupant's width. The row is pinned to
-// terminalArea.trailingAnchor, which has already moved by the full width;
-// the -8 only compensates the 4pt overhang of the row's rightmost button.
+// does not depend on the occupant's width. The row is pinned to the edge of
+// the uncovered terminal, which has already moved by the full width; the -8
+// only compensates the 4pt overhang of the row's rightmost button.
 //
 // Width stopped being a constant when the drawers became resizable. What
 // lives here now is the DEFAULT for each occupant plus the bounds a dragged
@@ -55,13 +55,15 @@ public enum RightDockGeometry {
         defaultWidth(for: occupant)
     }
 
-    public static func terminalTrailingConstant(for occupant: Occupant) -> CGFloat {
+    /// The drawer's leading edge as a trailing constant from the container's
+    /// trailing edge: the end of the part of the terminal it leaves uncovered.
+    public static func edgeConstant(for occupant: Occupant) -> CGFloat {
         -defaultWidth(for: occupant)
     }
 
-    /// The resizable path: the terminal gives up exactly the width the
-    /// drawer currently has, whatever the user dragged it to.
-    public static func terminalTrailingConstant(forWidth width: CGFloat) -> CGFloat {
+    /// The resizable path: the drawer covers exactly the width it currently
+    /// has, whatever the user dragged it to.
+    public static func edgeConstant(forWidth width: CGFloat) -> CGFloat {
         -width
     }
 
