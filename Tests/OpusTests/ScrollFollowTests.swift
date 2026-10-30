@@ -19,9 +19,14 @@ import SwiftTerm
 final class ScrollFollowTests: XCTestCase {
     private func makeView(lines: Int) -> TerminalView {
         let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
-        view.getTerminal().changeScrollback(1_000)
+        view.changeScrollback(1_000)
         feed(view, from: 0, count: lines)
         return view
+    }
+
+    /// The first buffer row on screen.
+    private func viewportRow(_ view: TerminalView) -> Int {
+        view.terminalStateSnapshot().viewportRow
     }
 
     private func feed(_ view: TerminalView, from start: Int, count: Int) {
@@ -32,21 +37,21 @@ final class ScrollFollowTests: XCTestCase {
     func testAViewScrolledUpStaysPutWhenNewLinesArrive() {
         let view = makeView(lines: 200)
         view.scrollUp(lines: 50)
-        let readingAt = view.getTerminal().buffer.yDisp
+        let readingAt = viewportRow(view)
 
         feed(view, from: 200, count: 5)
 
-        XCTAssertEqual(view.getTerminal().buffer.yDisp, readingAt)
+        XCTAssertEqual(viewportRow(view), readingAt)
     }
 
     func testAViewBackAtTheBottomFollowsNewLinesAgain() {
         let view = makeView(lines: 200)
         view.scrollUp(lines: 50)
         view.scrollDown(lines: 50)
-        let bottom = view.getTerminal().buffer.yDisp
+        let bottom = viewportRow(view)
 
         feed(view, from: 200, count: 5)
 
-        XCTAssertEqual(view.getTerminal().buffer.yDisp, bottom + 5)
+        XCTAssertEqual(viewportRow(view), bottom + 5)
     }
 }

@@ -1348,29 +1348,30 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// no line to read at all.
     private func resolvePathClick(in terminal: TerminalView, at local: NSPoint) -> (text: String, col: Int)? {
         guard let cell = Self.cell(in: terminal, at: local),
-              let bufferLine = terminal.getTerminal().getLine(row: cell.row) else { return nil }
-        return (bufferLine.translateToString(trimRight: true), cell.col)
+              let text = terminal.visibleRowsText(cell.row..<(cell.row + 1)).first else { return nil }
+        return (text, cell.col)
     }
 
     /// The (column, on-screen row) of the cell under a point already known
     /// to be inside `terminal`. The arithmetic and its two traps (the
     /// cell size, the unflipped view) are explained inline.
     static func cell(in terminal: TerminalView, at local: NSPoint) -> (col: Int, row: Int)? {
-        let term = terminal.getTerminal()
-        let cols = term.cols
-        let rows = term.rows
+        let size = terminal.terminalDimensions
+        let cols = size.cols
+        let rows = size.rows
         guard cols > 0, rows > 0 else { return nil }
 
         // The cell size is the font's, not the view's size over the grid:
         // SwiftTerm fits as many whole cells as it can and leaves the rest
-        // as a strip at the bottom and, beside its scroller, at the right.
-        // Dividing the view by the grid spreads that strip over every cell,
-        // and the error adds up to a whole row by the bottom rows, where
-        // Claude Code draws its input. `getOptimalFrameSize` is the grid at
-        // the real cell size plus the scroller strip SwiftTerm reserves,
-        // `NSScroller.scrollerWidth` for its `scrollerStyle`.
+        // as a strip at the bottom and at the right. Dividing the view by
+        // the grid spreads that strip over every cell, and the error adds up
+        // to a whole row by the bottom rows, where Claude Code draws its
+        // input. `getOptimalFrameSize` is the grid at the real cell size
+        // plus the scroller strip SwiftTerm reserves, which it does only for
+        // a `.legacy` scroller (an `.overlay` one floats over the text).
         let optimal = terminal.getOptimalFrameSize()
-        let scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: terminal.scrollerStyle)
+        let scrollerWidth = terminal.scrollerStyle == .legacy
+            ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
         let cellWidth = (optimal.width - scrollerWidth) / CGFloat(cols)
         let cellHeight = optimal.height / CGFloat(rows)
         guard cellWidth > 0, cellHeight > 0 else { return nil }
@@ -1432,7 +1433,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// row that cannot be reached ends the walk instead of looping.
     private func moveCursor(in terminal: TerminalView, to click: (col: Int, row: Int),
                             send: @escaping (ArraySlice<UInt8>) -> Void, allowVertical: Bool) {
-        guard let step = PromptClick.keys(in: terminal.getTerminal(), click: click, allowVertical: allowVertical)
+        guard let screen = terminal.terminalContentSnapshot(region: .viewport),
+              let step = PromptClick.keys(in: screen, click: click, allowVertical: allowVertical)
         else { return }
         send(ArraySlice(step.keys))
         if step.isVertical {
@@ -1784,46 +1786,21 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     /// Fix 2 (v1.4.2) — harvest the ACTIVE terminal's buffer as plain-text
-    /// lines via SwiftTerm's PUBLIC API (`getScrollInvariantLine` +
-    /// `translateToString`), feeding `MatchCounter`. SwiftTerm's own match
-    /// counting (`SearchService.findAll`) is `internal` — not usable from
-    /// here — so this reads the same buffer through the public surface
-    /// instead: starting at row 0, walking forward until
-    /// `getScrollInvariantLine` returns nil. v1.4.2 task-review Finding 3:
-    /// capped via `harvestCap(scrollbackLines:)` (was a hardcoded 50_000)
-    /// so the cap tracks the user's actual configured scrollback instead of
-    /// silently under-counting past it.
-    ///
-    /// DELIBERATELY STAYS ON MAIN (task-review Finding 1 deviation): the
-    /// literal brief asked for "harvest+count" to both move to a background
-    /// queue, but `getScrollInvariantLine`/`translateToString` read live
-    /// `BufferLine` objects — `class` instances backed by a raw
-    /// `UnsafeMutableBufferPointer<CharData>` with NO locking anywhere in
-    /// SwiftTerm (checked: no `NSLock`/`os_unfair_lock`/actor isolation on
-    /// `Terminal`/`Buffer`/`BufferLine`). Every `.feed()` call in this
-    /// codebase is funneled through `DispatchQueue.main.async` specifically
-    /// because of this (see `main.swift`'s `dataReceived`/`TabPane.makeShared`'s
-    /// subscription) — Claude Code's own TUI repaints regions above the
-    /// cursor via ANSI cursor movement, i.e. existing `BufferLine`s DO get
-    /// mutated in place, not just appended to. Reading that same storage
-    /// from a background thread while `.feed()` concurrently mutates it on
-    /// main would be a real memory-safety hazard, not a style nitpick. So
-    /// only THIS function (the cheap, ~21ms-at-10k-rows part) stays
-    /// synchronous on main; `MatchCounter.count()` — a pure function over
-    /// the already-copied `[String]` this returns, safe to hand to another
-    /// thread — is what actually moves to background (`scheduleMatchCount`),
-    /// which is also where the worse-scaling cost lives (84ms of the 105ms
-    /// total at 10k rows, ~420ms of the 535ms total at the old 50k cap).
+    /// lines, feeding `MatchCounter`. SwiftTerm's own match counting
+    /// (`SearchService.findAll`) is `internal` — not usable from here — so
+    /// this copies the same rows through `terminalContentSnapshot`, capped
+    /// via `harvestCap(scrollbackLines:)` (was a hardcoded 50_000) so the cap
+    /// tracks the user's actual configured scrollback instead of silently
+    /// under-counting past it. The snapshot is copied under SwiftTerm's own
+    /// terminal lock, so the rows are safe to read whatever thread parses;
+    /// `MatchCounter.count()` over the copied `[String]` is what moves to
+    /// background (`scheduleMatchCount`), which is also where the
+    /// worse-scaling cost lives.
     private func harvestBufferLines() -> [String] {
-        guard let term = activeTerminal?.getTerminal() else { return [] }
         let cap = Self.harvestCap(scrollbackLines: OpusPreferences.shared.scrollbackLines)
-        var lines: [String] = []
-        var row = 0
-        while row < cap, let line = term.getScrollInvariantLine(row: row) {
-            lines.append(line.translateToString(trimRight: true))
-            row += 1
-        }
-        return lines
+        guard let snapshot = activeTerminal?.terminalContentSnapshot(region: .history(maximumScrollbackRows: cap))
+        else { return [] }
+        return snapshot.rows.map(\.text)
     }
 
     func toggleFindBar() {
@@ -2210,10 +2187,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         // Shared pane → push its dimensions back to the broadcast PTY.
         if pane.wrapper == nil {
-            ClaudeBackend.shared.setPrimarySize(
-                cols: UInt16(pane.terminal.getTerminal().cols),
-                rows: UInt16(pane.terminal.getTerminal().rows)
-            )
+            let size = pane.terminal.terminalDimensions
+            ClaudeBackend.shared.setPrimarySize(cols: UInt16(size.cols), rows: UInt16(size.rows))
         }
 
         // The active tab just changed — refresh the context meter now
@@ -2440,7 +2415,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// So this re-derives the same "broadcast when armed, else single
     /// active-pane target, else the shared backend with no terminal to
     /// query" shape `deliver(bytes:)` uses, but asks each TARGET pane's own
-    /// `terminal.getTerminal().bracketedPasteMode` — via the per-pane
+    /// `terminalInputStateSnapshot()?.bracketedPasteMode` — via the per-pane
     /// `broadcast(bytesForPane:)` overload below for the armed case, and
     /// directly against `pane` for the single-target case — instead of
     /// asking once up front.
@@ -2448,11 +2423,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         guard !text.isEmpty else { return }
         if broadcastArmed {
             broadcast { pane in
-                let enabled = pane.terminal.getTerminal().bracketedPasteMode
+                let enabled = pane.terminal.terminalInputStateSnapshot()?.bracketedPasteMode ?? false
                 return ArraySlice(Self.bracketedPaste(text, enabled: enabled))
             }
         } else if let pane = activePane {
-            let enabled = pane.terminal.getTerminal().bracketedPasteMode
+            let enabled = pane.terminal.terminalInputStateSnapshot()?.bracketedPasteMode ?? false
             let bytes = ArraySlice(Self.bracketedPaste(text, enabled: enabled))
             if let wrapper = pane.wrapper {
                 wrapper.sendInput(bytes: bytes)
@@ -2978,7 +2953,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         t.allowMouseReporting = false
         t.font = OpusPreferences.shared.resolvedTerminalFont()
         // Scrollback applied at pane creation; existing panes keep their depth until recreated.
-        t.getTerminal().changeScrollback(OpusPreferences.shared.scrollbackLines)
+        t.changeScrollback(OpusPreferences.shared.scrollbackLines)
     }
 
     // MARK: Cockpit — broadcast input to every pane of the active tab (Lot 3, Task 7)

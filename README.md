@@ -135,6 +135,7 @@ Personal project shipped by [@Stark-52](https://github.com/Stark-52). Battle-tes
 
 ## Changelog
 
+- 2026-10-30: SwiftTerm 2.0 line (1.99.x): a row Claude Code rewrites no longer keeps the soft wrap of the text it replaced, which used to scatter the scrollback on a diagonal after a resize. Clicks on the bottom rows land on their row.
 - v1.6 (2026-08-12): prompt history palette, global send-to-Claude hotkey, task drawer, bracketed paste for multi-line input.
 - v1.5 (2026-08-12): visual harmonization — bottom status rail, one color per meaning, shared theme tokens.
 - v1.4.2 (2026-08-12): clickable Cmd+K rows, arrow-key search navigation with a match counter, a visible context readout.

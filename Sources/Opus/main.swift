@@ -128,7 +128,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         self.panel = panel
         self.container = container
         super.init()
-        self.process = LocalProcess(delegate: self)
+        self.process = LocalProcess(delegate: self, dispatchQueue: .main)
         self.terminal.terminalDelegate = self
     }
 
@@ -168,7 +168,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     /// both are a genuinely NEW conversation for this pane, so a fresh
     /// sessionId is minted here before `start()` passes it through.
     func restart() {
-        self.process = LocalProcess(delegate: self)
+        self.process = LocalProcess(delegate: self, dispatchQueue: .main)
         sessionId = UUID().uuidString.lowercased()
         // The pane keeps its terminal view across respawns — rebind it to the
         // fresh conversation immediately (overwrite-on-rebind is bindSession's
@@ -227,7 +227,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     }
 
     func getWindowSize() -> winsize {
-        let t = terminal.getTerminal()
+        let t = terminal.terminalDimensions
         return winsize(ws_row: UInt16(t.rows), ws_col: UInt16(t.cols), ws_xpixel: 0, ws_ypixel: 0)
     }
 
@@ -251,17 +251,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         // — the next layout pass produces valid positive values and we'll
         // resize then.
         guard newCols > 0, newRows > 0 else { return }
-        // Resize the PTY directly (same Mirror trick as ClaudeBackend) — LocalProcess
-        // doesn't expose its master FD publicly.
-        let mirror = Mirror(reflecting: process!)
-        for child in mirror.children where child.label == "childfd" {
-            if let fd = child.value as? Int32, fd >= 0 {
-                var ws = winsize(ws_row: UInt16(newRows), ws_col: UInt16(newCols),
-                                 ws_xpixel: 0, ws_ypixel: 0)
-                _ = ioctl(fd, TIOCSWINSZ, &ws)
-            }
-        }
-        if process.shellPid > 0 { kill(process.shellPid, SIGWINCH) }
+        process.resizePTY(cols: UInt16(newCols), rows: UInt16(newRows))
     }
 
     func setTerminalTitle(source: TerminalView, title: String) {
@@ -294,6 +284,7 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
 //   (used for tab 0's root, mirrored with Terminal.app via opus-attach)
 // - private: owns its own claude through FilteredClaudeTab
 //   (new tabs spawn one of these; every split also spawns one of these)
+@MainActor
 final class TabPane {
     let terminal: TerminalView
     let wrapper: FilteredClaudeTab?            // non-nil → private claude
@@ -653,7 +644,7 @@ final class QuickTerminalPanel: NSObject {
         // active pane is the shared one (no wrapper), since private panes own
         // their own PTYs and handle resize through their TerminalViewDelegate.
         guard let pane = container.activePane, pane.wrapper == nil else { return }
-        let t = pane.terminal.getTerminal()
+        let t = pane.terminal.terminalDimensions
         ClaudeBackend.shared.setPrimarySize(cols: UInt16(t.cols), rows: UInt16(t.rows))
     }
 

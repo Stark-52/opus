@@ -139,7 +139,9 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
 
     private func spawn(resumeMode: OpusResumeMode) {
         guard process == nil else { return }
-        let p = LocalProcess(delegate: self)
+        // On main, as SwiftTerm 1.x delivered by default (2.0 picks a private
+        // queue): the subscribers feed views and `process` is main-thread state.
+        let p = LocalProcess(delegate: self, dispatchQueue: .main)
         process = p
         // Decide currentSessionId BEFORE building the command — resolvedSpawnCommand
         // needs it for the .none case, and every other spawn effect (the
@@ -236,24 +238,12 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         process?.send(data: data)
     }
 
-    /// Update claude's PTY size. We ioctl the master FD directly (accessed via
-    /// reflection on SwiftTerm's LocalProcess.childfd since it's not public),
-    /// then SIGWINCH claude so it re-reads the size and redraws. Used for
+    /// Update claude's PTY size and SIGWINCH it so it redraws. Used for
     /// focus-following resize: when panel takes focus, resize to panel; when
     /// Terminal.app takes focus, resize to Terminal.app.
     func setPrimarySize(cols: UInt16, rows: UInt16) {
         primarySize = winsize(ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0)
-        guard let p = process else { return }
-        let mirror = Mirror(reflecting: p)
-        for child in mirror.children where child.label == "childfd" {
-            if let fd = child.value as? Int32, fd >= 0 {
-                var ws = primarySize
-                _ = ioctl(fd, TIOCSWINSZ, &ws)
-            }
-        }
-        if p.shellPid > 0 {
-            kill(p.shellPid, SIGWINCH)
-        }
+        process?.resizePTY(cols: cols, rows: rows)
     }
 
     // MARK: LocalProcessDelegate

@@ -65,11 +65,11 @@ final class PromptClickTests: XCTestCase {
 /// The same walk read off a real SwiftTerm screen: empty cells, wide
 /// characters and the cursor as the terminal reports them.
 final class PromptClickTerminalTests: XCTestCase {
-    private func terminal(showing lines: [String], cursorRow: Int, cursorCol: Int) -> Terminal {
+    private func terminal(showing lines: [String], cursorRow: Int, cursorCol: Int) throws -> TerminalContentSnapshot {
         let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 320))
         view.feed(text: lines.joined(separator: "\r\n"))
         view.feed(text: "\u{1b}[\(cursorRow + 1);\(cursorCol + 1)H")
-        return view.getTerminal()
+        return try XCTUnwrap(view.terminalContentSnapshot(region: .viewport))
     }
 
     private let input = [
@@ -81,7 +81,7 @@ final class PromptClickTerminalTests: XCTestCase {
     ]
 
     func testAClickOnTheCursorsRowSendsRightArrows() throws {
-        let term = terminal(showing: input, cursorRow: 2, cursorCol: 9)
+        let term = try terminal(showing: input, cursorRow: 2, cursorCol: 9)
         let step = try XCTUnwrap(PromptClick.keys(in: term, click: (col: 13, row: 2), allowVertical: true))
 
         XCTAssertEqual(step.keys, Array(repeating: EscapeSequences.moveRightNormal, count: 4).flatMap { $0 })
@@ -89,14 +89,14 @@ final class PromptClickTerminalTests: XCTestCase {
     }
 
     func testAWideCharacterOnTheRealScreenIsOnePress() throws {
-        let term = terminal(showing: input, cursorRow: 3, cursorCol: 19)
+        let term = try terminal(showing: input, cursorRow: 3, cursorCol: 19)
         let step = try XCTUnwrap(PromptClick.keys(in: term, click: (col: 23, row: 3), allowVertical: true))
 
         XCTAssertEqual(step.keys.count, 3 * EscapeSequences.moveRightNormal.count)
     }
 
     func testAnotherRowSendsUpOrDownOnceAndNeverTwice() throws {
-        let term = terminal(showing: input, cursorRow: 3, cursorCol: 5)
+        let term = try terminal(showing: input, cursorRow: 3, cursorCol: 5)
         let step = try XCTUnwrap(PromptClick.keys(in: term, click: (col: 9, row: 2), allowVertical: true))
 
         XCTAssertEqual(step.keys, EscapeSequences.moveUpNormal)
@@ -104,8 +104,8 @@ final class PromptClickTerminalTests: XCTestCase {
         XCTAssertNil(PromptClick.keys(in: term, click: (col: 9, row: 2), allowVertical: false))
     }
 
-    func testOutsideTheInputNothingIsSent() {
-        let term = terminal(showing: input, cursorRow: 2, cursorCol: 9)
+    func testOutsideTheInputNothingIsSent() throws {
+        let term = try terminal(showing: input, cursorRow: 2, cursorCol: 9)
 
         XCTAssertNil(PromptClick.keys(in: term, click: (col: 3, row: 0), allowVertical: true))
     }
@@ -116,23 +116,23 @@ final class PromptClickTerminalTests: XCTestCase {
 /// leaves the leftover strip at the bottom, so the input, drawn on the last
 /// rows, is where a cell height guessed from the view's own height drifts.
 final class PromptClickHitTests: XCTestCase {
+    /// The font's cell, read off a view whose `.overlay` scroller (the
+    /// default) takes no width from the grid.
     private func cellSize() -> (width: CGFloat, height: CGFloat) {
         let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        let term = view.getTerminal()
+        let term = view.terminalDimensions
         let optimal = view.getOptimalFrameSize()
-        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: view.scrollerStyle)
-        return ((optimal.width - scroller) / CGFloat(term.cols), optimal.height / CGFloat(term.rows))
+        return (optimal.width / CGFloat(term.cols), optimal.height / CGFloat(term.rows))
     }
 
     func testTheLastRowAndColumnAreHitWhateverTheLeftoverStrip() throws {
         let cell = cellSize()
-        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .overlay)
         let (cols, rows) = (60, 30)
         let view = TerminalView(frame: NSRect(x: 0, y: 0,
-                                              width: scroller + cell.width * (CGFloat(cols) + 0.9),
+                                              width: cell.width * (CGFloat(cols) + 0.9),
                                               height: cell.height * (CGFloat(rows) + 0.9)))
-        XCTAssertEqual(view.getTerminal().rows, rows)
-        XCTAssertEqual(view.getTerminal().cols, cols)
+        XCTAssertEqual(view.terminalDimensions.rows, rows)
+        XCTAssertEqual(view.terminalDimensions.cols, cols)
 
         // The middle of the bottom-right cell, in the view's unflipped space.
         let point = NSPoint(x: (CGFloat(cols) - 0.5) * cell.width,

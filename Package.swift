@@ -15,9 +15,11 @@ let package = Package(
         .executable(name: "opus-secrets", targets: ["opus-secrets"])
     ],
     dependencies: [
-        // 1.14 is the first to keep a scrolled-up view in place while output
-        // arrives; 1.99 is the line of breaking changes, so stay on 1.20.x.
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", .upToNextMinor(from: "1.20.0"))
+        // 1.99.0 is the first to clear a row's soft wrap when a line feed
+        // moves into it: before, a row Claude Code erased and rewrote kept
+        // the wrap of the text it replaced, and the next resize glued it to
+        // the row above (scrollback scattered on a diagonal).
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", .upToNextMinor(from: "1.99.2"))
     ],
     targets: [
         .target(
