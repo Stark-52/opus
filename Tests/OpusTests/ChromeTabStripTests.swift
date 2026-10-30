@@ -34,4 +34,20 @@ final class ChromeTabStripTests: XCTestCase {
     func testASingleTabStillShowsItsTitle() {
         XCTAssertEqual(ChromeTabStrip.tabWidths(titles: ["Fonctionnalité des mods"], font: font, available: 600).count, 1)
     }
+
+    func testWhenTabsOverflowTheActiveOneAndThePlusStayInView() {
+        let titles = Array(repeating: String(repeating: "Publication Instagram ", count: 3), count: 12)
+        let frames = ChromeTabStrip.tabFrames(titles: titles, activeIndex: 11, font: font, available: 600, height: 32)
+        let room = 600 - ChromeTabStrip.plusWidth - ChromeTabStrip.tabGap
+        XCTAssertGreaterThanOrEqual(frames.tabs[11].minX, 0)
+        XCTAssertLessThanOrEqual(frames.tabs[11].maxX, room)
+        XCTAssertLessThanOrEqual(frames.plus.maxX, 600)
+        XCTAssertGreaterThanOrEqual(frames.plus.minX, room)
+    }
+
+    func testWhenTabsFitThePlusFollowsTheLastOne() {
+        let frames = ChromeTabStrip.tabFrames(titles: ["a", "b"], activeIndex: 0, font: font, available: 900, height: 32)
+        XCTAssertEqual(frames.tabs[0].minX, 0)
+        XCTAssertEqual(frames.plus.minX, frames.tabs[1].maxX + ChromeTabStrip.tabGap)
+    }
 }

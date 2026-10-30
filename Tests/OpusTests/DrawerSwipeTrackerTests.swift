@@ -89,4 +89,11 @@ final class DrawerSwipeTrackerTests: XCTestCase {
         XCTAssertEqual(DrawerSwipeTracker.fingerDX(scrollingDeltaX: 5, invertedFromDevice: true), 5)
         XCTAssertEqual(DrawerSwipeTracker.fingerDX(scrollingDeltaX: 5, invertedFromDevice: false), -5)
     }
+
+    func testHoldingBeforeLettingGoIsNotAFling() {
+        feed(.began, 0, at: 0)
+        feed(.changed, 20, at: 0.025)
+        feed(.changed, 20, at: 0.05)
+        XCTAssertEqual(feed(.ended, 0, at: 1.05), .finish(.reply, open: false))
+    }
 }

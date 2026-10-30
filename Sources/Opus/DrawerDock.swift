@@ -1,4 +1,4 @@
-// DrawerDock — owner of the container's drawers: Copy on the left edge,
+// DrawerDock: owner of the container's drawers: Copy on the left edge,
 // Artifacts on the right.
 //
 // Before this existed, three things were welded to the Tasks drawer inside
@@ -183,8 +183,10 @@ final class DrawerDock {
             // Guarded on the occupant still being what this animation was
             // for: a fast second toggle would otherwise let an older
             // completion hide the drawer that is now current.
+            // A swipe that started since then owns its drawer: hiding it
+            // would make it vanish under the fingers.
             guard let self, self.occupant == requested else { return }
-            for (key, panel) in self.panels where key != requested {
+            for (key, panel) in self.panels where key != requested && key != self.interactive {
                 panel.view.isHidden = true
             }
         })

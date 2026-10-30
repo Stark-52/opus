@@ -1,4 +1,4 @@
-// ChromeBar — a band of the window reserved for controls, the way a macOS
+// ChromeBar: a band of the window reserved for controls, the way a macOS
 // toolbar or status bar is: a faint fill and a hairline on the side that
 // faces the terminal. Nothing in Opus floats over the terminal's text.
 

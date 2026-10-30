@@ -1,4 +1,4 @@
-// ChromeStatusView — the status bar's contents: the memory the session
+// ChromeStatusView: the status bar's contents: the memory the session
 // carries on the left, then the context and the plan's usage on the right,
 // as words and numbers (see ChromeStatus). A number turns amber, then red,
 // when it needs attention; nothing else in the bar has a colour.

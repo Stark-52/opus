@@ -1,4 +1,4 @@
-// DrawerSwipeTracker — reads a trackpad (or Magic Mouse) scroll gesture
+// DrawerSwipeTracker: reads a trackpad (or Magic Mouse) scroll gesture
 // over the terminal as a drawer swipe, or leaves it to the terminal.
 //
 // Right pulls Copy in from the left edge, left pulls Artifacts in from the
@@ -33,6 +33,8 @@ public struct DrawerSwipeTracker {
     public static let commitFraction: CGFloat = 1.0 / 3.0
     /// Points per second, in the finger's direction.
     public static let flingVelocity: CGFloat = 500
+    /// A move older than this when the fingers lift does not count as a fling.
+    public static let flingWindow: TimeInterval = 0.08
 
     private enum State {
         case idle
@@ -89,7 +91,7 @@ public struct DrawerSwipeTracker {
             }
             state = .lifted(wasSwipe: true)
             let travel = max(0, sumX * direction(target, opening))
-            let fling = velocity() * direction(target, opening) >= Self.flingVelocity
+            let fling = velocity(at: time) * direction(target, opening) >= Self.flingVelocity
             let farEnough = travel >= width(target) * Self.commitFraction
             return .finish(target, open: opening ? (farEnough || fling) : !(farEnough || fling))
 
@@ -139,8 +141,11 @@ public struct DrawerSwipeTracker {
         (target == .reply) == opening ? 1 : -1
     }
 
-    private func velocity() -> CGFloat {
-        guard samples.count == 2, samples[1].time > samples[0].time else { return 0 }
+    /// The speed of the last move, or none when the fingers rested before
+    /// lifting: a pull, a pause, then a release is not a fling.
+    private func velocity(at liftTime: TimeInterval) -> CGFloat {
+        guard samples.count == 2, samples[1].time > samples[0].time,
+              liftTime - samples[1].time <= Self.flingWindow else { return 0 }
         return (samples[1].x - samples[0].x) / CGFloat(samples[1].time - samples[0].time)
     }
 }

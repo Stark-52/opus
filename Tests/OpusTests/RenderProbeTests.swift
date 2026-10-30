@@ -1,4 +1,4 @@
-// RenderProbeTests — real captures of the chrome, for a person (or an agent)
+// RenderProbeTests: real captures of the chrome, for a person (or an agent)
 // to look at. Unit tests check what the views are told; these check what
 // they draw, which static review of this codebase has missed before.
 //

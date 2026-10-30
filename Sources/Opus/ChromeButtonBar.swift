@@ -1,4 +1,4 @@
-// ChromeButtonBar — the toolbar's buttons, the way a macOS toolbar draws
+// ChromeButtonBar: the toolbar's buttons, the way a macOS toolbar draws
 // them: one weight, one size, monochrome, a rounded fill under the pointer.
 // The open drawer's button is drawn brighter rather than in a colour.
 //

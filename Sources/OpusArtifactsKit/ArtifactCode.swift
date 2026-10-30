@@ -1,4 +1,4 @@
-// ArtifactCode — the source and configuration files a session touches by the
+// ArtifactCode: the source and configuration files a session touches by the
 // dozen and nobody opens from the drawer. They get their own chip, and "All"
 // leaves them out.
 

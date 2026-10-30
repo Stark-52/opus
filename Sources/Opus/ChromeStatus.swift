@@ -1,4 +1,4 @@
-// ChromeStatus — the status bar's words: the context as a percentage, the
+// ChromeStatus: the status bar's words: the context as a percentage, the
 // week's usage, the five-hour window's. Token counts and reset moments go
 // in the tooltip; the bar says only what is read at a glance.
 

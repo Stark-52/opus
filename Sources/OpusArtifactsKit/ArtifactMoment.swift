@@ -1,4 +1,4 @@
-// ArtifactMoment — the drawer's time groups, newest first.
+// ArtifactMoment: the drawer's time groups, newest first.
 //
 // Fixed slices rather than clusters, so a person can predict where a file
 // lands: the last hour, the rest of today, yesterday, then one group per

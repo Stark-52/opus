@@ -1,4 +1,4 @@
-// TerminalContainerView — owns the tabs/panes/splits, the toolbar and the status rail.
+// TerminalContainerView: owns the tabs/panes/splits, the toolbar and the status rail.
 // Hosts (QuickTerminalPanel, MainTerminalWindow) embed this view and forward
 // key events / window callbacks via the TerminalContainerHost protocol.
 //
@@ -388,7 +388,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 } else {
                     // Every route out of the artifacts drawer lands here
                     // (the hotkey, the reply drawer taking the dock instead,
-                    // anything else DrawerDock ever grows) — unlike
+                    // anything else DrawerDock ever grows), unlike
                     // toggleArtifactsDrawer, which only covers its own call
                     // site. An open QuickLook preview has no other owner
                     // telling it to close, so it would otherwise float on
@@ -1528,6 +1528,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         return snapshot.rows.map(\.text)
     }
 
+    /// The Cmd+F bar: at the top of the terminal area, under the toolbar
+    /// (or under the panel's padding with one bottom bar), never over the
+    /// tabs.
+    static func findBarConstraints(_ bar: NSView, terminalArea area: NSView) -> [NSLayoutConstraint] {
+        [
+            bar.topAnchor.constraint(equalTo: area.topAnchor, constant: 2),
+            bar.leadingAnchor.constraint(equalTo: area.leadingAnchor, constant: 60),
+            bar.widthAnchor.constraint(equalToConstant: 320),
+            bar.heightAnchor.constraint(equalToConstant: 30),
+        ]
+    }
     func toggleFindBar() {
         if let bar = findBar {
             bar.removeFromSuperview()
@@ -1548,12 +1559,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         bar.onSearchDown = { [weak self] term in self?.navigateFind(term: term, direction: .down) }
         bar.onClose = { [weak self] in self?.toggleFindBar() }
         addSubview(bar)
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 60),
-            bar.widthAnchor.constraint(equalToConstant: 320),
-            bar.heightAnchor.constraint(equalToConstant: 30),
-        ])
+        NSLayoutConstraint.activate(Self.findBarConstraints(bar, terminalArea: terminalArea))
         window?.makeFirstResponder(bar.field)
         findBar = bar
     }
@@ -2280,8 +2286,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             guard let sessionId = sessionId(for: panes[idx]) else { return .idle }
             return ClaudeStateStore.shared.state(forSessionId: sessionId)
         }
-        // Mirror the ACTIVE tab's state into the always-visible status
-        // rail's activity dot — same refresh path as tabStrip.states itself,
+        // Mirror the ACTIVE tab's state into the status bar tooltip's
+        // activity line, on the same refresh path as tabStrip.states itself,
         // so every existing call site that keeps the tab-bar dots current
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.

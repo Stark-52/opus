@@ -1,4 +1,4 @@
-// DrawerDockTests — Copy on the left edge, Artifacts on the right, one at a
+// DrawerDockTests: Copy on the left edge, Artifacts on the right, one at a
 // time, lying over a terminal whose width never changes. On a new width
 // Claude Code reprints its live region without clearing the scrollback, and
 // the seam between the two layouts repeats or drops text.
@@ -154,5 +154,16 @@ final class DrawerDockTests: XCTestCase {
         dock.show(.artifacts); settle()
         dock.beginInteractive(.artifacts); dock.setInteractiveProgress(0.3); dock.endInteractive(open: false); settle()
         XCTAssertEqual(terminal.widths, [])
+    }
+
+    func testASecondSwipeKeepsItsDrawerWhenTheFirstSlideEnds() {
+        dock.beginInteractive(.reply)
+        dock.setInteractiveProgress(0.2)
+        dock.endInteractive(open: false)
+        let firstSlideEnd = finishSlide
+        dock.beginInteractive(.reply)
+        dock.setInteractiveProgress(0.3)
+        firstSlideEnd?()
+        XCTAssertFalse(copyDrawer.isHidden, "the drawer under the fingers stays visible")
     }
 }

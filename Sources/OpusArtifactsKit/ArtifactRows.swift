@@ -1,4 +1,4 @@
-// ArtifactRows — what the artifacts drawer's table shows, row by row: a
+// ArtifactRows: what the artifacts drawer's table shows, row by row: a
 // header per moment, that moment's images three to a strip (the thing a
 // person comes to open), then its other artifacts one per row.
 

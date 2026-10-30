@@ -1,4 +1,4 @@
-// ChromeTabStrip — the window's tabs, compact and aligned left like Safari's:
+// ChromeTabStrip: the window's tabs, compact and aligned left like Safari's:
 // each as wide as its title within a floor and a ceiling, the activity dot
 // before the title, a "+" after the last. Shown with a single tab too, whose
 // title then reads as the window's.
@@ -50,6 +50,8 @@ final class ChromeTabStrip: NSView {
         // The first to give way when a bar is short; how much it hugs its
         // natural width is the layout's call (see ChromeArrangement).
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // Never draw past its band, whatever AppKit's default for the SDK.
+        if #available(macOS 14, *) { clipsToBounds = true }
     }
 
     /// Every tab at its natural width, plus the "+".
@@ -67,23 +69,44 @@ final class ChromeTabStrip: NSView {
                                        owner: self, userInfo: nil))
     }
 
-    /// Tab rects left to right, then the "+" rect, vertically centered.
-    private func layoutRects() -> (tabs: [NSRect], plus: NSRect) {
-        let widths = Self.tabWidths(titles: titles, font: Self.titleFont, available: bounds.width)
-        let height: CGFloat = 24
-        let y = floor((bounds.height - height) / 2)
+    /// Tab rects left to right, then the "+" rect, vertically centered in
+    /// `height`. When the tabs do not fit, the "+" holds the right edge and
+    /// the row slides left just enough for the active tab to end before it;
+    /// the tabs past either end are cut by `draw`.
+    static func tabFrames(titles: [String], activeIndex: Int, font: NSFont,
+                          available: CGFloat, height: CGFloat) -> (tabs: [NSRect], plus: NSRect) {
+        let widths = tabWidths(titles: titles, font: font, available: available)
+        let tabHeight: CGFloat = 24
+        let y = floor((height - tabHeight) / 2)
         var x: CGFloat = 0
         var tabs: [NSRect] = []
         for width in widths {
-            tabs.append(NSRect(x: x, y: y, width: width, height: height))
-            x += width + Self.tabGap
+            tabs.append(NSRect(x: x, y: y, width: width, height: tabHeight))
+            x += width + tabGap
         }
-        return (tabs, NSRect(x: x, y: y, width: Self.plusWidth, height: height))
+        let room = available - plusWidth - tabGap
+        guard let last = tabs.last, last.maxX > room else {
+            return (tabs, NSRect(x: x, y: y, width: plusWidth, height: tabHeight))
+        }
+        let active = tabs.indices.contains(activeIndex) ? tabs[activeIndex] : last
+        let shift = max(0, active.maxX - room)
+        return (tabs.map { $0.offsetBy(dx: -shift, dy: 0) },
+                NSRect(x: available - plusWidth, y: y, width: plusWidth, height: tabHeight))
+    }
+
+    /// Where the tabs may draw: left of the "+".
+    private var tabRoom: CGFloat { max(0, bounds.width - Self.plusWidth - Self.tabGap) }
+
+    private func layoutRects() -> (tabs: [NSRect], plus: NSRect) {
+        Self.tabFrames(titles: titles, activeIndex: activeIndex, font: Self.titleFont,
+                       available: bounds.width, height: bounds.height)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         let (tabs, plus) = layoutRects()
-        for (index, rect) in tabs.enumerated() {
+        NSGraphicsContext.saveGraphicsState()
+        NSRect(x: 0, y: 0, width: tabRoom, height: bounds.height).clip()
+        for (index, rect) in tabs.enumerated() where rect.maxX > 0 && rect.minX < tabRoom {
             let isActive = index == activeIndex
             if isActive || index == hoveredIndex {
                 (isActive ? OpusTheme.cream(0.09) : OpusTheme.cream(0.05)).setFill()
@@ -110,6 +133,7 @@ final class ChromeTabStrip: NSView {
                 with: NSRect(x: textX, y: rect.midY - textHeight / 2, width: rect.maxX - 10 - textX, height: textHeight),
                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
         }
+        NSGraphicsContext.restoreGraphicsState()
         if plus.maxX <= bounds.width {
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.systemFont(ofSize: 14, weight: .light),
@@ -124,7 +148,7 @@ final class ChromeTabStrip: NSView {
     /// The tab index under `point`, -1 for the "+", nil for empty space.
     private func hit(_ point: NSPoint) -> Int? {
         let (tabs, plus) = layoutRects()
-        if let index = tabs.firstIndex(where: { $0.contains(point) }) { return index }
+        if point.x < tabRoom, let index = tabs.firstIndex(where: { $0.contains(point) }) { return index }
         return plus.contains(point) && plus.maxX <= bounds.width ? -1 : nil
     }
 

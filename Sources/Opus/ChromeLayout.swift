@@ -1,4 +1,4 @@
-// ChromeLayout — where the window's bars go, and the arrangement that puts
+// ChromeLayout: where the window's bars go, and the arrangement that puts
 // them there.
 //
 // A, `toolbarAndStatus`: the tabs and buttons in a toolbar above the

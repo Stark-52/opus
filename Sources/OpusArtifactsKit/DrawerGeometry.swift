@@ -1,4 +1,4 @@
-// DrawerGeometry — the drawers' widths, sides and offsets.
+// DrawerGeometry: the drawers' widths, sides and offsets.
 //
 // Width stopped being a constant when the drawers became resizable. What
 // lives here now is the DEFAULT for each occupant plus the bounds a dragged
