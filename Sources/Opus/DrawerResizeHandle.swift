@@ -11,6 +11,7 @@
 // most sessions never use.
 
 import AppKit
+import OpusArtifactsKit
 
 final class DrawerResizeHandle: NSView {
     /// How wide the grabbable strip is. Narrow enough not to steal clicks
@@ -24,8 +25,11 @@ final class DrawerResizeHandle: NSView {
     /// Called once on mouse up, so the width is written to preferences at
     /// the end of a gesture rather than on every frame of it.
     private let commit: () -> Void
+    /// Which edge of the container the drawer is pinned to.
+    private let side: DrawerSide
 
-    init(proposeWidth: @escaping (CGFloat) -> Void, commit: @escaping () -> Void) {
+    init(side: DrawerSide, proposeWidth: @escaping (CGFloat) -> Void, commit: @escaping () -> Void) {
+        self.side = side
         self.proposeWidth = proposeWidth
         self.commit = commit
         super.init(frame: .zero)
@@ -43,13 +47,13 @@ final class DrawerResizeHandle: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         // Measured against the CONTAINER, not against this view: the drawer
-        // is pinned to the container's trailing edge, so the width the user
+        // is pinned to one of the container's edges, so the width the user
         // is asking for is the distance from the pointer to that edge.
         // Using this view's own coordinates would drift by whatever the
         // handle had already moved.
         guard let container = superview else { return }
         let point = container.convert(event.locationInWindow, from: nil)
-        proposeWidth(container.bounds.maxX - point.x)
+        proposeWidth(side == .trailing ? container.bounds.maxX - point.x : point.x - container.bounds.minX)
     }
 
     override func mouseUp(with event: NSEvent) {

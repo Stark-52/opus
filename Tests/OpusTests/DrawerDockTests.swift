@@ -1,8 +1,7 @@
-// DrawerDockTests — a drawer lies over the terminal, whose width never
-// changes. On a new width Claude Code clears its screen and prints its live
-// region again without clearing the scrollback, and the seam between the
-// two layouts repeats or drops text. The edge of the uncovered part, which
-// the top-right button row follows, moves with the drawer instead.
+// DrawerDockTests — Copy on the left edge, Artifacts on the right, one at a
+// time, lying over a terminal whose width never changes. On a new width
+// Claude Code reprints its live region without clearing the scrollback, and
+// the seam between the two layouts repeats or drops text.
 
 import XCTest
 import AppKit
@@ -21,10 +20,10 @@ final class DrawerDockTests: XCTestCase {
 
     private var window: NSWindow!
     private var terminal: TerminalArea!
-    private var uncovered: NSLayoutGuide!
-    private var drawer: NSView!
+    private var copyDrawer: NSView!
+    private var artifactsDrawer: NSView!
     private var dock: DrawerDock!
-    private var drawerWidth: CGFloat = 300
+    private let drawerWidth: CGFloat = 300
     /// The end of the slide in flight, called by the test when it chooses.
     private var finishSlide: (() -> Void)?
 
@@ -37,32 +36,40 @@ final class DrawerDockTests: XCTestCase {
         window.contentView = container
 
         terminal = TerminalArea(frame: .zero)
-        terminal.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(terminal)
-        uncovered = NSLayoutGuide()
+        copyDrawer = NSView(frame: .zero)
+        artifactsDrawer = NSView(frame: .zero)
+        let uncovered = NSLayoutGuide()
         container.addLayoutGuide(uncovered)
-        drawer = NSView(frame: .zero)
-        drawer.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(drawer)
-
+        for view in [terminal!, copyDrawer!, artifactsDrawer!] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+        }
         let edge = uncovered.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: container.trailingAnchor)
-        let width = drawer.widthAnchor.constraint(equalToConstant: drawerWidth)
+        let copyOffset = copyDrawer.leadingAnchor.constraint(equalTo: container.leadingAnchor)
+        let artifactsOffset = artifactsDrawer.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+        let copyWidth = copyDrawer.widthAnchor.constraint(equalToConstant: drawerWidth)
+        let artifactsWidth = artifactsDrawer.widthAnchor.constraint(equalToConstant: drawerWidth)
         NSLayoutConstraint.activate([
             terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             terminal.topAnchor.constraint(equalTo: container.topAnchor),
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             uncovered.leadingAnchor.constraint(equalTo: terminal.leadingAnchor),
             uncovered.topAnchor.constraint(equalTo: terminal.topAnchor),
             uncovered.bottomAnchor.constraint(equalTo: terminal.bottomAnchor),
             edge,
-            drawer.topAnchor.constraint(equalTo: container.topAnchor),
-            drawer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            drawerTrailing, width
+            copyDrawer.topAnchor.constraint(equalTo: container.topAnchor),
+            copyDrawer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            artifactsDrawer.topAnchor.constraint(equalTo: container.topAnchor),
+            artifactsDrawer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            copyOffset, artifactsOffset, copyWidth, artifactsWidth,
         ])
         dock = DrawerDock(
-            panels: [.reply: DrawerDock.Panel(view: drawer, trailing: drawerTrailing, width: width)],
+            panels: [
+                .reply: DrawerDock.Panel(view: copyDrawer, offset: copyOffset, width: copyWidth, side: .leading),
+                .artifacts: DrawerDock.Panel(view: artifactsDrawer, offset: artifactsOffset,
+                                             width: artifactsWidth, side: .trailing),
+            ],
             edge: edge,
             widthProvider: { [unowned self] occupant in occupant == .none ? 0 : self.drawerWidth },
             layout: { container.layoutSubtreeIfNeeded() },
@@ -86,37 +93,74 @@ final class DrawerDockTests: XCTestCase {
         finishSlide = nil
     }
 
-    // The slide itself is AppKit's and does not run in a test; the changes
-    // made inside it are what it animates.
-    func testAnOpeningDrawerLiesOverTheTerminalAndMovesTheEdgeWithIt() {
+    func testTheCopyDrawerOpensFromTheLeft() {
+        XCTAssertEqual(copyDrawer.frame.minX, -300, "parked one width off the left edge")
         dock.show(.reply)
-        XCTAssertEqual(drawer.frame.minX, 600, "the drawer is in")
-        XCTAssertEqual(uncovered.frame.maxX, 600, "the edge slid with it")
+        XCTAssertEqual(copyDrawer.frame.minX, 0)
         settle()
-        XCTAssertEqual(terminal.widths, [], "the terminal kept its width")
-        XCTAssertEqual(drawer.isHidden, false)
+        XCTAssertFalse(copyDrawer.isHidden)
     }
 
-    func testAClosingDrawerGivesTheEdgeBackWithoutResizingTheTerminal() {
-        dock.show(.reply)
-        settle()
-
-        dock.show(.none)
-        XCTAssertEqual(uncovered.frame.maxX, 900)
-        settle()
-        XCTAssertEqual(terminal.widths, [])
-        XCTAssertEqual(drawer.isHidden, true, "a parked drawer is hidden once it is out")
+    func testTheArtifactsDrawerStillOpensFromTheRight() {
+        XCTAssertEqual(artifactsDrawer.frame.minX, 900)
+        dock.show(.artifacts)
+        XCTAssertEqual(artifactsDrawer.frame.minX, 600)
     }
 
-    func testDraggingTheDrawerEdgeMovesTheUncoveredEdgeAlone() {
+    func testOneDrawerAtATimeSwaps() {
         dock.show(.reply)
         settle()
+        dock.show(.artifacts)
+        XCTAssertEqual(copyDrawer.frame.minX, -300)
+        XCTAssertEqual(artifactsDrawer.frame.minX, 600)
+        settle()
+        XCTAssertTrue(copyDrawer.isHidden)
+        XCTAssertEqual(dock.occupant, .artifacts)
+    }
 
-        for proposed in stride(from: 310, through: 400, by: 10) {
-            dock.setWidth(CGFloat(proposed), for: .reply)
-        }
-        XCTAssertEqual(drawer.frame.width, 400)
-        XCTAssertEqual(uncovered.frame.maxX, 500, "the edge follows the pointer")
+    func testInteractiveProgressPlacesTheDrawerPartWay() {
+        dock.beginInteractive(.reply)
+        dock.setInteractiveProgress(0.5)
+        XCTAssertEqual(copyDrawer.frame.minX, -150)
+        XCTAssertFalse(copyDrawer.isHidden)
+        XCTAssertNil(finishSlide, "following the fingers is not animated")
+    }
+
+    func testEndingInteractiveOpenSettlesItOpen() {
+        dock.beginInteractive(.reply)
+        dock.setInteractiveProgress(0.4)
+        dock.endInteractive(open: true)
+        XCTAssertEqual(copyDrawer.frame.minX, 0)
+        settle()
+        XCTAssertEqual(dock.occupant, .reply)
+    }
+
+    func testEndingInteractiveClosedParksAndHidesIt() {
+        dock.beginInteractive(.artifacts)
+        dock.setInteractiveProgress(0.2)
+        dock.endInteractive(open: false)
+        XCTAssertEqual(artifactsDrawer.frame.minX, 900)
+        settle()
+        XCTAssertTrue(artifactsDrawer.isHidden)
+        XCTAssertEqual(dock.occupant, .none)
+    }
+
+    func testClosingAnOpenDrawerInteractively() {
+        dock.show(.artifacts)
+        settle()
+        dock.beginInteractive(.artifacts)
+        dock.setInteractiveProgress(0.5)
+        XCTAssertEqual(artifactsDrawer.frame.minX, 750)
+        dock.endInteractive(open: false)
+        settle()
+        XCTAssertEqual(dock.occupant, .none)
+        XCTAssertTrue(artifactsDrawer.isHidden)
+    }
+
+    func testNoDrawerEverResizesTheTerminal() {
+        dock.show(.reply); settle()
+        dock.show(.artifacts); settle()
+        dock.beginInteractive(.artifacts); dock.setInteractiveProgress(0.3); dock.endInteractive(open: false); settle()
         XCTAssertEqual(terminal.widths, [])
     }
 }

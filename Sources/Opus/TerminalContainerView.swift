@@ -467,14 +467,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         addSubview(drawer)
         let drawerBottom = drawer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
         // Held rather than activated anonymously: DrawerDock animates this
-        // constant between 0 (showing) and the drawer's width (parked off
-        // the right edge), which is what makes opening a slide.
-        let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: trailingAnchor)
+        // constant between 0 (showing) and minus the drawer's width (parked
+        // off the left edge), which is what makes opening a slide. Copy sits
+        // on the left, where a swipe to the right pulls it in.
+        let drawerLeading = drawer.leadingAnchor.constraint(equalTo: leadingAnchor)
         let drawerWidth = drawer.widthAnchor.constraint(
             equalToConstant: OpusPreferences.shared.drawerWidth(for: .reply))
         NSLayoutConstraint.activate([
             drawer.topAnchor.constraint(equalTo: topAnchor),
-            drawerTrailing,
+            drawerLeading,
             drawerWidth,
             drawerBottom
         ])
@@ -513,15 +514,18 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         artifactsDrawer = artifactsDrawerView
         artifactsDrawerBottomConstraint = artifactsBottom
 
-        // One grabbable strip per drawer, pinned to its leading edge and
-        // sized in points, installed AFTER both drawers so it sits above
+        // One grabbable strip per drawer, pinned to its inner edge (the one
+        // facing the terminal) and sized in points, installed AFTER both
+        // drawers so it sits above
         // them in z-order and wins the hit test. The drag reports a proposed
         // width continuously; on mouse up preferences store it, once:
         // persisting every frame would fire the preferences-changed
         // notification dozens of times per gesture.
         for (occupant, view) in [(DrawerGeometry.Occupant.reply, drawer as NSView),
                                  (.artifacts, artifactsDrawerView as NSView)] {
+            let side = DrawerGeometry.side(for: occupant)
             let handle = DrawerResizeHandle(
+                side: side,
                 proposeWidth: { [weak self] proposed in
                     self?.drawerDock?.setWidth(proposed, for: occupant)
                 },
@@ -532,7 +536,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 })
             addSubview(handle)
             NSLayoutConstraint.activate([
-                handle.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                side == .trailing
+                    ? handle.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+                    : handle.trailingAnchor.constraint(equalTo: view.trailingAnchor),
                 handle.widthAnchor.constraint(
                     equalToConstant: DrawerResizeHandle.thickness),
                 handle.topAnchor.constraint(equalTo: view.topAnchor),
@@ -543,10 +549,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         drawerDock = DrawerDock(
             panels: [
                 .reply: DrawerDock.Panel(
-                    view: drawer, trailing: drawerTrailing, width: drawerWidth),
+                    view: drawer, offset: drawerLeading, width: drawerWidth, side: .leading),
                 .artifacts: DrawerDock.Panel(
-                    view: artifactsDrawerView, trailing: artifactsTrailing,
-                    width: artifactsWidth)
+                    view: artifactsDrawerView, offset: artifactsTrailing,
+                    width: artifactsWidth, side: .trailing)
             ],
             edge: uncoveredTrailingConstraint,
             widthProvider: { OpusPreferences.shared.drawerWidth(for: $0) },

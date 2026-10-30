@@ -46,9 +46,10 @@ final class ReplyDrawerView: NSView {
         wantsLayer = true
         layer?.backgroundColor = OpusTheme.panelBackground.cgColor
         // Rounded on the edge facing the terminal only, like the other
-        // drawers: the right edge sits flush against the container's.
+        // drawers: this one lives on the left, so its left edge sits flush
+        // against the container's.
         layer?.cornerRadius = OpusTheme.radiusControl
-        layer?.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        layer?.maskedCorners = [.layerMaxXMinYCorner, .layerMaxXMaxYCorner]
         layer?.masksToBounds = true
 
         header.font = .systemFont(ofSize: 12, weight: .medium)

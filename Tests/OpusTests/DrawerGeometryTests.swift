@@ -27,4 +27,16 @@ final class DrawerGeometryTests: XCTestCase {
         XCTAssertTrue(DrawerGeometry.isOpen(.reply))
         XCTAssertTrue(DrawerGeometry.isOpen(.artifacts))
     }
+
+    func testSides() {
+        XCTAssertEqual(DrawerGeometry.side(for: .reply), .leading)
+        XCTAssertEqual(DrawerGeometry.side(for: .artifacts), .trailing)
+    }
+
+    func testOffsets() {
+        XCTAssertEqual(DrawerGeometry.offset(width: 300, side: .leading, progress: 0.25), -225)
+        XCTAssertEqual(DrawerGeometry.offset(width: 300, side: .trailing, progress: 0), 300)
+        XCTAssertEqual(DrawerGeometry.offset(width: 300, side: .trailing, progress: 1), 0)
+        XCTAssertEqual(DrawerGeometry.offset(width: 300, side: .leading, progress: 1.4), 0, "clamped")
+    }
 }

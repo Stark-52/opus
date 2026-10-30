@@ -14,6 +14,10 @@
 import Foundation
 import CoreGraphics
 
+public enum DrawerSide: Sendable {
+    case leading, trailing
+}
+
 public enum DrawerGeometry {
     public enum Occupant: Equatable, Sendable {
         case none
@@ -68,4 +72,18 @@ public enum DrawerGeometry {
     }
 
     public static func isOpen(_ occupant: Occupant) -> Bool { occupant != .none }
+
+    /// Copy comes in from the left, where a swipe to the right pulls it;
+    /// Artifacts from the right.
+    public static func side(for occupant: Occupant) -> DrawerSide {
+        occupant == .reply ? .leading : .trailing
+    }
+
+    /// The constant of the constraint that pins a drawer's outer edge to the
+    /// container's edge on its side: 0 fully in, one width out (negative on
+    /// the left) fully parked, and in between for a drawer following a swipe.
+    public static func offset(width: CGFloat, side: DrawerSide, progress: CGFloat) -> CGFloat {
+        let parked = side == .trailing ? width : -width
+        return parked * (1 - min(1, max(0, progress)))
+    }
 }

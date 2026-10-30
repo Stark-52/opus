@@ -1,4 +1,5 @@
-// DrawerDock — owner of the container's right edge.
+// DrawerDock — owner of the container's drawers: Copy on the left edge,
+// Artifacts on the right.
 //
 // Before this existed, three things were welded to the Tasks drawer inside
 // TerminalContainerView: the terminal area's trailing constraint, the
@@ -7,27 +8,23 @@
 // bug with it, where the row's members moved independently and ended up
 // drawn inside the drawer.
 //
-// One occupant at a time. Opening one closes the other, so the terminal
-// only ever pays for one drawer's width.
+// One occupant at a time. Opening one closes the other: two drawers over
+// the terminal would cover more than half of it.
 //
-// The dock owns each drawer's OWN trailing constraint, and the edge of the
-// part of the terminal no drawer covers. A drawer lies over the terminal,
-// whose width never changes: on a new width Claude Code clears its screen
-// and prints its live region again, and since it never clears the
-// scrollback, the seam between the two layouts repeats text (narrowing) or
-// drops it (widening). The edge slides with the drawer and follows a
-// dragged one, so the top-right button row stays clear of it.
+// A drawer lies over the terminal, whose width never changes: on a new
+// width Claude Code clears its screen and prints its live region again,
+// and since it never clears the scrollback, the seam between the two
+// layouts repeats text (narrowing) or drops it (widening). The dock owns
+// each drawer's outer-edge constraint, and the edge of the part of the
+// terminal no right-hand drawer covers, which the top-right button row
+// follows.
 //
-// Deliberately NOT clipped. A parked drawer sits one full width past the
-// container's trailing edge, and while closing it crosses that edge for the
-// length of the animation. Setting `masksToBounds` on the container would
-// contain that, and would also clip the Quick Terminal panel's
-// open-in-Terminal button, which is pinned 4pt PAST the container's
-// trailing edge on purpose (see TopRightButtonRow.openBase: the container's
-// edge is the blur view's minus 14, and the button reproduces its historical
-// position inside that padding). Trading a permanently clipped button for a
-// 90ms cosmetic risk in a band that already hosts a button is the wrong way
-// round.
+// A drawer can also follow a swipe: `beginInteractive`, then a progress
+// from 0 (parked) to 1 (in) per event, then `endInteractive` settles it one
+// way or the other with the same slide a click gets.
+//
+// A parked drawer sits one full width past its side of the container and
+// is hidden once the slide that parked it has ended.
 
 import AppKit
 import OpusArtifactsKit
@@ -35,25 +32,23 @@ import OpusArtifactsKit
 final class DrawerDock {
     typealias Occupant = DrawerGeometry.Occupant
 
-    /// One drawer, plus the constraint that parks it off the right edge.
-    /// `trailing.constant` is 0 while showing and the drawer's own width
-    /// while parked, so a parked drawer sits exactly one width to the right
-    /// of the container and is invisible without relying on `isHidden`
-    /// alone.
+    /// One drawer and the constraint that pins its outer edge to the
+    /// container's edge on its side. See `DrawerGeometry.offset`.
     struct Panel {
         let view: NSView
-        let trailing: NSLayoutConstraint
-        /// The drawer's own width. Mutable because the leading edge is
-        /// draggable; the parked `trailing.constant` has to follow it or a
-        /// drawer resized while closed would reappear part-way on screen.
+        let offset: NSLayoutConstraint
+        /// The drawer's own width. Mutable because the inner edge is
+        /// draggable; a parked drawer's offset has to follow it or a drawer
+        /// resized while closed would reappear part-way on screen.
         let width: NSLayoutConstraint
+        let side: DrawerSide
     }
 
     private(set) var occupant: Occupant = .none
 
     private let panels: [Occupant: Panel]
-    /// Trailing constraint of the uncovered part of the terminal: 0 with no
-    /// drawer, minus the drawer's width with one.
+    /// Trailing constraint of the part of the terminal no right-hand drawer
+    /// covers: 0 with none, minus the drawer's width with one.
     private let edge: NSLayoutConstraint
     /// Resolves an occupant's current width, which is a stored preference
     /// rather than a constant now that the edge can be dragged. Injected so
@@ -68,6 +63,9 @@ final class DrawerDock {
     /// both, because both reach into state this class deliberately does not
     /// know about.
     private let onChange: (Occupant) -> Void
+    /// The drawer a swipe is moving, between `beginInteractive` and
+    /// `endInteractive`.
+    private var interactive: Occupant?
 
     /// Runs `changes` as the slide, then `completion` once it has ended.
     /// `opening` picks the duration and the easing.
@@ -108,7 +106,7 @@ final class DrawerDock {
             panel.view.isHidden = true
             let w = widthProvider(key)
             panel.width.constant = w
-            panel.trailing.constant = w
+            panel.offset.constant = DrawerGeometry.offset(width: w, side: panel.side, progress: 0)
         }
     }
 
@@ -121,11 +119,9 @@ final class DrawerDock {
         let width = DrawerGeometry.clampWidth(proposed, for: target)
         panel.width.constant = width
         if target == occupant {
-            edge.constant = DrawerGeometry.edgeConstant(forWidth: width)
+            if panel.side == .trailing { edge.constant = DrawerGeometry.edgeConstant(forWidth: width) }
         } else {
-            // Parked: keep it exactly one width off the edge so it does not
-            // reappear part-way on screen next time it opens.
-            panel.trailing.constant = width
+            panel.offset.constant = DrawerGeometry.offset(width: width, side: panel.side, progress: 0)
         }
         layout()
     }
@@ -146,6 +142,42 @@ final class DrawerDock {
 
     func show(_ requested: Occupant) {
         guard requested != occupant else { return }
+        settle(to: requested)
+    }
+
+    // MARK: Following a swipe
+
+    /// A swipe starts moving `target`, opening it or, when it is the
+    /// occupant, closing it.
+    func beginInteractive(_ target: Occupant) {
+        guard let panel = panels[target] else { return }
+        interactive = target
+        panel.view.isHidden = false
+    }
+
+    /// 0 parked, 1 fully in, without animation: the drawer is under the
+    /// fingers.
+    func setInteractiveProgress(_ progress: CGFloat) {
+        guard let target = interactive, let panel = panels[target] else { return }
+        let width = panel.width.constant
+        panel.offset.constant = DrawerGeometry.offset(width: width, side: panel.side, progress: progress)
+        if panel.side == .trailing {
+            edge.constant = -width * min(1, max(0, progress))
+        }
+        layout()
+    }
+
+    /// The fingers lifted: slide the drawer the rest of the way in, or back
+    /// out, from wherever the swipe left it.
+    func endInteractive(open: Bool) {
+        guard let target = interactive else { return }
+        interactive = nil
+        settle(to: open ? target : .none)
+    }
+
+    /// Slides every drawer to its place for `requested`, from wherever each
+    /// one is, then hides the parked ones.
+    private func settle(to requested: Occupant) {
         occupant = requested
 
         // Unhide the incoming drawer BEFORE the animation starts: a hidden
@@ -156,9 +188,11 @@ final class DrawerDock {
 
         animate(DrawerGeometry.isOpen(requested), { [self] in
             for (key, panel) in panels {
-                panel.trailing.constant = key == requested ? 0 : widthProvider(key)
+                panel.offset.constant = DrawerGeometry.offset(
+                    width: widthProvider(key), side: panel.side, progress: key == requested ? 1 : 0)
             }
-            edge.constant = DrawerGeometry.edgeConstant(forWidth: widthProvider(requested))
+            edge.constant = DrawerGeometry.side(for: requested) == .trailing
+                ? DrawerGeometry.edgeConstant(forWidth: widthProvider(requested)) : 0
             layout()
         }, { [weak self] in
             // Guarded on the occupant still being what this animation was
