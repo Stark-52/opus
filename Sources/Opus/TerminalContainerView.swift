@@ -201,6 +201,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var commandClickMonitor: Any?
     /// Plain click in Claude Code's input → arrow keys (see PromptClick).
     private var promptClickMonitor: Any?
+    /// Two-finger swipe over the terminal → a drawer that follows it.
+    private var swipeMonitor: Any?
+    private var swipeTracker = DrawerSwipeTracker()
+    /// The drawer the swipe in progress moves, once the dock was told.
+    private var swipeTarget: DrawerGeometry.Occupant?
 
     // Cockpit (Lot 3, Task 7) — broadcast input to every pane of the ACTIVE
     // tab. See the MARK section near `broadcast(data:)` below for the full
@@ -323,6 +328,12 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let isPlain = ev.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
             if isPlain, ev.clickCount == 1 { self.handlePromptClick(at: ev.locationInWindow) }
             return ev
+        }
+        // Gestures with phases only (trackpad, Magic Mouse): a wheel's
+        // notches have none and always reach the terminal.
+        swipeMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] ev in
+            guard let self, ev.window === self.window else { return ev }
+            return self.handleSwipe(ev) ? nil : ev
         }
         if useSharedTab0 {
             NotificationCenter.default.addObserver(
@@ -974,7 +985,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// some other session's: the same "no data beats wrong data" rule as
     /// the context meter (see `activeSessionId()`).
     private func refreshReplyDrawer() {
-        guard drawerDock?.occupant == .reply else { return }
+        guard drawerDock?.occupant == .reply || swipeTarget == .reply else { return }
         guard !replyDrawerRefreshInFlight else { return }
         replyDrawerGeneration += 1
         let generation = replyDrawerGeneration
@@ -1036,7 +1047,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     private func refreshArtifacts() {
-        guard drawerDock?.occupant == .artifacts else { return }
+        guard drawerDock?.occupant == .artifacts || swipeTarget == .artifacts else { return }
 
         // Session resolution and the identity reset run BEFORE the in-flight
         // guard, not after it. A first read of a large transcript takes about
@@ -1430,6 +1441,51 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // almost every real click. getTopVisibleRow() is therefore
         // deliberately NOT used here.
         return (col, rowOnScreen)
+    }
+
+    /// One scroll event of a possible drawer swipe; true when it was the
+    /// swipe's and must not reach the terminal. A gesture counts only if it
+    /// starts over the terminal area, drawers included.
+    private func handleSwipe(_ event: NSEvent) -> Bool {
+        guard let dock = drawerDock else { return false }
+        let phase: DrawerSwipeTracker.Phase
+        if !event.momentumPhase.isEmpty { phase = .momentum }
+        else if event.phase.contains(.began) { phase = .began }
+        else if event.phase.contains(.changed) { phase = .changed }
+        else if event.phase.contains(.ended) { phase = .ended }
+        else if event.phase.contains(.cancelled) { phase = .cancelled }
+        else { return false }
+        if phase == .began, !terminalArea.bounds.contains(terminalArea.convert(event.locationInWindow, from: nil)) {
+            // Forget the previous gesture, so its momentum rule cannot leak
+            // into this one.
+            swipeTracker = DrawerSwipeTracker()
+            return false
+        }
+
+        let output = swipeTracker.feed(
+            phase: phase,
+            fingerDX: DrawerSwipeTracker.fingerDX(scrollingDeltaX: event.scrollingDeltaX,
+                                                  invertedFromDevice: event.isDirectionInvertedFromDevice),
+            dy: event.scrollingDeltaY, time: event.timestamp,
+            open: dock.occupant, width: { dock.currentWidth(for: $0) })
+        switch output {
+        case .passThrough:
+            return false
+        case .consume:
+            return true
+        case .progress(let target, let progress):
+            if swipeTarget != target {
+                swipeTarget = target
+                dock.beginInteractive(target)
+                if target == .reply { refreshReplyDrawer() } else { refreshArtifacts() }
+            }
+            dock.setInteractiveProgress(progress)
+            return true
+        case .finish(_, let open):
+            swipeTarget = nil
+            dock.endInteractive(open: open)
+            return true
+        }
     }
 
     /// Whether a click at `windowPoint` reaches `terminal` itself: a drawer
