@@ -1,9 +1,7 @@
-// ContextMeter — parses a Claude Code transcript tail into a context-window
-// usage fraction, for the bottom status rail (StatusRailView) TerminalContainerView
-// paints above its tab bar (Lot 3, Task 4; the rail itself is the
-// visual-harmonization batch's Task 2/3 — this parsing layer is unchanged
-// by that migration, only its consumer moved from ContextMeterBar to
-// StatusRailView).
+// ContextMeter: parses a Claude Code transcript tail into a context-window
+// usage fraction, for the status bar's context figure (ChromeStatusView).
+// Its consumers changed over time (ContextMeterBar, then the status rail);
+// this parsing layer did not.
 //
 // Real transcript shape, confirmed against a live transcript under
 // ~/.claude/projects/<cwd-with-slashes-as-dashes>/<session-id>.jsonl

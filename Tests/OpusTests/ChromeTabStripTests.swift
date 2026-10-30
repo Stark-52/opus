@@ -50,4 +50,10 @@ final class ChromeTabStripTests: XCTestCase {
         XCTAssertEqual(frames.tabs[0].minX, 0)
         XCTAssertEqual(frames.plus.minX, frames.tabs[1].maxX + ChromeTabStrip.tabGap)
     }
+
+    func testEachTabNamesItsShortcut() {
+        XCTAssertEqual(ChromeTabStrip.toolTip(index: 0, title: "Fonctionnalité des mods"), "Fonctionnalité des mods (Cmd+1)")
+        XCTAssertEqual(ChromeTabStrip.toolTip(index: 8, title: "Neuf"), "Neuf (Cmd+9)")
+        XCTAssertEqual(ChromeTabStrip.toolTip(index: 9, title: "Dix"), "Dix", "only the first nine have a shortcut")
+    }
 }

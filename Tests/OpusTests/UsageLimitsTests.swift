@@ -10,7 +10,6 @@ import XCTest
 @testable import Opus
 
 final class UsageLimitsTests: XCTestCase {
-    private let paris = TimeZone(identifier: "Europe/Paris")!
 
     /// 2026-10-29 21:00 in Paris.
     private let now = Date(timeIntervalSince1970: 1_793_304_000)
@@ -41,19 +40,6 @@ final class UsageLimitsTests: XCTestCase {
         """))
 
         XCTAssertEqual(UsageLimits.current(windows, now: now).map(\.kind), [.sevenDay])
-    }
-
-    func testTheFiveHourWindowShowsItsResetTime() {
-        let window = UsageWindow(kind: .fiveHour, percent: 42.4, resetsAt: Date(timeIntervalSince1970: 1_793_310_420))
-
-        XCTAssertEqual(UsageLimits.label(window, timeZone: paris), "5h 42% ↺22:47")
-    }
-
-    func testTheSevenDayWindowShowsItsResetDay() {
-        // Sunday 1 November 2026, 05:20 in Paris.
-        let window = UsageWindow(kind: .sevenDay, percent: 83, resetsAt: Date(timeIntervalSince1970: 1_793_506_800))
-
-        XCTAssertEqual(UsageLimits.label(window, timeZone: paris), "7j 83% ↺dim")
     }
 
     func testUsageEscalatesAtHalfAndAtEightyPercent() {

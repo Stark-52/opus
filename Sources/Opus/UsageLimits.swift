@@ -1,4 +1,4 @@
-// UsageLimits — the plan's 5-hour and 7-day usage windows, for the rail.
+// UsageLimits: the plan's 5-hour and 7-day usage windows, for the status bar.
 //
 // Claude Code hands its status line command `rate_limits` on every refresh
 // (Pro and Max plans, once a first API response has come back). The command
@@ -18,13 +18,6 @@ struct UsageWindow: Equatable {
             switch self {
             case .fiveHour: return "five_hour"
             case .sevenDay: return "seven_day"
-            }
-        }
-
-        var shortName: String {
-            switch self {
-            case .fiveHour: return "5h"
-            case .sevenDay: return "7j"
             }
         }
     }
@@ -74,19 +67,7 @@ enum UsageLimits {
         return .nominal
     }
 
-    /// "5h 42% ↺22:47" for the five-hour window, "7j 83% ↺dim" for the week:
-    /// the hour is what matters within five hours, the day within seven.
-    static func label(_ window: UsageWindow, timeZone: TimeZone = .current) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "fr_FR")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = window.kind == .fiveHour ? "HH:mm" : "EEE"
-        let reset = formatter.string(from: window.resetsAt).replacingOccurrences(of: ".", with: "")
-
-        return "\(window.kind.shortName) \(Int(window.percent.rounded()))% ↺\(reset)"
-    }
-
-    /// The tooltip line: the full reset moment, which the rail abbreviates.
+    /// The tooltip line: the full reset moment.
     static func tooltip(_ window: UsageWindow, timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "fr_FR")

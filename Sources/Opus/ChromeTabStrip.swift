@@ -17,12 +17,18 @@ final class ChromeTabStrip: NSView {
     var titles: [String] = [] {
         didSet {
             needsDisplay = true
+            needsLayout = true
             invalidateIntrinsicContentSize()
         }
     }
     /// One per tab, same index space as `titles`; missing entries draw no dot.
     var states: [PaneActivity] = [] { didSet { needsDisplay = true } }
-    var activeIndex = 0 { didSet { needsDisplay = true } }
+    var activeIndex = 0 {
+        didSet {
+            needsDisplay = true
+            needsLayout = true
+        }
+    }
     var onSwitch: ((Int) -> Void)?
     var onNewTab: (() -> Void)?
 
@@ -94,6 +100,25 @@ final class ChromeTabStrip: NSView {
                 NSRect(x: available - plusWidth, y: y, width: plusWidth, height: tabHeight))
     }
 
+    /// A tab's tooltip: its title, and the shortcut that reaches it when it
+    /// has one (Cmd+1 to Cmd+9).
+    static func toolTip(index: Int, title: String) -> String {
+        index < 9 ? "\(title) (Cmd+\(index + 1))" : title
+    }
+
+    override func layout() {
+        super.layout()
+        removeAllToolTips()
+        let (tabs, plus) = layoutRects()
+        for (index, rect) in tabs.enumerated() where rect.maxX > 0 && rect.minX < tabRoom {
+            addToolTip(rect.intersection(NSRect(x: 0, y: 0, width: tabRoom, height: bounds.height)),
+                       owner: self, userData: UnsafeMutableRawPointer(bitPattern: index + 1))
+        }
+        if plus.maxX <= bounds.width {
+            addToolTip(plus, owner: self, userData: nil)
+        }
+    }
+
     /// Where the tabs may draw: left of the "+".
     private var tabRoom: CGFloat { max(0, bounds.width - Self.plusWidth - Self.tabGap) }
 
@@ -161,5 +186,15 @@ final class ChromeTabStrip: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let index = hit(convert(event.locationInWindow, from: nil)) else { return }
         if index == -1 { onNewTab?() } else if index != activeIndex { onSwitch?(index) }
+    }
+}
+
+extension ChromeTabStrip: NSViewToolTipOwner {
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+              userData data: UnsafeMutableRawPointer?) -> String {
+        guard let data else { return "Nouvel onglet (Cmd+T)" }
+        let index = Int(bitPattern: data) - 1
+        guard titles.indices.contains(index) else { return "" }
+        return Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
     }
 }

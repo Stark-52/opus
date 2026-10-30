@@ -10,6 +10,9 @@ import OpusArtifactsKit
 
 final class ChromeButtonBar: NSView {
     var activeDrawer: DrawerGeometry.Occupant = .none { didSet { restyle() } }
+    /// A hairline before the first button, for a bar where the buttons
+    /// follow other content (one bottom bar).
+    var showsLeadingSeparator = false { didSet { leadingSeparator.isHidden = !showsLeadingSeparator } }
     var onCopy: (() -> Void)?
     var onArtifacts: (() -> Void)?
     var onKeychain: (() -> Void)?
@@ -21,7 +24,7 @@ final class ChromeButtonBar: NSView {
     private let artifactsButton = ChromeIconButton(symbol: "sidebar.trailing", label: "Artifacts",
                                                    toolTip: "Fichiers et images de la session (Cmd+Shift+A)")
     private let keychainButton = ChromeIconButton(symbol: "key", label: "Trousseau",
-                                                  toolTip: "Trousseau des secrets")
+                                                  toolTip: "Trousseau des secrets (Cmd+Ctrl+K)")
     private let moreButton = ChromeIconButton(symbol: "ellipsis.circle", label: "Plus",
                                               toolTip: "Épingler, permissions…")
 
@@ -36,17 +39,13 @@ final class ChromeButtonBar: NSView {
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY - 4), in: button)
         }
 
-        let separator = NSBox()
-        separator.boxType = .custom
-        separator.borderWidth = 0
-        separator.fillColor = OpusTheme.cream(0.1)
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        separator.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        let separator = Self.makeSeparator()
+        leadingSeparator.isHidden = true
 
-        let stack = NSStackView(views: [copyButton, artifactsButton, keychainButton, separator, moreButton])
+        let stack = NSStackView(views: [leadingSeparator, copyButton, artifactsButton, keychainButton, separator, moreButton])
         stack.orientation = .horizontal
         stack.spacing = 2
+        stack.setCustomSpacing(10, after: leadingSeparator)
         stack.setCustomSpacing(6, after: keychainButton)
         stack.setCustomSpacing(6, after: separator)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -66,6 +65,18 @@ final class ChromeButtonBar: NSView {
     }
 
     private weak var stack: NSStackView?
+    private let leadingSeparator = ChromeButtonBar.makeSeparator()
+
+    private static func makeSeparator() -> NSBox {
+        let separator = NSBox()
+        separator.boxType = .custom
+        separator.borderWidth = 0
+        separator.fillColor = OpusTheme.cream(0.1)
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        separator.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        return separator
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: stack?.fittingSize.width ?? NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
@@ -96,7 +107,7 @@ final class ChromeIconButton: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel(label)
 
-        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         imageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
             .withSymbolConfiguration(config)
         imageView.translatesAutoresizingMaskIntoConstraints = false

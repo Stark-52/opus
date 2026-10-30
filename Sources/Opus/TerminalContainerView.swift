@@ -168,19 +168,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// setupContent) — tab 0 is shared across every Opus surface, Terminal.app
     /// mirroring included; there is no "fully private tab 0" mode anymore
     /// (that was true pre-v1.1, before the panelAndMain rework). `false` is
-    /// unused by any current call site but kept as an escape hatch — the
-    /// shield button / skip-permissions wiring below is still gated on it.
+    /// unused by any current call site but kept as an escape hatch: the ⋯
+    /// menu's bypass and permission-mode entries are still gated on it.
     private let useSharedTab0: Bool
 
     init(frame: NSRect, useSharedTab0: Bool) {
         self.useSharedTab0 = useSharedTab0
         super.init(frame: frame)
         wantsLayer = true
-        // The package targets macOS 13, so AppKit keeps its pre-14 default
-        // and clips every view to its bounds. The tab bar hangs 8pt below
-        // this view, into the panel's padding (see buildSubviews), and lost
-        // its lower part to that clip.
-        if #available(macOS 14, *) { clipsToBounds = false }
         buildSubviews()
         bootstrapFirstTab()
         // Fix round 2 (v1.4.1): sync the tab bar / context meter / terminal-
@@ -443,8 +438,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         }
         timer.tolerance = 2
         contextMeterTimer = timer
-        // Fire once immediately rather than leaving the bar blank (alpha 0,
-        // its initial state) for up to 10s after the window appears.
+        // Fire once immediately rather than leaving the status bar empty for
+        // up to 10s after the window appears.
         refreshContextMeter()
         refreshUsage()
         refreshMemory()
@@ -665,6 +660,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Terminal), then bypass permissions and the permission mode, which
     /// only mean something for the shared session. Built on each click, so
     /// every check mark is current.
+    private static let restartsTheSession = "Relance Claude dans la même conversation."
+
     private func makeMoreMenu() -> NSMenu {
         let menu = NSMenu()
         for item in host?.chromeMenuItems() ?? [] { menu.addItem(item) }
@@ -675,6 +672,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                                 action: #selector(bypassToggled), keyEquivalent: "")
         bypass.target = self
         bypass.state = ClaudeBackend.shared.skipPermissionsActive ? .on : .off
+        bypass.toolTip = Self.restartsTheSession
         menu.addItem(bypass)
 
         let modes = NSMenu()
@@ -684,6 +682,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             item.target = self
             item.representedObject = mode.rawValue
             item.state = mode == current ? .on : .off
+            item.toolTip = Self.restartsTheSession
             modes.addItem(item)
         }
         let modeItem = NSMenuItem(title: "Mode de permission", action: nil, keyEquivalent: "")

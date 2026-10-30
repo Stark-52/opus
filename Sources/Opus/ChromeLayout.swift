@@ -84,6 +84,7 @@ enum ChromeArrangement {
         }
         v.top.isHidden = !isA
         v.status.showsMemory = isA
+        v.buttons.showsLeadingSeparator = !isA
         // Alone with the buttons (A), the tabs take the toolbar's slack; next
         // to the figures (B) they keep their natural width and give way first.
         v.tabs.setContentHuggingPriority(isA ? .defaultLow : .defaultHigh, for: .horizontal)

@@ -99,7 +99,7 @@ final class SettingsWindowController: NSWindowController {
 
         let skipHint = NSTextField(wrappingLabelWithString:
             "Default for new Opus launches — Claude runs tools without asking for confirmation. " +
-            "You can also flip it live per-conversation with the shield button.")
+            "You can also flip it live per-conversation from the toolbar's ⋯ menu.")
         skipHint.font = NSFont.systemFont(ofSize: 11)
         skipHint.textColor = .secondaryLabelColor
         skipHint.isHidden = !isClaude
