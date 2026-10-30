@@ -52,12 +52,23 @@ final class ChromeButtonBar: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(greaterThanOrEqualTo: stack.heightAnchor),
         ])
+        // As wide as its buttons, which never give way: the tabs or the
+        // figures beside them take the slack.
+        setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        self.stack = stack
         restyle()
+    }
+
+    private weak var stack: NSStackView?
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: stack?.fittingSize.width ?? NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 

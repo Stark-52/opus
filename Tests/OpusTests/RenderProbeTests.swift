@@ -7,6 +7,7 @@
 
 import XCTest
 import AppKit
+import SwiftTerm
 @testable import Opus
 @testable import OpusArtifactsKit
 
@@ -125,7 +126,7 @@ final class RenderProbeTests: XCTestCase {
             bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             bar.topAnchor.constraint(equalTo: host.topAnchor),
-            bar.heightAnchor.constraint(equalToConstant: TerminalContainerView.toolbarHeight),
+            bar.heightAnchor.constraint(equalToConstant: ChromeArrangement.toolbarHeight),
         ])
         try RenderProbe.capture(host, size: NSSize(width: 900, height: 60),
                                 to: (out as NSString).appendingPathComponent("toolbar.png"))
@@ -158,9 +159,47 @@ final class RenderProbeTests: XCTestCase {
             bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
             bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            bar.heightAnchor.constraint(equalToConstant: TerminalContainerView.statusBarHeight),
+            bar.heightAnchor.constraint(equalToConstant: ChromeArrangement.statusBarHeight),
         ])
         try RenderProbe.capture(host, size: NSSize(width: 900, height: 50),
                                 to: (out as NSString).appendingPathComponent("status.png"))
+    }
+
+    /// A whole window in each layout: the bars as the container arranges
+    /// them around a terminal showing a Claude Code screen.
+    func testRenderLayoutAAndB() throws {
+        let out = try folderOrSkip()
+        for (layout, name) in [(ChromeLayout.toolbarAndStatus, "layout-a.png"), (.singleBottomBar, "layout-b.png")] {
+            let container = NSView()
+            container.wantsLayer = true
+            container.layer?.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
+            let terminal = TerminalView(frame: NSRect(x: 0, y: 0, width: 872, height: 420))
+            terminal.nativeBackgroundColor = .clear
+            terminal.nativeForegroundColor = NSColor(calibratedWhite: 0.85, alpha: 1)
+            terminal.feed(text: [
+                "\u{1b}[2m⏺\u{1b}[0m 680 tests passent, dont les 5 nouveaux. Je commite les deux dépôts.",
+                "\u{1b}[2m  ⎿ 53101d6 Name the session's loaded memory domains on the status rail\u{1b}[0m",
+                "",
+                "\u{1b}[2m" + String(repeating: "─", count: 104) + "\u{1b}[0m",
+                "❯ ",
+                "\u{1b}[2m" + String(repeating: "─", count: 104) + "\u{1b}[0m",
+                "  \u{1b}[31m▸▸ bypass permissions on\u{1b}[0m \u{1b}[2m(shift+tab to cycle)\u{1b}[0m",
+            ].joined(separator: "\r\n"))
+            let tabs = ChromeTabStrip(frame: .zero)
+            tabs.titles = ["Fonctionnalité des mods", "Publication Instagram programmée"]
+            tabs.states = [.working, .done]
+            let status = ChromeStatusView(frame: .zero)
+            let resets = Date().addingTimeInterval(3 * 86_400)
+            status.memory = "mémoire : socle"
+            status.contextFraction = 0.357
+            status.usage = [UsageWindow(kind: .fiveHour, percent: 2, resetsAt: resets),
+                            UsageWindow(kind: .sevenDay, percent: 23, resetsAt: resets)]
+            _ = ChromeArrangement.arrange(
+                ChromeViews(top: ChromeBar(edge: .minY), bottom: ChromeBar(edge: .maxY), tabs: tabs,
+                            buttons: ChromeButtonBar(frame: .zero), status: status, terminal: terminal),
+                in: container, layout: layout)
+            try RenderProbe.capture(container, size: NSSize(width: 900, height: 500),
+                                    to: (out as NSString).appendingPathComponent(name))
+        }
     }
 }

@@ -29,7 +29,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private var topBar: ChromeBar!
     private var tabStrip: ChromeTabStrip!
     private var buttonBar: ChromeButtonBar!
-    private var terminalAreaBottomConstraint: NSLayoutConstraint!
+    /// The bars' layout on screen, and the constraints that hold it, which a
+    /// change of the setting replaces (see ChromeArrangement).
+    private var chromeLayout: ChromeLayout = .toolbarAndStatus
+    private var chromeConstraints: [NSLayoutConstraint] = []
     /// The bottom bar and what it shows: memory, context, usage. See
     /// ChromeStatusView, fed by applyContextMeterResult, refreshUsage and
     /// refreshMemory.
@@ -257,9 +260,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private func buildSubviews() {
         // The container fills its host (the panel's blur, the main window's
         // content); the bars span it edge to edge and the terminal keeps the
-        // panel's 14pt padding inside it.
+        // panel's padding inside it. Which bar holds what is the layout
+        // setting's (see ChromeArrangement).
+        let area = NSView()
+        addSubview(area)
+        terminalArea = area
+
         let top = ChromeBar(edge: .minY)
-        addSubview(top)
         let tabs = ChromeTabStrip(frame: .zero)
         tabs.onSwitch = { [weak self] index in self?.switchTab(to: index) }
         tabs.onNewTab = { [weak self] in self?.spawnNewTab() }
@@ -268,52 +275,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         buttons.onArtifacts = { [weak self] in self?.toggleArtifactsDrawer() }
         buttons.onKeychain = { SecretsPanel.shared.toggle() }
         buttons.moreMenu = { [weak self] in self?.makeMoreMenu() ?? NSMenu() }
-        top.addSubview(tabs)
-        top.addSubview(buttons)
-        NSLayoutConstraint.activate([
-            top.topAnchor.constraint(equalTo: topAnchor),
-            top.leadingAnchor.constraint(equalTo: leadingAnchor),
-            top.trailingAnchor.constraint(equalTo: trailingAnchor),
-            top.heightAnchor.constraint(equalToConstant: Self.toolbarHeight),
-            tabs.leadingAnchor.constraint(equalTo: top.leadingAnchor, constant: OpusTheme.insetPanel),
-            tabs.topAnchor.constraint(equalTo: top.topAnchor),
-            tabs.bottomAnchor.constraint(equalTo: top.bottomAnchor),
-            tabs.trailingAnchor.constraint(equalTo: buttons.leadingAnchor, constant: -12),
-            buttons.trailingAnchor.constraint(equalTo: top.trailingAnchor, constant: -10),
-            buttons.centerYAnchor.constraint(equalTo: top.centerYAnchor),
-        ])
+        let bottomBand = ChromeBar(edge: .maxY)
+        let status = ChromeStatusView(frame: .zero)
         topBar = top
         tabStrip = tabs
         buttonBar = buttons
-
-        let bottomBand = ChromeBar(edge: .maxY)
-        addSubview(bottomBand)
-        let status = ChromeStatusView(frame: .zero)
-        bottomBand.addSubview(status)
-        NSLayoutConstraint.activate([
-            bottomBand.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bottomBand.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bottomBand.bottomAnchor.constraint(equalTo: bottomAnchor),
-            bottomBand.heightAnchor.constraint(equalToConstant: Self.statusBarHeight),
-            status.leadingAnchor.constraint(equalTo: bottomBand.leadingAnchor, constant: OpusTheme.insetPanel),
-            status.trailingAnchor.constraint(equalTo: bottomBand.trailingAnchor, constant: -OpusTheme.insetPanel),
-            status.centerYAnchor.constraint(equalTo: bottomBand.centerYAnchor),
-        ])
         bottomBar = bottomBand
         statusBar = status
-
-        let area = NSView()
-        area.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(area, positioned: .below, relativeTo: top)
-        let bottom = area.bottomAnchor.constraint(equalTo: bottomBand.topAnchor, constant: -6)
-        NSLayoutConstraint.activate([
-            area.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 6),
-            area.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
-            area.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
-            bottom
-        ])
-        terminalArea = area
-        terminalAreaBottomConstraint = bottom
+        applyChromeLayout(OpusPreferences.shared.chromeLayout)
 
         // Drawers lie over the terminal between the two bars, flush with the
         // container's edges, and are added after everything they cover.
@@ -680,8 +649,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Cockpit — reply drawer (Cmd+Shift+C)
 
-    static let toolbarHeight: CGFloat = 32
-    static let statusBarHeight: CGFloat = 22
+    /// Places the bars for `layout`, replacing the previous arrangement.
+    /// The terminal changes height once, which Claude Code redraws for.
+    private func applyChromeLayout(_ layout: ChromeLayout) {
+        NSLayoutConstraint.deactivate(chromeConstraints)
+        chromeLayout = layout
+        chromeConstraints = ChromeArrangement.arrange(
+            ChromeViews(top: topBar, bottom: bottomBar, tabs: tabStrip, buttons: buttonBar,
+                        status: statusBar, terminal: terminalArea),
+            in: self, layout: layout)
+    }
+
 
     /// The toolbar's "⋯" menu: the host's own entries first (pin, open in
     /// Terminal), then bypass permissions and the permission mode, which
@@ -1609,6 +1587,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// write fires this, so compare before assigning (SwiftTerm's font setter
     /// recalculates cell metrics and triggers a resize cascade).
     @objc private func preferencesDidChange() {
+        let layout = OpusPreferences.shared.chromeLayout
+        if layout != chromeLayout {
+            applyChromeLayout(layout)
+            layoutSubtreeIfNeeded()
+        }
         let newFont = OpusPreferences.shared.resolvedTerminalFont()
         for paneList in tabPanes {
             for pane in paneList {

@@ -33,7 +33,7 @@ final class SettingsWindowController: NSWindowController {
 
     private convenience init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -238,6 +238,16 @@ final class SettingsWindowController: NSWindowController {
 
         let view = NSView()
 
+        // Where the bars go: a toolbar above and a status bar below, or one
+        // bar below. Applied at once to every window.
+        let layoutLabel = NSTextField(labelWithString: "Disposition")
+        layoutLabel.alignment = .right
+        let layoutPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        layoutPopup.addItems(withTitles: ChromeLayout.allCases.map(\.title))
+        layoutPopup.selectItem(at: ChromeLayout.allCases.firstIndex(of: OpusPreferences.shared.chromeLayout) ?? 0)
+        layoutPopup.target = self
+        layoutPopup.action = #selector(onChromeLayoutChanged(_:))
+
         let modeLabel = NSTextField(labelWithString: "Background")
         modeLabel.alignment = .right
         let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -360,14 +370,21 @@ final class SettingsWindowController: NSWindowController {
         contextLimitField.toolTip = contextLimitTooltip
         self.contextLimitField = contextLimitField
 
-        for v in [modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn,
+        for v in [layoutLabel, layoutPopup, modeLabel, modePopup, tintLabel, tintWell, imgLabel, imgPath, imgPickBtn,
                   fontLabel, fontPopup, sizeLabel, sizeField, sizeStepper,
                   scrollbackLabel, scrollbackField, contextLimitLabel, contextLimitField] {
             v.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            modeLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            layoutLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
+            layoutLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            layoutLabel.widthAnchor.constraint(equalToConstant: 160),
+            layoutPopup.centerYAnchor.constraint(equalTo: layoutLabel.centerYAnchor),
+            layoutPopup.leadingAnchor.constraint(equalTo: layoutLabel.trailingAnchor, constant: 10),
+            layoutPopup.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+
+            modeLabel.topAnchor.constraint(equalTo: layoutPopup.bottomAnchor, constant: 20),
             modeLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
             modeLabel.widthAnchor.constraint(equalToConstant: 160),
             modePopup.centerYAnchor.constraint(equalTo: modeLabel.centerYAnchor),
@@ -467,6 +484,10 @@ final class SettingsWindowController: NSWindowController {
 
         item.view = view
         return item
+    }
+
+    @objc private func onChromeLayoutChanged(_ sender: NSPopUpButton) {
+        OpusPreferences.shared.chromeLayout = ChromeLayout.allCases[sender.indexOfSelectedItem]
     }
 
     @objc private func onDisplayModeChanged(_ sender: NSPopUpButton) {

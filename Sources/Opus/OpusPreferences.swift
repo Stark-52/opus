@@ -100,6 +100,7 @@ final class OpusPreferences {
         static let panelPinned            = "opus.panelPinned"
         // Appearance (used in Phase 4)
         static let appearanceMode         = "opus.appearanceMode"
+        static let chromeLayout           = "opus.chromeLayout"
         static let appearanceTintRGBA     = "opus.appearanceTintRGBA"
         static let appearanceImagePath    = "opus.appearanceImagePath"
         static let fontName               = "opus.fontName"
@@ -249,6 +250,12 @@ final class OpusPreferences {
     var onboardingShown: Bool {
         get { defaults.bool(forKey: K.onboardingShown) }
         set { write(K.onboardingShown, newValue) }
+    }
+
+    /// Where the window's bars go (see ChromeLayout). A until changed.
+    var chromeLayout: ChromeLayout {
+        get { ChromeLayout.resolve(defaults.string(forKey: K.chromeLayout)) }
+        set { write(K.chromeLayout, newValue.rawValue) }
     }
 
     // Appearance — see Phase 4 for the consumers.

@@ -14,7 +14,12 @@ final class ChromeTabStrip: NSView {
     private static let tabChrome: CGFloat = OpusTheme.dotSize + 6 + 2 * 10
     static let titleFont = NSFont.systemFont(ofSize: 11.5)
 
-    var titles: [String] = [] { didSet { needsDisplay = true } }
+    var titles: [String] = [] {
+        didSet {
+            needsDisplay = true
+            invalidateIntrinsicContentSize()
+        }
+    }
     /// One per tab, same index space as `titles`; missing entries draw no dot.
     var states: [PaneActivity] = [] { didSet { needsDisplay = true } }
     var activeIndex = 0 { didSet { needsDisplay = true } }
@@ -42,6 +47,16 @@ final class ChromeTabStrip: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
+        // The first to give way when a bar is short; how much it hugs its
+        // natural width is the layout's call (see ChromeArrangement).
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    /// Every tab at its natural width, plus the "+".
+    override var intrinsicContentSize: NSSize {
+        let widths = Self.tabWidths(titles: titles, font: Self.titleFont, available: .greatestFiniteMagnitude)
+        let width = widths.reduce(0, +) + CGFloat(widths.count) * Self.tabGap + Self.plusWidth
+        return NSSize(width: width, height: NSView.noIntrinsicMetric)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
