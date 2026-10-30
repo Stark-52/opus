@@ -841,12 +841,16 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
 /// restate it in a drawer 300pt wide whose two text lines are already
 /// truncating, and the thing a reader needs from a row is WHICH file, not
 /// which category. Recorded here so the gap is on the record.
-private final class ArtifactCellView: NSTableCellView {
+final class ArtifactCellView: NSTableCellView {
     private let thumb = NSImageView(frame: .zero)
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let detailLabel = NSTextField(labelWithString: "")
-    /// Shown while the pointer is over a row with a file or folder behind it.
-    private let revealButton = NSButton(title: "Afficher dans le Finder", target: nil, action: nil)
+    let nameLabel = NSTextField(labelWithString: "")
+    let detailLabel = NSTextField(labelWithString: "")
+    /// Shown while the pointer is over a row with a file or folder behind it:
+    /// a magnifying glass, as in Safari's downloads, beside the text rather
+    /// than over it, so the name and the path stop short of it.
+    let revealButton = HoverIconButton(frame: .zero)
+    private var textToEdge: NSLayoutConstraint!
+    private var textToButton: NSLayoutConstraint!
     private var artifact: Artifact?
     /// Bumped on every configure so a thumbnail that arrives after the cell
     /// was recycled for a different artifact is dropped instead of drawn on
@@ -878,13 +882,13 @@ private final class ArtifactCellView: NSTableCellView {
         detailLabel.refusesFirstResponder = true
         detailLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        revealButton.bezelStyle = .inline
-        revealButton.controlSize = .small
-        revealButton.font = .systemFont(ofSize: 10.5)
+        revealButton.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Afficher dans le Finder")?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        revealButton.toolTip = "Afficher dans le Finder"
+        revealButton.setAccessibilityLabel("Afficher dans le Finder")
         revealButton.target = self
         revealButton.action = #selector(revealTapped)
         revealButton.isHidden = true
-        revealButton.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(thumb)
         addSubview(nameLabel)
@@ -893,19 +897,23 @@ private final class ArtifactCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             revealButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
             revealButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            revealButton.widthAnchor.constraint(equalToConstant: 20),
+            revealButton.heightAnchor.constraint(equalToConstant: 20),
             thumb.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
             thumb.centerYAnchor.constraint(equalTo: centerYAnchor),
             thumb.widthAnchor.constraint(equalToConstant: 40),
             thumb.heightAnchor.constraint(equalToConstant: 40),
 
             nameLabel.leadingAnchor.constraint(equalTo: thumb.trailingAnchor, constant: OpusTheme.controlGap),
-            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.controlGap),
             nameLabel.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
 
             detailLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             detailLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
             detailLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
         ])
+        textToEdge = nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.controlGap)
+        textToButton = nameLabel.trailingAnchor.constraint(equalTo: revealButton.leadingAnchor, constant: -OpusTheme.controlGap)
+        textToEdge.isActive = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
@@ -917,11 +925,18 @@ private final class ArtifactCellView: NSTableCellView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        revealButton.isHidden = artifact?.resolvedPath == nil
+        showReveal(artifact?.resolvedPath != nil)
     }
 
     override func mouseExited(with event: NSEvent) {
-        revealButton.isHidden = true
+        showReveal(false)
+    }
+
+    private func showReveal(_ shown: Bool) {
+        revealButton.isHidden = !shown
+        // Deactivate before activating: both pin the same edge.
+        (shown ? textToEdge : textToButton).isActive = false
+        (shown ? textToButton : textToEdge).isActive = true
     }
 
     @objc private func revealTapped() {
@@ -930,7 +945,7 @@ private final class ArtifactCellView: NSTableCellView {
 
     func configure(artifact: Artifact) {
         self.artifact = artifact
-        revealButton.isHidden = true
+        showReveal(false)
         generation += 1
         let token = generation
 

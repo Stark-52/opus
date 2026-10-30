@@ -53,3 +53,42 @@ final class ArtifactsDrawerViewTests: XCTestCase {
                                  DrawerGeometry.minimumWidth - 2 * OpusTheme.insetPanel)
     }
 }
+
+/// The Finder button, measured: it once sat on top of the path it reveals.
+final class ArtifactCellRevealTests: XCTestCase {
+    private func hover(_ cell: ArtifactCellView, entering: Bool) throws {
+        let event = try XCTUnwrap(NSEvent.enterExitEvent(with: entering ? .mouseEntered : .mouseExited,
+                                                          location: .zero, modifierFlags: [], timestamp: 0,
+                                                          windowNumber: 0, context: nil, eventNumber: 0,
+                                                          trackingNumber: 0, userData: nil))
+        entering ? cell.mouseEntered(with: event) : cell.mouseExited(with: event)
+        cell.layoutSubtreeIfNeeded()
+    }
+
+    func testTheFinderButtonIsAnIconThatTheTextStopsBefore() throws {
+        let cell = ArtifactCellView(frame: NSRect(x: 0, y: 0, width: 300, height: 52))
+        let folder = "/Users/someone/Movies/projet/rendus/lot0/turntable"
+        cell.configure(artifact: Artifact(key: folder, kind: .folder, resolvedPath: folder, urlString: nil))
+        cell.layoutSubtreeIfNeeded()
+        let resting = cell.detailLabel.frame.maxX
+
+        try hover(cell, entering: true)
+        XCTAssertFalse(cell.revealButton.isHidden)
+        XCTAssertEqual(cell.revealButton.imagePosition, .imageOnly, "an icon, not a pill of text")
+        XCTAssertEqual(cell.revealButton.toolTip, "Afficher dans le Finder")
+        XCTAssertLessThanOrEqual(cell.nameLabel.frame.maxX, cell.revealButton.frame.minX)
+        XCTAssertLessThanOrEqual(cell.detailLabel.frame.maxX, cell.revealButton.frame.minX, "the path never runs under it")
+
+        try hover(cell, entering: false)
+        XCTAssertTrue(cell.revealButton.isHidden)
+        XCTAssertEqual(cell.detailLabel.frame.maxX, resting, "the text takes the room back")
+    }
+
+    func testALinkHasNoFinderButton() throws {
+        let cell = ArtifactCellView(frame: NSRect(x: 0, y: 0, width: 300, height: 52))
+        cell.configure(artifact: Artifact(key: "https://example.com", kind: .url, resolvedPath: nil,
+                                          urlString: "https://example.com"))
+        try hover(cell, entering: true)
+        XCTAssertTrue(cell.revealButton.isHidden)
+    }
+}

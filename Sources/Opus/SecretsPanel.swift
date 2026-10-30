@@ -97,7 +97,7 @@ private final class SecretRowBackground: NSTableRowView {
 ///    via an NSTrackingArea, so a control that's meant to be always
 ///    visible (not hover-only — see this file's header) still gives some
 ///    feedback that it's interactive.
-private final class HoverIconButton: NSButton {
+final class HoverIconButton: NSButton {
     var restingTint: NSColor = OpusTheme.cream(0.55) {
         didSet {
             hoverTint = restingTint.blended(withFraction: 0.35, of: .white) ?? restingTint

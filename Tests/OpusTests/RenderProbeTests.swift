@@ -94,6 +94,29 @@ final class RenderProbeTests: XCTestCase {
                                 to: (out as NSString).appendingPathComponent("artifacts.png"))
     }
 
+    /// Two folder rows, the second under the pointer: its Finder button
+    /// beside the path, never on it.
+    func testRenderArtifactRowWithTheFinderButton() throws {
+        let out = try folderOrSkip()
+        let folder = (out as NSString).appendingPathComponent("Movies/projet/rendus/lot0/turntable")
+        try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let stack = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 104))
+        stack.wantsLayer = true
+        stack.layer?.backgroundColor = OpusTheme.panelBackground.cgColor
+        for (index, hovered) in [false, true].enumerated() {
+            let cell = ArtifactCellView(frame: NSRect(x: 0, y: CGFloat(1 - index) * 52, width: 300, height: 52))
+            cell.configure(artifact: Artifact(key: folder, kind: .folder, resolvedPath: folder, urlString: nil))
+            if hovered, let event = NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [],
+                                                           timestamp: 0, windowNumber: 0, context: nil,
+                                                           eventNumber: 0, trackingNumber: 0, userData: nil) {
+                cell.mouseEntered(with: event)
+            }
+            stack.addSubview(cell)
+        }
+        try RenderProbe.capture(stack, size: stack.frame.size,
+                                to: (out as NSString).appendingPathComponent("artifact-row-finder.png"))
+    }
+
     /// The top bar of layout A as the container builds it: tabs on the left,
     /// buttons on the right, over the panel's dark tint.
     static func toolbar(width: CGFloat) -> NSView {
