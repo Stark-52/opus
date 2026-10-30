@@ -38,13 +38,10 @@ final class DrawerDockTests: XCTestCase {
         terminal = TerminalArea(frame: .zero)
         copyDrawer = NSView(frame: .zero)
         artifactsDrawer = NSView(frame: .zero)
-        let uncovered = NSLayoutGuide()
-        container.addLayoutGuide(uncovered)
         for view in [terminal!, copyDrawer!, artifactsDrawer!] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
-        let edge = uncovered.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         let copyOffset = copyDrawer.leadingAnchor.constraint(equalTo: container.leadingAnchor)
         let artifactsOffset = artifactsDrawer.trailingAnchor.constraint(equalTo: container.trailingAnchor)
         let copyWidth = copyDrawer.widthAnchor.constraint(equalToConstant: drawerWidth)
@@ -54,10 +51,6 @@ final class DrawerDockTests: XCTestCase {
             terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             terminal.topAnchor.constraint(equalTo: container.topAnchor),
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            uncovered.leadingAnchor.constraint(equalTo: terminal.leadingAnchor),
-            uncovered.topAnchor.constraint(equalTo: terminal.topAnchor),
-            uncovered.bottomAnchor.constraint(equalTo: terminal.bottomAnchor),
-            edge,
             copyDrawer.topAnchor.constraint(equalTo: container.topAnchor),
             copyDrawer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             artifactsDrawer.topAnchor.constraint(equalTo: container.topAnchor),
@@ -70,7 +63,6 @@ final class DrawerDockTests: XCTestCase {
                 .artifacts: DrawerDock.Panel(view: artifactsDrawer, offset: artifactsOffset,
                                              width: artifactsWidth, side: .trailing),
             ],
-            edge: edge,
             widthProvider: { [unowned self] occupant in occupant == .none ? 0 : self.drawerWidth },
             layout: { container.layoutSubtreeIfNeeded() },
             onChange: { _ in },

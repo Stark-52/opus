@@ -15,9 +15,7 @@
 // width Claude Code clears its screen and prints its live region again,
 // and since it never clears the scrollback, the seam between the two
 // layouts repeats text (narrowing) or drops it (widening). The dock owns
-// each drawer's outer-edge constraint, and the edge of the part of the
-// terminal no right-hand drawer covers, which the top-right button row
-// follows.
+// each drawer's outer-edge constraint.
 //
 // A drawer can also follow a swipe: `beginInteractive`, then a progress
 // from 0 (parked) to 1 (in) per event, then `endInteractive` settles it one
@@ -47,9 +45,6 @@ final class DrawerDock {
     private(set) var occupant: Occupant = .none
 
     private let panels: [Occupant: Panel]
-    /// Trailing constraint of the part of the terminal no right-hand drawer
-    /// covers: 0 with none, minus the drawer's width with one.
-    private let edge: NSLayoutConstraint
     /// Resolves an occupant's current width, which is a stored preference
     /// rather than a constant now that the edge can be dragged. Injected so
     /// this class stays free of UserDefaults.
@@ -58,8 +53,8 @@ final class DrawerDock {
     /// group, which is what turns the constraint changes into movement
     /// rather than a jump.
     private let layout: () -> Void
-    /// Called after every change so the container can re-apply the button
-    /// row and start or stop the occupant's timer. The container still owns
+    /// Called after every change so the container can light the open
+    /// drawer's button and start or stop the occupant's timer. The container still owns
     /// both, because both reach into state this class deliberately does not
     /// know about.
     private let onChange: (Occupant) -> Void
@@ -88,13 +83,11 @@ final class DrawerDock {
     }
 
     init(panels: [Occupant: Panel],
-         edge: NSLayoutConstraint,
          widthProvider: @escaping (Occupant) -> CGFloat,
          layout: @escaping () -> Void,
          onChange: @escaping (Occupant) -> Void,
          animate: @escaping Animator = DrawerDock.slide) {
         self.panels = panels
-        self.edge = edge
         self.widthProvider = widthProvider
         self.layout = layout
         self.onChange = onChange
@@ -118,9 +111,7 @@ final class DrawerDock {
         guard let panel = panels[target] else { return }
         let width = DrawerGeometry.clampWidth(proposed, for: target)
         panel.width.constant = width
-        if target == occupant {
-            if panel.side == .trailing { edge.constant = DrawerGeometry.edgeConstant(forWidth: width) }
-        } else {
+        if target != occupant {
             panel.offset.constant = DrawerGeometry.offset(width: width, side: panel.side, progress: 0)
         }
         layout()
@@ -159,11 +150,7 @@ final class DrawerDock {
     /// fingers.
     func setInteractiveProgress(_ progress: CGFloat) {
         guard let target = interactive, let panel = panels[target] else { return }
-        let width = panel.width.constant
-        panel.offset.constant = DrawerGeometry.offset(width: width, side: panel.side, progress: progress)
-        if panel.side == .trailing {
-            edge.constant = -width * min(1, max(0, progress))
-        }
+        panel.offset.constant = DrawerGeometry.offset(width: panel.width.constant, side: panel.side, progress: progress)
         layout()
     }
 
@@ -191,8 +178,6 @@ final class DrawerDock {
                 panel.offset.constant = DrawerGeometry.offset(
                     width: widthProvider(key), side: panel.side, progress: key == requested ? 1 : 0)
             }
-            edge.constant = DrawerGeometry.side(for: requested) == .trailing
-                ? DrawerGeometry.edgeConstant(forWidth: widthProvider(requested)) : 0
             layout()
         }, { [weak self] in
             // Guarded on the occupant still being what this animation was

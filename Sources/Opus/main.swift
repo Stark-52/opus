@@ -25,76 +25,6 @@ private final class OpusPanel: NSPanel {
     override func animationResizeTime(_ newFrame: NSRect) -> TimeInterval { 0.20 }
 }
 
-// Minimal tab bar — a row of pill segments showing each tab's title. Hidden
-// when only one tab exists.
-final class OpusTabBar: NSView {
-    var tabCount: Int = 1 { didSet { needsDisplay = true } }
-    var activeIndex: Int = 0 { didSet { needsDisplay = true } }
-    var titles: [String] = [] { didSet { needsDisplay = true } }
-    /// One PaneActivity per tab, same index space as `titles`/`tabCount`.
-    /// An out-of-range index (array shorter than tabCount, e.g. a brand new
-    /// tab the container hasn't recomputed states for yet) draws no dot,
-    /// same as `.idle` — see draw(_:) below.
-    var states: [PaneActivity] = [] { didSet { needsDisplay = true } }
-    var onSwitch: ((Int) -> Void)?
-
-    override var isFlipped: Bool { false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        guard tabCount > 0 else { return }
-        let segW = bounds.width / CGFloat(tabCount)
-        for i in 0..<tabCount {
-            let r = NSRect(x: CGFloat(i) * segW + 3, y: 3,
-                           width: segW - 6, height: bounds.height - 6)
-            let path = NSBezierPath(roundedRect: r, xRadius: 5, yRadius: 5)
-            let fill = (i == activeIndex)
-                ? OpusTheme.cyan.withAlphaComponent(0.20)
-                : OpusTheme.cream(0.07)
-            fill.setFill()
-            path.fill()
-
-            // Activity dot, before the label — same semantics as everywhere
-            // else in the app (OpusTheme.activityColor): cyan while Claude
-            // is working, red when it's waiting on the user, green once a
-            // turn/agent run has finished. No dot at all for `.idle` (or a
-            // not-yet-sized states array).
-            if i < states.count, let dotColor = OpusTheme.activityColor(states[i]) {
-                let dotSize = OpusTheme.dotSize
-                let dotRect = NSRect(x: r.minX + 6, y: r.midY - dotSize / 2,
-                                     width: dotSize, height: dotSize)
-                dotColor.setFill()
-                NSBezierPath(ovalIn: dotRect).fill()
-            }
-
-            let raw = i < titles.count && !titles[i].isEmpty ? titles[i] : "Claude"
-            let label = "\(i + 1)  \(raw)"
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
-                .foregroundColor: i == activeIndex ? OpusTheme.cream(0.95) : OpusTheme.cream(0.45)
-            ]
-            // Truncated centered draw within the segment (with horizontal padding).
-            let para = NSMutableParagraphStyle()
-            para.alignment = .center
-            para.lineBreakMode = .byTruncatingTail
-            var attrsWithPara = attrs
-            attrsWithPara[.paragraphStyle] = para
-            let textRect = r.insetBy(dx: 8, dy: 0)
-            let yOffset = (textRect.height - 14) / 2
-            label.draw(
-                with: NSRect(x: textRect.minX, y: textRect.minY + yOffset, width: textRect.width, height: 14),
-                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                attributes: attrsWithPara
-            )
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let loc = convert(event.locationInWindow, from: nil)
-        let segW = bounds.width / CGFloat(max(1, tabCount))
-        let idx = Int(loc.x / segW)
-        if (0..<tabCount).contains(idx) { onSwitch?(idx) }
-    }
-}
 
 // Per-tab private claude session for tabs 1+. We can't subclass
 // LocalProcessTerminalView and override `dataReceived(slice:)` (that method is
@@ -415,7 +345,6 @@ final class QuickTerminalPanel: NSObject {
     var isVisible: Bool { visible }
     var terminalContainer: TerminalContainerView { container }
     private var suppressResizeSave = false
-    private var pinButton: NSButton?
 
     override init() {
         let screen = NSScreen.main ?? NSScreen.screens.first!
@@ -473,89 +402,19 @@ final class QuickTerminalPanel: NSObject {
         panel.contentView = blur
         blurView = blur
 
-        // "Open in Terminal" button — top-right of the blur. Spawns a fresh
-        // Terminal.app window joining the shared claude session via opus-attach.
-        let openBtn = NSButton(title: "↗", target: self, action: #selector(openInTerminalTapped))
-        openBtn.isBordered = false
-        openBtn.font = NSFont.systemFont(ofSize: 16, weight: .medium)
-        openBtn.contentTintColor = OpusTheme.cream(0.45)
-        openBtn.toolTip = "Open a Terminal.app window mirroring the shared session"
-        openBtn.translatesAutoresizingMaskIntoConstraints = false
-        blur.addSubview(openBtn)
-        // No trailing constraint here — this button belongs to the container's
-        // top-right row (with the pin button and the shield) and is pinned
-        // into it further down, once `cont` exists. See the
-        // `pinToTopRightRow` calls after the z-order fix below.
-        NSLayoutConstraint.activate([
-            openBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
-            openBtn.widthAnchor.constraint(equalToConstant: 24),
-            openBtn.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        // The ↗ button spawns a Terminal.app window — only meaningful when the
-        // current displayMode includes the native Terminal surface.
-        openBtn.isHidden = !OpusPreferences.shared.displayMode.includesNativeTerminal
-
-        // Pin button — disables autohide when focused elsewhere
-        let pinBtn = NSButton(title: "", target: self, action: #selector(pinTapped))
-        pinBtn.isBordered = false
-        pinBtn.imagePosition = .imageOnly
-        pinBtn.translatesAutoresizingMaskIntoConstraints = false
-        pinBtn.setAccessibilityLabel("Pin panel toggle")
-        blur.addSubview(pinBtn)
-        // Trailing pin deferred to `pinToTopRightRow` below, same as openBtn.
-        NSLayoutConstraint.activate([
-            pinBtn.topAnchor.constraint(equalTo: blur.topAnchor, constant: 16),
-            pinBtn.widthAnchor.constraint(equalToConstant: 24),
-            pinBtn.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        self.pinButton = pinBtn
-        refreshPinButton()
-
         // Force layout so the blur has its initial bounds before we add the container.
         blur.layoutSubtreeIfNeeded()
 
-        // Container hosts all tabs, panes, splits, tab bar, TerminalViewDelegate.
-        let contentBounds = blur.bounds
-        let containerFrame = NSRect(
-            x: 14, y: 14,
-            width: contentBounds.width - 28,
-            height: contentBounds.height - 28
-        )
-        let cont = TerminalContainerView(frame: containerFrame, useSharedTab0: true)
+        // Container hosts all tabs, panes, splits, the toolbar and the
+        // status rail, and the TerminalViewDelegate. It fills the blur: its
+        // bars run edge to edge and it pads the terminal itself. Pin and
+        // "open in Terminal" live in its toolbar's "⋯" menu, through
+        // `chromeMenuItems()`.
+        let cont = TerminalContainerView(frame: blur.bounds, useSharedTab0: true)
         cont.host = self
         cont.autoresizingMask = [.width, .height]
         blur.addSubview(cont)
         self.container = cont
-
-        // Fix 3 (v1.4.1): openBtn/pinBtn were added to `blur` BEFORE `cont`
-        // above, so the terminal (which fills the container down to y=14)
-        // drew OVER them below y=14, making the pin button (top constant 6,
-        // height 22 → bottom edge at y=28) mostly hidden behind live
-        // terminal content. Re-adding both here — same views, same
-        // constraints, just moved to the top of the z-order — fixes it with
-        // no behavior change.
-        blur.addSubview(openBtn, positioned: .above, relativeTo: cont)
-        blur.addSubview(pinBtn, positioned: .above, relativeTo: cont)
-
-        // Palette fix round: these two share the top-right row with the
-        // container's shield button, but were pinned to `blur`'s own trailing
-        // edge — so when the Cmd+Shift+T drawer shrank the terminal area, only
-        // the shield slid left (finding F2) and these stayed put, ending up
-        // floating inside the drawer's top-right corner as if they were part
-        // of it (seen on screen in v1.6). Pinning them to the container's
-        // terminal-area edge, through the same helper the shield uses, makes
-        // the whole row travel together. Bases reproduce the old blur-relative
-        // geometry EXACTLY while the drawer is closed (the container's
-        // trailing edge is blur's minus the 14pt inset: -10 = -14 + 4,
-        // -72 = -14 - 58) — see TerminalContainerView.TopRightButtonRow.
-        //
-        // Activated only now, AFTER the z-order re-add above: re-adding a view
-        // that is already a subview can tear down constraints that reference
-        // it, and these are the only ones that cross out of `blur` into the
-        // container's subtree.
-        cont.pinToTopRightRow(openBtn, base: TerminalContainerView.TopRightButtonRow.openBase)
-        cont.pinToTopRightRow(pinBtn, base: TerminalContainerView.TopRightButtonRow.pinBase)
-        blur.layoutSubtreeIfNeeded()
 
         // Cmd+T / Cmd+W / Cmd+1..9 intercept for tab management.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] ev in
@@ -617,26 +476,8 @@ final class QuickTerminalPanel: NSObject {
         )
     }
 
-    @objc private func openInTerminalTapped() {
-        AppDelegate.shared?.launchTerminalSession()
-    }
-
-    @objc private func pinTapped() {
+    @objc private func pinToggled() {
         OpusPreferences.shared.panelPinned.toggle()
-        refreshPinButton()
-    }
-
-    private func refreshPinButton() {
-        guard let btn = pinButton else { return }
-        let pinned = OpusPreferences.shared.panelPinned
-        btn.image = NSImage(systemSymbolName: pinned ? "pin.fill" : "pin",
-                            accessibilityDescription: "Pin panel")
-        btn.contentTintColor = pinned
-            ? OpusTheme.cyan
-            : OpusTheme.cream(0.45)
-        btn.toolTip = pinned
-            ? "Pinned: the panel stays visible when it loses focus. Click to unpin."
-            : "Pin the panel so it stays visible while you work in another app."
     }
 
     @objc private func panelDidBecomeKey() {
@@ -650,7 +491,6 @@ final class QuickTerminalPanel: NSObject {
 
     @objc private func onPreferencesChanged() {
         applyAppearance()
-        refreshPinButton()
     }
 
     private func applyAppearance() {
@@ -1088,6 +928,23 @@ final class QuickTerminalPanel: NSObject {
 // MARK: - TerminalContainerHost conformance
 
 extension QuickTerminalPanel: TerminalContainerHost {
+    func chromeMenuItems() -> [NSMenuItem] {
+        let pin = NSMenuItem(title: "Épingler le panneau", action: #selector(pinToggled), keyEquivalent: "")
+        pin.target = self
+        pin.state = OpusPreferences.shared.panelPinned ? .on : .off
+        var items = [pin]
+        if OpusPreferences.shared.displayMode.includesNativeTerminal {
+            let open = NSMenuItem(title: "Ouvrir dans Terminal", action: #selector(openInTerminalMenu), keyEquivalent: "")
+            open.target = self
+            items.append(open)
+        }
+        return items
+    }
+
+    @objc func openInTerminalMenu() {
+        AppDelegate.shared?.launchTerminalSession()
+    }
+
     var hostWindow: NSWindow? { panel }
     func openInTerminalRequested() {
         AppDelegate.shared?.launchTerminalSession()

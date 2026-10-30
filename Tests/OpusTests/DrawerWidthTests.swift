@@ -50,9 +50,4 @@ final class DrawerWidthTests: XCTestCase {
         XCTAssertLessThan(DrawerGeometry.minimumWidth, DrawerGeometry.maximumWidth)
         XCTAssertGreaterThan(DrawerGeometry.minimumWidth, 0)
     }
-
-    func testTerminalTrailingConstantIsTheNegatedResolvedWidth() {
-        XCTAssertEqual(DrawerGeometry.edgeConstant(forWidth: 300), -300)
-        XCTAssertEqual(DrawerGeometry.edgeConstant(forWidth: 0), 0)
-    }
 }

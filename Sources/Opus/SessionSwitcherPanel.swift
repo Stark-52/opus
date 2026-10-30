@@ -20,8 +20,8 @@ private final class SessionSwitcherWindow: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// Selected-row background — same translucent brand cyan as OpusTabBar's
-/// active-tab pill, so the palette reads as part of the same app.
+/// Selected-row background, the translucent brand cyan the app uses for a
+/// current choice.
 ///
 /// Fix 1 (v1.4.2): this override IS the entire selection-drawing story —
 /// it never calls `super.drawSelection(in:)`, so it already fully replaces
@@ -45,7 +45,7 @@ private final class SessionRowBackground: NSTableRowView {
 }
 
 /// Two-line cell: title on top, "folder · branch · relative time" below in
-/// a dimmer color — same alpha convention as OpusTabBar's inactive labels.
+/// a dimmer color, the alpha convention of the app's secondary labels.
 private final class SessionCellView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")

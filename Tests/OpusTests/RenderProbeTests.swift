@@ -92,4 +92,42 @@ final class RenderProbeTests: XCTestCase {
         try RenderProbe.capture(drawer, size: NSSize(width: 300, height: 600),
                                 to: (out as NSString).appendingPathComponent("artifacts.png"))
     }
+
+    /// The top bar of layout A as the container builds it: tabs on the left,
+    /// buttons on the right, over the panel's dark tint.
+    static func toolbar(width: CGFloat) -> NSView {
+        let bar = ChromeBar(edge: .minY)
+        let tabs = ChromeTabStrip(frame: .zero)
+        tabs.titles = ["Fonctionnalité des mods", "Publication Instagram programmée"]
+        tabs.states = [.working, .done]
+        tabs.activeIndex = 0
+        let buttons = ChromeButtonBar(frame: .zero)
+        buttons.activeDrawer = .reply
+        bar.addSubview(tabs)
+        bar.addSubview(buttons)
+        NSLayoutConstraint.activate([
+            tabs.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: OpusTheme.insetPanel),
+            tabs.topAnchor.constraint(equalTo: bar.topAnchor),
+            tabs.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            tabs.trailingAnchor.constraint(equalTo: buttons.leadingAnchor, constant: -12),
+            buttons.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
+            buttons.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+        ])
+        return bar
+    }
+
+    func testRenderToolbarWithTwoTabs() throws {
+        let out = try folderOrSkip()
+        let host = NSView()
+        let bar = Self.toolbar(width: 900)
+        host.addSubview(bar)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            bar.topAnchor.constraint(equalTo: host.topAnchor),
+            bar.heightAnchor.constraint(equalToConstant: TerminalContainerView.toolbarHeight),
+        ])
+        try RenderProbe.capture(host, size: NSSize(width: 900, height: 60),
+                                to: (out as NSString).appendingPathComponent("toolbar.png"))
+    }
 }

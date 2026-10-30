@@ -1,9 +1,4 @@
-// DrawerGeometry — the widths, and where a drawer's leading edge sits.
-//
-// TopRightButtonRow.drawerOpenShift stays where it is and stays -8: it
-// does not depend on the occupant's width. The row is pinned to the edge of
-// the uncovered terminal, which has already moved by the full width; the -8
-// only compensates the 4pt overhang of the row's rightmost button.
+// DrawerGeometry — the drawers' widths, sides and offsets.
 //
 // Width stopped being a constant when the drawers became resizable. What
 // lives here now is the DEFAULT for each occupant plus the bounds a dragged
@@ -57,18 +52,6 @@ public enum DrawerGeometry {
     /// same value they always did.
     public static func width(for occupant: Occupant) -> CGFloat {
         defaultWidth(for: occupant)
-    }
-
-    /// The drawer's leading edge as a trailing constant from the container's
-    /// trailing edge: the end of the part of the terminal it leaves uncovered.
-    public static func edgeConstant(for occupant: Occupant) -> CGFloat {
-        -defaultWidth(for: occupant)
-    }
-
-    /// The resizable path: the drawer covers exactly the width it currently
-    /// has, whatever the user dragged it to.
-    public static func edgeConstant(forWidth width: CGFloat) -> CGFloat {
-        -width
     }
 
     public static func isOpen(_ occupant: Occupant) -> Bool { occupant != .none }

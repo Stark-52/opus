@@ -189,6 +189,9 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
 
     // MARK: TerminalContainerHost
 
+    /// Pin and "open in Terminal" only mean something for the panel.
+    func chromeMenuItems() -> [NSMenuItem] { [] }
+
     var hostWindow: NSWindow? { window }
     func openInTerminalRequested() {
         // Main window doesn't mirror with Terminal.app; the panel owns that.

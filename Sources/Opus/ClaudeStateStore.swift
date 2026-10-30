@@ -25,7 +25,7 @@ import Foundation
 import OpusArtifactsKit
 
 /// What a single Claude session is doing right now, as far as the hook
-/// stream can tell. Drives the tab-bar dot color (see OpusTabBar.draw).
+/// stream can tell. Drives the tabs' dot color (see ChromeTabStrip.draw).
 enum PaneActivity: Equatable {
     case idle        // no dot
     case working     // cyan dot — prompt in flight / tool running

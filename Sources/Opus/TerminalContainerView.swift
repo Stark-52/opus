@@ -1,4 +1,4 @@
-// TerminalContainerView — owns the tabs/panes/splits and the bottom OpusTabBar.
+// TerminalContainerView — owns the tabs/panes/splits, the toolbar and the status rail.
 // Hosts (QuickTerminalPanel, MainTerminalWindow) embed this view and forward
 // key events / window callbacks via the TerminalContainerHost protocol.
 //
@@ -16,20 +16,20 @@ protocol TerminalContainerHost: AnyObject {
     /// Called when the user wants to spawn a Terminal.app mirror of the
     /// shared session. Host may no-op (Standalone pairing, MainTerminalWindow).
     func openInTerminalRequested()
+    /// The host's own entries for the toolbar's "⋯" menu (pin, open in
+    /// Terminal), listed first. The main window has none.
+    func chromeMenuItems() -> [NSMenuItem]
 }
 
 final class TerminalContainerView: NSView, TerminalViewDelegate {
     weak var host: TerminalContainerHost?
 
     private var terminalArea: NSView!
-    private var tabBar: OpusTabBar!
-    private var tabBarHeightConstraint: NSLayoutConstraint!
+    /// Layout A's toolbar: the tabs on the left, the buttons on the right.
+    private var topBar: ChromeBar!
+    private var tabStrip: ChromeTabStrip!
+    private var buttonBar: ChromeButtonBar!
     private var terminalAreaBottomConstraint: NSLayoutConstraint!
-    private var shieldButton: NSButton?
-    /// Artifacts drawer toggle — see `installArtifactsButton()`.
-    private var artifactsButton: NSButton?
-    /// Reply drawer toggle — see `installReplyButton()`.
-    private var replyButton: NSButton?
     /// Bottom status rail (visual-harmonization spec, section 1 "Rail de
     /// statut") — replaces the old top-right PaneActivityDot + "ctx NN%"
     /// label pair (v1.4.1/v1.4.2) AND the bottom ContextMeterBar strip. See
@@ -37,11 +37,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// for the context fraction/readout/tooltip wiring, and
     /// refreshTabBarStates for the activity-dot wiring.
     private var statusRail: StatusRailView!
-    /// Own bottom constraint to the container's bottomAnchor, switched in
-    /// updateTabIndicator alongside tabBarHeightConstraint/
-    /// terminalAreaBottomConstraint — same mechanism the old
-    /// contextMeterBottomConstraint used (see updateTabIndicator's doc
-    /// comment for why this can't just track tabBar.topAnchor).
+    /// The rail's bottom constraint to the container's bottom edge.
     private var railBottomConstraint: NSLayoutConstraint!
     /// The "NNk / NNk tokens (NN%)" half of the rail's tooltip, from the most
     /// recent context-meter scan — `nil` when there's no context data to show
@@ -70,39 +66,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // (background read, generation-guarded apply on main), with a timer that
     // only runs while the drawer is open.
     private var replyDrawer: ReplyDrawerView!
-    /// Owns the container's right edge: the terminal's trailing constraint,
-    /// the top-right button row's shift, and (via `onChange`) the reply and
-    /// artifacts timers' lifecycles. Optional, not implicitly unwrapped:
-    /// `installShieldButton()` and `installArtifactsButton()` (both called
-    /// from `init`, after `buildSubviews()`) read it through
-    /// `pinToTopRightRow`, and although that call order is safe today, a
-    /// force unwrap would turn any future earlier call into a launch crash
-    /// instead of a harmlessly closed drawer. Read as `drawerDock?.occupant
-    /// ?? .none` everywhere.
+    /// Owns the drawers (Copy on the left, Artifacts on the right) and,
+    /// through `onChange`, the reply and artifacts timers' lifecycles.
+    /// Optional rather than implicitly unwrapped, so a call that ever came
+    /// before `buildSubviews()` would find a closed dock instead of
+    /// crashing. Read as `drawerDock?.occupant ?? .none` everywhere.
     private var drawerDock: DrawerDock?
-    /// The part of `terminalArea` no drawer covers: a drawer lies over the
-    /// terminal, whose width never changes (see DrawerDock). The top-right
-    /// button row is pinned to its trailing edge.
-    private var uncoveredArea: NSLayoutGuide!
-    /// That guide's trailing constraint: `0` when the dock is empty,
-    /// `DrawerGeometry.edgeConstant(forWidth:)` for the drawer showing.
-    /// Written by DrawerDock, which owns that arithmetic.
-    private var uncoveredTrailingConstraint: NSLayoutConstraint!
-    /// Own bottom constraint on the drawer, switched in `updateTabIndicator`
-    /// alongside `terminalAreaBottomConstraint`/`railBottomConstraint` — the
-    /// drawer's bottom edge tracks EXACTLY the same y-position as
-    /// `terminalArea`'s own bottom edge (same constants, same lockstep
-    /// switch), so it always ends strictly above the status rail / tab bar
-    /// band without any drawer-specific magic numbers. See
-    /// `buildSubviews()`'s installation site and task-3-report.md for the
-    /// arithmetic this guarantees.
-    private var replyDrawerBottomConstraint: NSLayoutConstraint!
-    /// Artifacts drawer (Lot artifacts-drawer, Task 8) — second occupant of
-    /// the right dock, same top/trailing/width/bottom treatment as
-    /// `replyDrawer`/`replyDrawerBottomConstraint` above. See `buildSubviews`'
-    /// installation site.
+    /// Artifacts drawer (Lot artifacts-drawer, Task 8), the dock's right-hand
+    /// occupant; `replyDrawer` is the left-hand one. See `buildSubviews`.
     private var artifactsDrawer: ArtifactsDrawerView!
-    private var artifactsDrawerBottomConstraint: NSLayoutConstraint!
     private var replyDrawerTimer: Timer?
     /// Bumped on every `refreshReplyDrawer()` call — same staleness guard as
     /// `contextMeterGeneration` above; see `refreshReplyDrawer`'s doc comment.
@@ -129,68 +101,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// artifacts do not carry over to another tab's.
     private var artifactsSessionIds: Set<String> = []
 
-    /// Trailing offsets — all measured from `uncoveredArea.trailingAnchor` —
-    /// of the buttons that share the panel's top-right row: the shield
-    /// (installed by this container) plus, in the Quick Terminal panel, the
-    /// pin and "open in Terminal" (↗) buttons, which are subviews of the
-    /// panel's blur view one level up and get pinned into the row via
-    /// `pinToTopRightRow`.
-    ///
-    /// The row has to slide left with the terminal area when the reply drawer
-    /// opens. Fix round finding F2 did that for the shield alone by moving
-    /// its anchor from the container's trailing edge to `terminalArea`'s —
-    /// which left its row siblings behind, still pinned to the container,
-    /// visibly floating inside the drawer's own top-right corner as if they
-    /// belonged to the drawer (observed on screen in v1.6). Pinning every
-    /// button in the row to that SAME moving anchor is what makes the row
-    /// travel as one unit.
-    ///
-    /// `drawerOpenShift` covers the one button that does not fit that rule
-    /// on its own: the row's rightmost (↗) sits 4pt PAST the uncovered
-    /// area's trailing edge, inside the panel's 14pt blur padding, where
-    /// there is nothing to collide with. With the drawer open that same +4
-    /// would land on the drawer's leading edge (the drawer begins exactly
-    /// where `uncoveredArea` ends — see buildSubviews). So while the drawer
-    /// is open the whole row shifts a further 8pt left, which puts the
-    /// rightmost button 4pt INSIDE the uncovered area and preserves
-    /// every gap between buttons. Closed, the shift is 0 and every button
-    /// sits at exactly the pixel it always did.
-    enum TopRightButtonRow {
-        /// "Open in Terminal" (↗) — the row's rightmost button. +4 reproduces
-        /// its historical `blur.trailingAnchor - 10` pin: the container's
-        /// trailing edge is `blur.trailing - 14`.
-        static let openBase: CGFloat = 4
-        /// Dangerous-mode shield — unchanged from finding F2.
-        static let shieldBase: CGFloat = -28
-        /// Pin (autohide toggle) — the row's leftmost button in the Quick
-        /// Terminal panel. -58 reproduces its historical
-        /// `blur.trailingAnchor - 72` pin.
-        static let pinBase: CGFloat = -58
-        /// Artifacts drawer toggle, the row's new leftmost member in BOTH
-        /// hosts. -88 continues the row's 30pt rhythm from `pinBase`.
-        /// Uniform across the main window and the Quick Terminal panel
-        /// deliberately — this is the same geometry slot where the v1.6
-        /// row-members-move-independently bug lived, so per-host cleverness
-        /// is exactly the wrong thing to introduce here. Cost: in the main
-        /// window (shield alone, no pin/open-in-Terminal siblings) this
-        /// leaves a gap between the shield at -28 and this button at -88;
-        /// on-screen checklist item, a one-constant fix if it reads badly.
-        static let artifactsBase: CGFloat = -88
-        /// Reply drawer toggle, one more 30pt step to the left.
-        static let replyBase: CGFloat = -118
-        /// Extra leftward travel applied to the WHOLE row while the drawer is
-        /// open, so the rightmost button clears the drawer's leading edge.
-        static let drawerOpenShift: CGFloat = -8
 
-        static func trailingConstant(base: CGFloat, drawerOpen: Bool) -> CGFloat {
-            base + (drawerOpen ? drawerOpenShift : 0)
-        }
-    }
-
-    /// (constraint, base offset) for every button pinned into the top-right
-    /// row. Recomputed as a SET on every drawer toggle — the v1.6 bug was
-    /// exactly a row whose members moved independently.
-    private var topRightRowConstraints: [(constraint: NSLayoutConstraint, base: CGFloat)] = []
 
     // Cockpit (Lot 3, Task 5) — Cmd+click file[:line] references. The
     // returned monitor token must be retained (AppKit invalidates/drops an
@@ -340,25 +251,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 self, selector: #selector(sharedBackendDidTerminate(_:)),
                 name: .claudeBackendDidTerminate, object: nil
             )
-            installShieldButton()
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(skipPermissionsStateChanged),
-                name: .opusSkipPermissionsChanged, object: nil
-            )
             NotificationCenter.default.addObserver(
                 self, selector: #selector(sharedBackendDidSpawn(_:)),
                 name: .claudeBackendDidSpawn, object: nil
             )
         }
-        // Unconditional, unlike installShieldButton() above: the shield only
-        // means something for the shared backend (useSharedTab0), but the
-        // artifacts drawer works in every pane. Placed after the branch
-        // (rather than inside it or before buildSubviews()) so it always
-        // runs exactly once per container, whichever way useSharedTab0
-        // falls, and — like installShieldButton() — after buildSubviews()
-        // has already assigned `drawerDock`, which pinToTopRightRow reads.
-        installArtifactsButton()
-        installReplyButton()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -366,117 +263,68 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // MARK: Layout (new — container-specific)
 
     private func buildSubviews() {
-        let area = NSView()
-        area.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(area)
-        // Fix round 2 (v1.4.1): initial constant matches updateTabIndicator's
-        // "hidden" branch (-(14 + 4)) instead of 0 — see the doc comment on
-        // meterBottom below for why the default (single-tab) state has to be
-        // right from construction, not just after the first tab change.
-        let bottom = area.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
+        // The container fills its host (the panel's blur, the main window's
+        // content); the bars span it edge to edge and the terminal keeps the
+        // panel's 14pt padding inside it.
+        let top = ChromeBar(edge: .minY)
+        addSubview(top)
+        let tabs = ChromeTabStrip(frame: .zero)
+        tabs.onSwitch = { [weak self] index in self?.switchTab(to: index) }
+        tabs.onNewTab = { [weak self] in self?.spawnNewTab() }
+        let buttons = ChromeButtonBar(frame: .zero)
+        buttons.onCopy = { [weak self] in self?.toggleReplyDrawer() }
+        buttons.onArtifacts = { [weak self] in self?.toggleArtifactsDrawer() }
+        buttons.onKeychain = { SecretsPanel.shared.toggle() }
+        buttons.moreMenu = { [weak self] in self?.makeMoreMenu() ?? NSMenu() }
+        top.addSubview(tabs)
+        top.addSubview(buttons)
         NSLayoutConstraint.activate([
-            area.topAnchor.constraint(equalTo: topAnchor),
-            area.leadingAnchor.constraint(equalTo: leadingAnchor),
-            area.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bottom
+            top.topAnchor.constraint(equalTo: topAnchor),
+            top.leadingAnchor.constraint(equalTo: leadingAnchor),
+            top.trailingAnchor.constraint(equalTo: trailingAnchor),
+            top.heightAnchor.constraint(equalToConstant: Self.toolbarHeight),
+            tabs.leadingAnchor.constraint(equalTo: top.leadingAnchor, constant: OpusTheme.insetPanel),
+            tabs.topAnchor.constraint(equalTo: top.topAnchor),
+            tabs.bottomAnchor.constraint(equalTo: top.bottomAnchor),
+            tabs.trailingAnchor.constraint(equalTo: buttons.leadingAnchor, constant: -12),
+            buttons.trailingAnchor.constraint(equalTo: top.trailingAnchor, constant: -10),
+            buttons.centerYAnchor.constraint(equalTo: top.centerYAnchor),
         ])
-        terminalArea = area
-        terminalAreaBottomConstraint = bottom
+        topBar = top
+        tabStrip = tabs
+        buttonBar = buttons
 
-        let uncovered = NSLayoutGuide()
-        addLayoutGuide(uncovered)
-        let uncoveredTrailing = uncovered.trailingAnchor.constraint(equalTo: trailingAnchor)
-        NSLayoutConstraint.activate([
-            uncovered.topAnchor.constraint(equalTo: area.topAnchor),
-            uncovered.leadingAnchor.constraint(equalTo: area.leadingAnchor),
-            uncovered.bottomAnchor.constraint(equalTo: area.bottomAnchor),
-            uncoveredTrailing
-        ])
-        uncoveredArea = uncovered
-        uncoveredTrailingConstraint = uncoveredTrailing
-
-        let bar = OpusTabBar(frame: .zero)
-        bar.isHidden = true
-        bar.alphaValue = 0
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        bar.onSwitch = { [weak self] idx in self?.switchTab(to: idx) }
-        addSubview(bar)
-        let heightC = bar.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: -4),
-            bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 4),
-            bar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: 8),
-            heightC
-        ])
-        tabBar = bar
-        tabBarHeightConstraint = heightC
-
-        // Status rail (visual-harmonization spec, section 1 "Rail de statut")
-        // — bottom-of-panel strip that now carries BOTH the context-usage
-        // fill+readout (formerly ContextMeterBar + the top-right "ctx NN%"
-        // label) AND the activity dot (formerly the top-right PaneActivityDot),
-        // per the spec's "le statut passif descend, l'action reste en haut."
-        // OWN bottom constraint to the container's bottomAnchor, switched in
-        // updateTabIndicator alongside tabBarHeightConstraint/
-        // terminalAreaBottomConstraint — same mechanism the old
-        // contextMeterBottomConstraint used, and for the same reason
-        // (`rail.bottomAnchor == bar.topAnchor` would track the bar's own
-        // bottomAnchor, which sits at container-bottom+8 regardless of its
-        // height, not the bar's actual visible top edge).
-        //
-        // No explicit height constraint — StatusRailView's intrinsicContentSize
-        // (the readout label's own height, measured 13pt for the 10pt
-        // monospaced-digit font) drives it, per StatusRailView's own doc
-        // comment and task-2-report.md's layout arithmetic. Leading/trailing
-        // pinned with zero inset, same as the old meter — the container's
-        // own leading/trailing edges already carry the panel's 14pt inset
-        // from the blur, so no additional constant belongs here.
-        //
-        // Initial bottom constant already matches updateTabIndicator's
-        // "hidden" branch (-4) rather than deferring to updateTabIndicator(),
-        // for the same reason the old meter did: that function only ever
-        // runs from switchTab(to:), so a session that starts and stays on
-        // tab 0 would otherwise never correct it (see init's own
-        // updateTabIndicator() call). Always present in the view hierarchy
-        // (never isHidden) — visibility is alpha-only (fraction == nil), so
-        // a fade-in/out never needs a relayout pass. Added AFTER
-        // terminalArea above (z-above it already — no reorder needed).
         let rail = StatusRailView(frame: .zero)
         rail.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rail)
-        let railBottom = rail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4)
+        let railBottom = rail.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
         NSLayoutConstraint.activate([
-            rail.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rail.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rail.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
+            rail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
             railBottom
         ])
         statusRail = rail
         railBottomConstraint = railBottom
 
-        // Reply drawer (v1.6 backlog Task 3) — right-side, fixed 260pt width,
-        // hidden by default. Top pinned flush to the container's own top
-        // (same as terminalArea); trailing flush to the container's own
-        // trailing (the drawer IS the container's rightmost edge while
-        // open — there's nothing further right for it to leave room for).
-        // Bottom is the one non-obvious anchor: it does NOT go all the way
-        // to the container's bottomAnchor (that would draw OVER the status
-        // rail and, when 2+ tabs exist, the tab bar too — fix round finding
-        // F6: this drawer is added LAST, below, i.e. it sits ABOVE both of
-        // them in z-order, not the other way around, so an overlapping
-        // drawer would visually hide them rather than being clipped by
-        // them). Instead its own bottom constraint is switched in lockstep
-        // with terminalAreaBottomConstraint inside updateTabIndicator, using the
-        // literal SAME constants (terminalAreaBottomShown/Hidden) — so the
-        // drawer's bottom edge always sits at EXACTLY the same y-position
-        // as terminalArea's own bottom edge, which is already guaranteed
-        // (by that existing arithmetic) to clear both the rail and the tab
-        // bar in either tab-count state. See task-3-report.md for the
-        // worked-out numbers.
+        let area = NSView()
+        area.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(area, positioned: .below, relativeTo: top)
+        let bottom = area.bottomAnchor.constraint(equalTo: rail.topAnchor, constant: -6)
+        NSLayoutConstraint.activate([
+            area.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 6),
+            area.leadingAnchor.constraint(equalTo: leadingAnchor, constant: OpusTheme.insetPanel),
+            area.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -OpusTheme.insetPanel),
+            bottom
+        ])
+        terminalArea = area
+        terminalAreaBottomConstraint = bottom
+
+        // Drawers lie over the terminal between the two bars, flush with the
+        // container's edges, and are added after everything they cover.
         let drawer = ReplyDrawerView(frame: .zero)
         drawer.translatesAutoresizingMaskIntoConstraints = false
         drawer.isHidden = true
         addSubview(drawer)
-        let drawerBottom = drawer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
         // Held rather than activated anonymously: DrawerDock animates this
         // constant between 0 (showing) and minus the drawer's width (parked
         // off the left edge), which is what makes opening a slide. Copy sits
@@ -485,45 +333,30 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let drawerWidth = drawer.widthAnchor.constraint(
             equalToConstant: OpusPreferences.shared.drawerWidth(for: .reply))
         NSLayoutConstraint.activate([
-            drawer.topAnchor.constraint(equalTo: topAnchor),
+            drawer.topAnchor.constraint(equalTo: top.bottomAnchor),
             drawerLeading,
             drawerWidth,
-            drawerBottom
+            drawer.bottomAnchor.constraint(equalTo: area.bottomAnchor)
         ])
         replyDrawer = drawer
-        replyDrawerBottomConstraint = drawerBottom
 
-        // Artifacts drawer (Task 8) — second occupant of the right dock,
-        // built the same way as the Tasks drawer directly above. Built and
-        // registered BEFORE `DrawerDock` is constructed: `DrawerDock.show`
-        // sets the terminal's trailing constant from the requested
-        // occupant's width whether or not it has a view for that occupant,
-        // so a dock built without this view would still shrink the
-        // terminal by DrawerGeometry.width(for: .artifacts) and show
-        // nothing in the gap.
+        // Artifacts drawer (Task 8), second occupant of the dock, built
+        // before `DrawerDock` so the dock has a view for every occupant.
         let artifactsDrawerView = ArtifactsDrawerView(frame: .zero)
         artifactsDrawerView.translatesAutoresizingMaskIntoConstraints = false
         artifactsDrawerView.isHidden = true
         addSubview(artifactsDrawerView)
-        // Bottom edge tracks terminalAreaBottomConstraint's own constant,
-        // never the container's raw bottomAnchor: the status rail plus tab
-        // bar band at the true bottom grows and shrinks with the tab count,
-        // and the drawer must clear both in every state, not only the one
-        // on screen when it was built. Same reasoning as ReplyDrawerView.
-        let artifactsBottom = artifactsDrawerView.bottomAnchor.constraint(
-            equalTo: bottomAnchor, constant: -(14 + 4))
         let artifactsTrailing = artifactsDrawerView.trailingAnchor.constraint(
             equalTo: trailingAnchor)
         let artifactsWidth = artifactsDrawerView.widthAnchor.constraint(
             equalToConstant: OpusPreferences.shared.drawerWidth(for: .artifacts))
         NSLayoutConstraint.activate([
-            artifactsDrawerView.topAnchor.constraint(equalTo: topAnchor),
+            artifactsDrawerView.topAnchor.constraint(equalTo: top.bottomAnchor),
             artifactsTrailing,
             artifactsWidth,
-            artifactsBottom
+            artifactsDrawerView.bottomAnchor.constraint(equalTo: area.bottomAnchor)
         ])
         artifactsDrawer = artifactsDrawerView
-        artifactsDrawerBottomConstraint = artifactsBottom
 
         // One grabbable strip per drawer, pinned to its inner edge (the one
         // facing the terminal) and sized in points, installed AFTER both
@@ -565,25 +398,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                     view: artifactsDrawerView, offset: artifactsTrailing,
                     width: artifactsWidth, side: .trailing)
             ],
-            edge: uncoveredTrailingConstraint,
             widthProvider: { OpusPreferences.shared.drawerWidth(for: $0) },
             layout: { [weak self] in self?.layoutSubtreeIfNeeded() },
             onChange: { [weak self] occupant in
                 guard let self else { return }
-                self.updateTopRightRow(drawerOpen: DrawerGeometry.isOpen(occupant))
-                // Runs for EVERY transition (including .artifacts → .reply),
-                // same as updateTopRightRow above, so the toggle's tint never
-                // lags behind which drawer is actually showing. Safe even
-                // before installArtifactsButton() has run — it only reaches
-                // that point via a user- or code-triggered toggle() call,
-                // which can't happen until init (and this button install)
-                // has completed — and refreshArtifactsButton() itself is
-                // nil-safe on `artifactsButton` regardless.
-                self.refreshArtifactsButton()
-                self.refreshReplyButton()
-                // The layout pass moved into DrawerDock's animation group;
-                // running it here as well would settle the constraints
-                // instantly and cancel the slide.
+                self.buttonBar.activeDrawer = occupant
                 if occupant == .reply {
                     self.refreshReplyDrawer()
                     self.startReplyDrawerTimer()
@@ -897,54 +716,39 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Cockpit — reply drawer (Cmd+Shift+C)
 
-    /// Pin `button`'s trailing edge into the top-right row (see
-    /// `TopRightButtonRow`) at `base` points from the uncovered area's
-    /// trailing edge, and keep it in step with the row across drawer
-    /// toggles. `button` does NOT have to be a subview of this container —
-    /// the Quick Terminal panel's pin/↗ buttons live in the panel's blur
-    /// view, one level above it — it only has to already share an ancestor
-    /// with the container, which is all Auto Layout needs to resolve the
-    /// constraint at their nearest common ancestor.
-    func pinToTopRightRow(_ button: NSView, base: CGFloat) {
-        let constraint = button.trailingAnchor.constraint(
-            equalTo: uncoveredArea.trailingAnchor,
-            constant: TopRightButtonRow.trailingConstant(
-                base: base, drawerOpen: DrawerGeometry.isOpen(drawerDock?.occupant ?? .none)))
-        topRightRowConstraints.append((constraint, base))
-        constraint.isActive = true
-    }
+    static let toolbarHeight: CGFloat = 32
 
-    private func updateTopRightRow(drawerOpen: Bool) {
-        for entry in topRightRowConstraints {
-            entry.constraint.constant = TopRightButtonRow.trailingConstant(
-                base: entry.base, drawerOpen: drawerOpen)
+    /// The toolbar's "⋯" menu: the host's own entries first (pin, open in
+    /// Terminal), then bypass permissions and the permission mode, which
+    /// only mean something for the shared session. Built on each click, so
+    /// every check mark is current.
+    private func makeMoreMenu() -> NSMenu {
+        let menu = NSMenu()
+        for item in host?.chromeMenuItems() ?? [] { menu.addItem(item) }
+        guard useSharedTab0 else { return menu }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+
+        let bypass = NSMenuItem(title: "Passer les permissions (bypass)",
+                                action: #selector(bypassToggled), keyEquivalent: "")
+        bypass.target = self
+        bypass.state = ClaudeBackend.shared.skipPermissionsActive ? .on : .off
+        menu.addItem(bypass)
+
+        let modes = NSMenu()
+        let current = OpusPreferences.shared.permissionMode
+        for mode in OpusPermissionMode.allCases {
+            let item = NSMenuItem(title: mode.displayName, action: #selector(permissionModePicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == current ? .on : .off
+            modes.addItem(item)
         }
+        let modeItem = NSMenuItem(title: "Mode de permission", action: nil, keyEquivalent: "")
+        modeItem.submenu = modes
+        menu.addItem(modeItem)
+        return menu
     }
 
-    // The dangerous-mode shield button (installShieldButton, above)
-    // used to float at a FIXED offset from the container's own
-    // trailing edge, which sat inside the drawer's top-right corner
-    // whenever the drawer was open. Fix round finding F2: rather
-    // than hiding the shield for the drawer's duration (which kills
-    // the only at-a-glance "claude is running
-    // --dangerously-skip-permissions" signal), the button's trailing
-    // anchor is now pinned to `uncoveredArea.trailingAnchor` instead
-    // of the container's — the edge of the terminal no drawer covers,
-    // which slides with the drawer — so the shield lands beside the
-    // drawer instead of under it. No
-    // shield-specific bookkeeping needed here anymore;
-    // `refreshShieldButton()` still governs the button's visibility
-    // on its own, unrelated axis (skip-permissions state, not drawer
-    // state).
-    //
-    // Palette fix round: the shield was the ONLY button that moved.
-    // Its row siblings (the panel's pin and ↗ buttons) were still
-    // pinned to the panel's own trailing edge and stayed put, ending
-    // up inside the drawer's top-right corner — see
-    // `TopRightButtonRow`. They are now pinned to the same moving
-    // anchor via `pinToTopRightRow`, and `updateTopRightRow` applies
-    // the row-wide shift that keeps the rightmost one clear of the
-    // drawer's leading edge.
     func toggleReplyDrawer() {
         drawerDock?.toggle(.reply)
     }
@@ -1168,160 +972,10 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     // MARK: Artifacts drawer toggle button
 
-    /// Toggle for the artifacts drawer, pinned into the top-right row so it
-    /// travels with the terminal area when a drawer opens, same as the
-    /// shield. Asked for alongside the hotkey: a drawer nobody can see the
-    /// handle for is a drawer nobody opens.
-    ///
-    /// Called unconditionally from `init` (see the call site's own comment)
-    /// — unlike `installShieldButton()`, which only matters for the shared
-    /// backend, the artifacts drawer works in every pane, so its toggle
-    /// belongs in every host.
-    private func installArtifactsButton() {
-        let btn = NSButton(title: "", target: self, action: #selector(artifactsButtonTapped))
-        btn.isBordered = false
-        btn.imagePosition = .imageOnly
-        btn.image = NSImage(systemSymbolName: "sidebar.trailing",
-                            accessibilityDescription: "Artifacts")
-        btn.setAccessibilityLabel("Artifacts drawer")
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(btn)
-        NSLayoutConstraint.activate([
-            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            btn.widthAnchor.constraint(equalToConstant: 24),
-            btn.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        pinToTopRightRow(btn, base: TopRightButtonRow.artifactsBase)
-        artifactsButton = btn
-        refreshArtifactsButton()
-    }
-
-    @objc private func artifactsButtonTapped() {
-        toggleArtifactsDrawer()
-    }
-
-    /// Cyan while the drawer is the dock's occupant, dim otherwise. The
-    /// theme's rule is one color one meaning, and cyan already means an
-    /// active control. Called from `installArtifactsButton()` (initial
-    /// state) and from the dock's `onChange` closure in `buildSubviews()`
-    /// (every subsequent occupant change), so the tint never lags behind
-    /// which drawer, if any, is actually showing.
-    private func refreshArtifactsButton() {
-        artifactsButton?.contentTintColor =
-            drawerDock?.occupant == .artifacts ? OpusTheme.cyan : OpusTheme.cream(0.45)
-        artifactsButton?.toolTip = "Artifacts produced by this session (Cmd+Shift+A)"
-    }
-
-    /// Same build as the artifacts toggle, one slot further left: a
-    /// shortcut alone would leave the drawer to whoever remembers it.
-    private func installReplyButton() {
-        let btn = NSButton(title: "", target: self, action: #selector(replyButtonTapped))
-        btn.isBordered = false
-        btn.imagePosition = .imageOnly
-        btn.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Réponse")
-        btn.setAccessibilityLabel("Reply drawer")
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(btn)
-        NSLayoutConstraint.activate([
-            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            btn.widthAnchor.constraint(equalToConstant: 24),
-            btn.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        pinToTopRightRow(btn, base: TopRightButtonRow.replyBase)
-        replyButton = btn
-        refreshReplyButton()
-    }
-
-    @objc private func replyButtonTapped() {
-        toggleReplyDrawer()
-    }
-
-    /// Cyan while the reply drawer is open, dim otherwise, like the
-    /// artifacts toggle.
-    private func refreshReplyButton() {
-        replyButton?.contentTintColor =
-            drawerDock?.occupant == .reply ? OpusTheme.cyan : OpusTheme.cream(0.45)
-        replyButton?.toolTip = "Dernière réponse, à copier morceau par morceau (Cmd+Shift+C)"
-    }
-
     // MARK: Dangerous-mode shield button
 
-    /// Floating toggle at the container's top-right (the tab bar is hidden
-    /// with a single tab, so it can't host this). Orange = claude is running
-    /// with --dangerously-skip-permissions; click restarts the shared session
-    /// back into the same conversation with the flag flipped.
-    private func installShieldButton() {
-        let btn = NSButton(title: "", target: self, action: #selector(shieldTapped))
-        btn.isBordered = false
-        btn.imagePosition = .imageOnly
-        btn.setAccessibilityLabel("Skip permissions toggle")
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(btn)
-        // Fix round finding F2: pinned to `uncoveredArea.trailingAnchor`,
-        // NOT the container's own `trailingAnchor` — that edge slides with
-        // the drawer (see DrawerDock), so the shield moves left in lockstep
-        // with it instead of sitting fixed under the drawer's top-right
-        // corner. Offset preserved
-        // (-28) relative to that anchor, same as it was relative to the
-        // container's when the drawer never moved anything.
-        //
-        // Palette fix round: that pin now goes through `pinToTopRightRow`,
-        // the same call the panel's pin/↗ buttons use, so all three move as
-        // one row instead of the shield alone (see `TopRightButtonRow`).
-        NSLayoutConstraint.activate([
-            btn.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            btn.widthAnchor.constraint(equalToConstant: 24),
-            btn.heightAnchor.constraint(equalToConstant: 22)
-        ])
-        pinToTopRightRow(btn, base: TopRightButtonRow.shieldBase)
-        shieldButton = btn
-
-        // Right-click / ctrl-click: choose a --permission-mode preset. Skip
-        // Permissions (left-click) always wins over these when active — see
-        // composeSpawnCommand.
-        let menu = NSMenu()
-        for mode in OpusPermissionMode.allCases {
-            let item = NSMenuItem(title: mode.displayName,
-                                  action: #selector(permissionModePicked(_:)),
-                                  keyEquivalent: "")
-            item.target = self
-            item.representedObject = mode.rawValue
-            menu.addItem(item)
-        }
-        btn.menu = menu   // right-click opens it
-
-        refreshShieldButton()
-    }
-
-    private func refreshShieldButton() {
-        guard let btn = shieldButton else { return }
-        let active = ClaudeBackend.shared.skipPermissionsActive
-        btn.image = NSImage(
-            systemSymbolName: active ? "shield.slash.fill" : "shield.fill",
-            accessibilityDescription: "Skip permissions"
-        )
-        btn.contentTintColor = active
-            ? OpusTheme.amber
-            : OpusTheme.cream(0.45)
-        btn.toolTip = active
-            ? "Skip permissions: ON. Claude runs tools without asking. Click to restore prompts (restarts into the same conversation)."
-            : "Skip permissions: OFF. Click to relaunch with --dangerously-skip-permissions (restarts into the same conversation)."
-
-        // Re-state the permission-mode menu's checkmark to match the current
-        // pref — this runs on every skipPermissions flip too, since the
-        // shield's own toggle changes what "active" flag combo is in effect.
-        let current = OpusPreferences.shared.permissionMode
-        for item in btn.menu?.items ?? [] {
-            item.state = (item.representedObject as? String == current.rawValue) ? .on : .off
-        }
-    }
-
-    @objc private func shieldTapped() {
+    @objc private func bypassToggled() {
         ClaudeBackend.shared.toggleSkipPermissions()
-    }
-
-    @objc private func skipPermissionsStateChanged() {
-        refreshShieldButton()
     }
 
     @objc private func permissionModePicked(_ sender: NSMenuItem) {
@@ -1329,7 +983,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
               let mode = OpusPermissionMode(rawValue: raw),
               mode != OpusPreferences.shared.permissionMode else { return }   // re-picking the checked mode must not kill a running turn
         OpusPreferences.shared.permissionMode = mode
-        refreshShieldButton()
         ClaudeBackend.shared.restart(resume: true)   // same conversation, new flags
     }
 
@@ -2000,13 +1653,6 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 }
             }
         }
-        // Cross-surface sync: picking a permission mode in ONE shared-tab-0
-        // surface (e.g. panelAndMain's panel) writes the pref, which posts
-        // this same notification to every container — refresh so the OTHER
-        // surface's shield menu checkmark follows along. No-ops on containers
-        // without a shield button (refreshShieldButton guards on shieldButton
-        // being nil).
-        refreshShieldButton()
     }
 
     private func bootstrapFirstTab() {
@@ -2608,73 +2254,13 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let panes = tabPanes[activeTabIndex]
         guard panes.indices.contains(idx) else { return }
         tabTitles[activeTabIndex] = panes[idx].title
-        tabBar.titles = tabTitles
+        tabStrip.titles = tabTitles
     }
 
     func updateTabIndicator() {
-        tabBar.tabCount = tabs.count
-        tabBar.activeIndex = activeTabIndex
-        tabBar.titles = tabTitles
+        tabStrip.titles = tabTitles
+        tabStrip.activeIndex = activeTabIndex
         refreshTabBarStates()
-        // Show the bar only when 2+ tabs; shrink terminalArea to make room.
-        let showBar = tabs.count > 1
-        tabBar.isHidden = !showBar
-        tabBar.alphaValue = showBar ? 1 : 0
-        tabBarHeightConstraint.constant = showBar ? 26 : 0
-        // Room reserved above terminalArea's bottom edge for the status
-        // rail (see railBottomConstraint below) so the terminal never draws
-        // over it. Broken into named CGFloat constants — the compiler
-        // choked ("unable to type-check in reasonable time") on the
-        // arithmetic-inside-ternary form.
-        //
-        // Task 3 (visual harmonization): reserved allocation grows from 6 →
-        // 15 — the strip itself is no longer the 4pt ContextMeterBar but
-        // StatusRailView, whose intrinsicContentSize (the 10pt monospaced-
-        // digit readout label's own height) measures 13pt (see
-        // task-2-report.md's layout arithmetic; also reproduced locally: an
-        // `NSTextField(labelWithString:)` in
-        // `.monospacedDigitSystemFont(ofSize: 10, weight: .regular)` reports
-        // `intrinsicContentSize.height == 13.0`). Same "2pt breathing room
-        // above the strip" term as before (established Fix 3, v1.4.2),
-        // 2 + 13 = 15 replacing the old 2 + 4 = 6. The rail's own bottom-edge
-        // position (railBottomShown/Hidden just below) is a separate,
-        // UNCHANGED concern — same floor the old meter used — it fixes
-        // where the strip's floor sits, not how tall it is, so those two
-        // constants don't need to move for a height-only change: growing the
-        // reserved allocation by the same +9 (13 - 4) that the rail grew by
-        // versus the old meter preserves the exact gap between terminalArea's
-        // bottom edge and the strip's top edge in BOTH states (shown: 10pt,
-        // hidden: 12pt — unchanged from before this task), and the rail's
-        // unchanged floor preserves the exact gap from the strip's bottom
-        // edge down to the tab bar in both states too (shown: 18pt, hidden:
-        // 12pt — also unchanged).
-        let terminalAreaBottomShown: CGFloat = -59   // -(14 + 26 + 4 + 15)
-        let terminalAreaBottomHidden: CGFloat = -29  // -(14 + 15)
-        terminalAreaBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
-        // Reply drawer (v1.6 backlog Task 3): own bottom constraint, switched
-        // in lockstep with terminalAreaBottomConstraint using the EXACT SAME
-        // two constants above (not a drawer-specific pair) — the drawer's
-        // bottom edge must always land at the same y-position as
-        // terminalArea's own bottom edge, which this arithmetic already
-        // keeps clear of the rail/tab-bar band in both states. See
-        // buildSubviews()'s doc comment on replyDrawerBottomConstraint.
-        replyDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
-        // Artifacts drawer: identical treatment, same two constants, same
-        // reasoning as replyDrawerBottomConstraint immediately above — see
-        // buildSubviews()'s doc comment on artifactsDrawerBottomConstraint.
-        artifactsDrawerBottomConstraint.constant = showBar ? terminalAreaBottomShown : terminalAreaBottomHidden
-        // Status rail: own constant, switched in lockstep with the two
-        // above — see buildSubviews' doc comment on railBottomConstraint for
-        // why this can't just track tabBar.topAnchor the way it used to.
-        // Values UNCHANGED from the old contextMeterBottomShown/Hidden — the
-        // rail's floor doesn't move, only its height (and therefore the
-        // terminalArea reservation above) changed. See this function's own
-        // doc comment above for the gap arithmetic this preserves.
-        let railBottomShown: CGFloat = -36   // -(8 + 26 + 2)
-        let railBottomHidden: CGFloat = -4
-        railBottomConstraint.constant = showBar ? railBottomShown : railBottomHidden
-        tabBar.needsDisplay = true
-        layoutSubtreeIfNeeded()
     }
 
     // MARK: Cockpit — pane↔session binding, tab-bar dots, precise notifications
@@ -2719,7 +2305,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// hasn't matched a SessionStart to it either) reads as `.idle`, same as
     /// a session with no events at all.
     private func refreshTabBarStates() {
-        tabBar.states = tabPanes.indices.map { tabIdx -> PaneActivity in
+        tabStrip.states = tabPanes.indices.map { tabIdx -> PaneActivity in
             let panes = tabPanes[tabIdx]
             let idx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
             guard panes.indices.contains(idx) else { return .idle }
@@ -2727,11 +2313,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             return ClaudeStateStore.shared.state(forSessionId: sessionId)
         }
         // Mirror the ACTIVE tab's state into the always-visible status
-        // rail's activity dot — same refresh path as tabBar.states itself,
+        // rail's activity dot — same refresh path as tabStrip.states itself,
         // so every existing call site that keeps the tab-bar dots current
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.
-        statusRail.activity = tabBar.states.indices.contains(activeTabIndex) ? tabBar.states[activeTabIndex] : .idle
+        statusRail.activity = tabStrip.states.indices.contains(activeTabIndex) ? tabStrip.states[activeTabIndex] : .idle
         // Task 6 follow-up: this is the activity-only refresh path — it can
         // fire (e.g. a hook event flips .idle → .working) without the
         // context-meter timer having run at all, so the tooltip needs its
@@ -3043,7 +2629,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let activeIdx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
             if paneList.indices.contains(activeIdx) && paneList[activeIdx] === pane {
                 tabTitles[tabIdx] = wrapper.title
-                tabBar.titles = tabTitles
+                tabStrip.titles = tabTitles
             }
             return
         }
@@ -3183,7 +2769,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             let activeIdx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
             if paneList.indices.contains(activeIdx) && paneList[activeIdx] === pane {
                 tabTitles[tabIdx] = title
-                tabBar.titles = tabTitles
+                tabStrip.titles = tabTitles
             }
             return
         }
