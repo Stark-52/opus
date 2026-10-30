@@ -962,12 +962,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             // the first non-digit), so this retry only ever fires for the
             // no-line-number shape.
             let fm = FileManager.default
-            if fm.fileExists(atPath: candidate.path) {
-                openInEditor(path: candidate.path, line: candidate.line)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: candidate.path, isDirectory: &isDirectory) {
+                open(Self.clickTarget(path: candidate.path, line: candidate.line, isDirectory: isDirectory.boolValue))
                 return true
             }
-            if let stripped = PathDetector.trailingDotStripped(candidate.path), fm.fileExists(atPath: stripped) {
-                openInEditor(path: stripped, line: candidate.line)
+            if let stripped = PathDetector.trailingDotStripped(candidate.path),
+               fm.fileExists(atPath: stripped, isDirectory: &isDirectory) {
+                open(Self.clickTarget(path: stripped, line: candidate.line, isDirectory: isDirectory.boolValue))
                 return true
             }
             return false
@@ -1146,6 +1148,24 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             } else {
                 self.afterCursorReaches(row: row, in: terminal, by: deadline, then: next)
             }
+        }
+    }
+
+    enum ClickTarget: Equatable {
+        case finder(URL)
+        case editor(path: String, line: Int?)
+    }
+
+    /// A folder opens in the Finder (an editor would open it as a project),
+    /// a file in the editor at its line.
+    static func clickTarget(path: String, line: Int?, isDirectory: Bool) -> ClickTarget {
+        isDirectory ? .finder(URL(fileURLWithPath: path)) : .editor(path: path, line: line)
+    }
+
+    private func open(_ target: ClickTarget) {
+        switch target {
+        case .finder(let url): NSWorkspace.shared.open(url)
+        case .editor(let path, let line): openInEditor(path: path, line: line)
         }
     }
 
