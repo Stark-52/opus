@@ -18,7 +18,7 @@ import OpusSearchKit
 import OpusSecretsKit
 
 final class ArtifactsDrawerView: NSView {
-    static let width: CGFloat = RightDockGeometry.width(for: .artifacts)
+    static let width: CGFloat = DrawerGeometry.width(for: .artifacts)
     private static let cellID = NSUserInterfaceItemIdentifier("ArtifactCell")
     private static let headerCellID = NSUserInterfaceItemIdentifier("ArtifactHeader")
     private static let stripCellID = NSUserInterfaceItemIdentifier("ArtifactStrip")
@@ -796,7 +796,7 @@ extension ArtifactsDrawerView: QLPreviewPanelDataSource, QLPreviewPanelDelegate 
     /// to. Called from the dock's occupant-change seam (TerminalContainerView),
     /// not from `toggleArtifactsDrawer` directly, because that seam fires for
     /// every route that stops showing the artifacts drawer — the hotkey, the
-    /// reply drawer taking the dock instead, anything else RightDock ever
+    /// reply drawer taking the dock instead, anything else DrawerDock ever
     /// grows — while `toggleArtifactsDrawer` only covers its own call site.
     func closePreviewIfOpen() {
         // Same three-check order as reloadPreviewIfOpen, same reason: exists

@@ -1,4 +1,4 @@
-// RightDock — owner of the container's right edge.
+// DrawerDock — owner of the container's right edge.
 //
 // Before this existed, three things were welded to the Tasks drawer inside
 // TerminalContainerView: the terminal area's trailing constraint, the
@@ -32,8 +32,8 @@
 import AppKit
 import OpusArtifactsKit
 
-final class RightDock {
-    typealias Occupant = RightDockGeometry.Occupant
+final class DrawerDock {
+    typealias Occupant = DrawerGeometry.Occupant
 
     /// One drawer, plus the constraint that parks it off the right edge.
     /// `trailing.constant` is 0 while showing and the drawer's own width
@@ -94,7 +94,7 @@ final class RightDock {
          widthProvider: @escaping (Occupant) -> CGFloat,
          layout: @escaping () -> Void,
          onChange: @escaping (Occupant) -> Void,
-         animate: @escaping Animator = RightDock.slide) {
+         animate: @escaping Animator = DrawerDock.slide) {
         self.panels = panels
         self.edge = edge
         self.widthProvider = widthProvider
@@ -118,10 +118,10 @@ final class RightDock {
     /// job, once, at the end of the gesture.
     func setWidth(_ proposed: CGFloat, for target: Occupant) {
         guard let panel = panels[target] else { return }
-        let width = RightDockGeometry.clampWidth(proposed, for: target)
+        let width = DrawerGeometry.clampWidth(proposed, for: target)
         panel.width.constant = width
         if target == occupant {
-            edge.constant = RightDockGeometry.edgeConstant(forWidth: width)
+            edge.constant = DrawerGeometry.edgeConstant(forWidth: width)
         } else {
             // Parked: keep it exactly one width off the edge so it does not
             // reappear part-way on screen next time it opens.
@@ -154,11 +154,11 @@ final class RightDock {
         // the mirror of the same reasoning.
         panels[requested]?.view.isHidden = false
 
-        animate(RightDockGeometry.isOpen(requested), { [self] in
+        animate(DrawerGeometry.isOpen(requested), { [self] in
             for (key, panel) in panels {
                 panel.trailing.constant = key == requested ? 0 : widthProvider(key)
             }
-            edge.constant = RightDockGeometry.edgeConstant(forWidth: widthProvider(requested))
+            edge.constant = DrawerGeometry.edgeConstant(forWidth: widthProvider(requested))
             layout()
         }, { [weak self] in
             // Guarded on the occupant still being what this animation was

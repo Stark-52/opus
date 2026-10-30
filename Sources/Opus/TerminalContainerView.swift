@@ -77,16 +77,16 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// from `init`, after `buildSubviews()`) read it through
     /// `pinToTopRightRow`, and although that call order is safe today, a
     /// force unwrap would turn any future earlier call into a launch crash
-    /// instead of a harmlessly closed drawer. Read as `rightDock?.occupant
+    /// instead of a harmlessly closed drawer. Read as `drawerDock?.occupant
     /// ?? .none` everywhere.
-    private var rightDock: RightDock?
+    private var drawerDock: DrawerDock?
     /// The part of `terminalArea` no drawer covers: a drawer lies over the
-    /// terminal, whose width never changes (see RightDock). The top-right
+    /// terminal, whose width never changes (see DrawerDock). The top-right
     /// button row is pinned to its trailing edge.
     private var uncoveredArea: NSLayoutGuide!
     /// That guide's trailing constraint: `0` when the dock is empty,
-    /// `RightDockGeometry.edgeConstant(forWidth:)` for the drawer showing.
-    /// Written by RightDock, which owns that arithmetic.
+    /// `DrawerGeometry.edgeConstant(forWidth:)` for the drawer showing.
+    /// Written by DrawerDock, which owns that arithmetic.
     private var uncoveredTrailingConstraint: NSLayoutConstraint!
     /// Own bottom constraint on the drawer, switched in `updateTabIndicator`
     /// alongside `terminalAreaBottomConstraint`/`railBottomConstraint` — the
@@ -345,7 +345,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // (rather than inside it or before buildSubviews()) so it always
         // runs exactly once per container, whichever way useSharedTab0
         // falls, and — like installShieldButton() — after buildSubviews()
-        // has already assigned `rightDock`, which pinToTopRightRow reads.
+        // has already assigned `drawerDock`, which pinToTopRightRow reads.
         installArtifactsButton()
         installReplyButton()
     }
@@ -466,7 +466,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         drawer.isHidden = true
         addSubview(drawer)
         let drawerBottom = drawer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(14 + 4))
-        // Held rather than activated anonymously: RightDock animates this
+        // Held rather than activated anonymously: DrawerDock animates this
         // constant between 0 (showing) and the drawer's width (parked off
         // the right edge), which is what makes opening a slide.
         let drawerTrailing = drawer.trailingAnchor.constraint(equalTo: trailingAnchor)
@@ -483,11 +483,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         // Artifacts drawer (Task 8) — second occupant of the right dock,
         // built the same way as the Tasks drawer directly above. Built and
-        // registered BEFORE `RightDock` is constructed: `RightDock.show`
+        // registered BEFORE `DrawerDock` is constructed: `DrawerDock.show`
         // sets the terminal's trailing constant from the requested
         // occupant's width whether or not it has a view for that occupant,
         // so a dock built without this view would still shrink the
-        // terminal by RightDockGeometry.width(for: .artifacts) and show
+        // terminal by DrawerGeometry.width(for: .artifacts) and show
         // nothing in the gap.
         let artifactsDrawerView = ArtifactsDrawerView(frame: .zero)
         artifactsDrawerView.translatesAutoresizingMaskIntoConstraints = false
@@ -519,14 +519,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // width continuously; on mouse up preferences store it, once:
         // persisting every frame would fire the preferences-changed
         // notification dozens of times per gesture.
-        for (occupant, view) in [(RightDockGeometry.Occupant.reply, drawer as NSView),
+        for (occupant, view) in [(DrawerGeometry.Occupant.reply, drawer as NSView),
                                  (.artifacts, artifactsDrawerView as NSView)] {
             let handle = DrawerResizeHandle(
                 proposeWidth: { [weak self] proposed in
-                    self?.rightDock?.setWidth(proposed, for: occupant)
+                    self?.drawerDock?.setWidth(proposed, for: occupant)
                 },
                 commit: { [weak self] in
-                    guard let self, let dock = self.rightDock else { return }
+                    guard let self, let dock = self.drawerDock else { return }
                     OpusPreferences.shared.setDrawerWidth(
                         dock.currentWidth(for: occupant), for: occupant)
                 })
@@ -540,11 +540,11 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             ])
         }
 
-        rightDock = RightDock(
+        drawerDock = DrawerDock(
             panels: [
-                .reply: RightDock.Panel(
+                .reply: DrawerDock.Panel(
                     view: drawer, trailing: drawerTrailing, width: drawerWidth),
-                .artifacts: RightDock.Panel(
+                .artifacts: DrawerDock.Panel(
                     view: artifactsDrawerView, trailing: artifactsTrailing,
                     width: artifactsWidth)
             ],
@@ -553,7 +553,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             layout: { [weak self] in self?.layoutSubtreeIfNeeded() },
             onChange: { [weak self] occupant in
                 guard let self else { return }
-                self.updateTopRightRow(drawerOpen: RightDockGeometry.isOpen(occupant))
+                self.updateTopRightRow(drawerOpen: DrawerGeometry.isOpen(occupant))
                 // Runs for EVERY transition (including .artifacts → .reply),
                 // same as updateTopRightRow above, so the toggle's tint never
                 // lags behind which drawer is actually showing. Safe even
@@ -564,7 +564,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 // nil-safe on `artifactsButton` regardless.
                 self.refreshArtifactsButton()
                 self.refreshReplyButton()
-                // The layout pass moved into RightDock's animation group;
+                // The layout pass moved into DrawerDock's animation group;
                 // running it here as well would settle the constraints
                 // instantly and cancel the slide.
                 if occupant == .reply {
@@ -587,7 +587,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 } else {
                     // Every route out of the artifacts drawer lands here
                     // (the hotkey, the reply drawer taking the dock instead,
-                    // anything else RightDock ever grows) — unlike
+                    // anything else DrawerDock ever grows) — unlike
                     // toggleArtifactsDrawer, which only covers its own call
                     // site. An open QuickLook preview has no other owner
                     // telling it to close, so it would otherwise float on
@@ -892,7 +892,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let constraint = button.trailingAnchor.constraint(
             equalTo: uncoveredArea.trailingAnchor,
             constant: TopRightButtonRow.trailingConstant(
-                base: base, drawerOpen: RightDockGeometry.isOpen(rightDock?.occupant ?? .none)))
+                base: base, drawerOpen: DrawerGeometry.isOpen(drawerDock?.occupant ?? .none)))
         topRightRowConstraints.append((constraint, base))
         constraint.isActive = true
     }
@@ -929,7 +929,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     // the row-wide shift that keeps the rightmost one clear of the
     // drawer's leading edge.
     func toggleReplyDrawer() {
-        rightDock?.toggle(.reply)
+        drawerDock?.toggle(.reply)
     }
 
     private func startReplyDrawerTimer() {
@@ -968,7 +968,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// some other session's: the same "no data beats wrong data" rule as
     /// the context meter (see `activeSessionId()`).
     private func refreshReplyDrawer() {
-        guard rightDock?.occupant == .reply else { return }
+        guard drawerDock?.occupant == .reply else { return }
         guard !replyDrawerRefreshInFlight else { return }
         replyDrawerGeneration += 1
         let generation = replyDrawerGeneration
@@ -1030,7 +1030,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     private func refreshArtifacts() {
-        guard rightDock?.occupant == .artifacts else { return }
+        guard drawerDock?.occupant == .artifacts else { return }
 
         // Session resolution and the identity reset run BEFORE the in-flight
         // guard, not after it. A first read of a large transcript takes about
@@ -1124,7 +1124,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     }
 
     func toggleArtifactsDrawer() {
-        rightDock?.toggle(.artifacts)
+        drawerDock?.toggle(.artifacts)
     }
 
     // MARK: Artifacts drawer key routing (Task 10)
@@ -1132,7 +1132,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// Whether the artifacts drawer is the dock's current occupant. Gates
     /// every one of the three forwarding methods below so their key
     /// monitors only fire while the drawer is actually open.
-    var artifactsDrawerIsOpen: Bool { rightDock?.occupant == .artifacts }
+    var artifactsDrawerIsOpen: Bool { drawerDock?.occupant == .artifacts }
     /// Whether the drawer, rather than the terminal, currently owns the
     /// keyboard. Gates the hosts' Escape branch specifically: an open drawer
     /// must not swallow the terminal's Escape (see `ArtifactsDrawerView`'s
@@ -1191,7 +1191,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// which drawer, if any, is actually showing.
     private func refreshArtifactsButton() {
         artifactsButton?.contentTintColor =
-            rightDock?.occupant == .artifacts ? OpusTheme.cyan : OpusTheme.cream(0.45)
+            drawerDock?.occupant == .artifacts ? OpusTheme.cyan : OpusTheme.cream(0.45)
         artifactsButton?.toolTip = "Artifacts produced by this session (Cmd+Shift+A)"
     }
 
@@ -1223,7 +1223,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// artifacts toggle.
     private func refreshReplyButton() {
         replyButton?.contentTintColor =
-            rightDock?.occupant == .reply ? OpusTheme.cyan : OpusTheme.cream(0.45)
+            drawerDock?.occupant == .reply ? OpusTheme.cyan : OpusTheme.cream(0.45)
         replyButton?.toolTip = "Dernière réponse, à copier morceau par morceau (Cmd+Shift+C)"
     }
 
@@ -1242,7 +1242,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         addSubview(btn)
         // Fix round finding F2: pinned to `uncoveredArea.trailingAnchor`,
         // NOT the container's own `trailingAnchor` — that edge slides with
-        // the drawer (see RightDock), so the shield moves left in lockstep
+        // the drawer (see DrawerDock), so the shield moves left in lockstep
         // with it instead of sitting fixed under the drawer's top-right
         // corner. Offset preserved
         // (-28) relative to that anchor, same as it was relative to the

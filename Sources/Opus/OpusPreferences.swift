@@ -450,7 +450,7 @@ final class OpusPreferences {
 
     /// Key for an occupant's remembered width. `.none` has no drawer and so
     /// no width to remember.
-    private static func drawerWidthKey(_ occupant: RightDockGeometry.Occupant) -> String? {
+    private static func drawerWidthKey(_ occupant: DrawerGeometry.Occupant) -> String? {
         switch occupant {
         case .reply: return K.replyDrawerWidth
         case .artifacts: return K.artifactsDrawerWidth
@@ -461,19 +461,19 @@ final class OpusPreferences {
     /// The width the user last dragged this drawer to, or its default. A
     /// stored 0 means "never dragged": UserDefaults returns 0 for a missing
     /// key, and 0 is not a width any drag can produce because clampWidth
-    /// floors it at RightDockGeometry.minimumWidth.
-    func drawerWidth(for occupant: RightDockGeometry.Occupant) -> CGFloat {
+    /// floors it at DrawerGeometry.minimumWidth.
+    func drawerWidth(for occupant: DrawerGeometry.Occupant) -> CGFloat {
         guard let key = Self.drawerWidthKey(occupant) else { return 0 }
         let stored = CGFloat(defaults.double(forKey: key))
-        guard stored > 0 else { return RightDockGeometry.defaultWidth(for: occupant) }
-        return RightDockGeometry.clampWidth(stored, for: occupant)
+        guard stored > 0 else { return DrawerGeometry.defaultWidth(for: occupant) }
+        return DrawerGeometry.clampWidth(stored, for: occupant)
     }
 
     /// Clamped on the way in as well as on the way out, so a value written
     /// by an older build or by hand cannot put a drawer outside its band.
-    func setDrawerWidth(_ width: CGFloat, for occupant: RightDockGeometry.Occupant) {
+    func setDrawerWidth(_ width: CGFloat, for occupant: DrawerGeometry.Occupant) {
         guard let key = Self.drawerWidthKey(occupant) else { return }
-        write(key, Double(RightDockGeometry.clampWidth(width, for: occupant)))
+        write(key, Double(DrawerGeometry.clampWidth(width, for: occupant)))
     }
 
     private func write(_ key: String, _ value: Any?) {

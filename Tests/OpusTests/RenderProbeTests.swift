@@ -82,7 +82,7 @@ final class RenderProbeTests: XCTestCase {
             image("cover-v3.png", hue: 0.05, minutesAgo: 2),
             image("affiche.png", hue: 0.75, minutesAgo: 3),
             file("devis-client.pdf", .file, minutesAgo: 4),
-            file("RightDock.swift", .file, minutesAgo: 5),
+            file("DrawerDock.swift", .file, minutesAgo: 5),
             image("post-ig.png", hue: 0.12, minutesAgo: 30 * 60),
             image("banner.png", hue: 0.5, minutesAgo: 30 * 60 + 5),
             file("chrome-design.md", .file, minutesAgo: 30 * 60 + 10),

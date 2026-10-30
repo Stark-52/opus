@@ -1,4 +1,4 @@
-// RightDockGeometry — the widths, and where a drawer's leading edge sits.
+// DrawerGeometry — the widths, and where a drawer's leading edge sits.
 //
 // TopRightButtonRow.drawerOpenShift stays where it is and stays -8: it
 // does not depend on the occupant's width. The row is pinned to the edge of
@@ -8,13 +8,13 @@
 // Width stopped being a constant when the drawers became resizable. What
 // lives here now is the DEFAULT for each occupant plus the bounds a dragged
 // edge is held inside; the live value is whatever the user last dragged to,
-// which the app reads from preferences and hands to RightDock. This module
+// which the app reads from preferences and hands to DrawerDock. This module
 // stays free of UserDefaults so the arithmetic can be tested without one.
 
 import Foundation
 import CoreGraphics
 
-public enum RightDockGeometry {
+public enum DrawerGeometry {
     public enum Occupant: Equatable, Sendable {
         case none
         case reply

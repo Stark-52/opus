@@ -16,7 +16,7 @@ import AppKit
 import OpusArtifactsKit
 
 final class ReplyDrawerView: NSView {
-    static let width: CGFloat = RightDockGeometry.width(for: .reply)
+    static let width: CGFloat = DrawerGeometry.width(for: .reply)
 
     /// Where the copy buttons write. Tests swap in a pasteboard of their own.
     static var pasteboard: NSPasteboard = .general

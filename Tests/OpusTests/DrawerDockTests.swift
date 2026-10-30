@@ -1,4 +1,4 @@
-// RightDockResizeTests — a drawer lies over the terminal, whose width never
+// DrawerDockTests — a drawer lies over the terminal, whose width never
 // changes. On a new width Claude Code clears its screen and prints its live
 // region again without clearing the scrollback, and the seam between the
 // two layouts repeats or drops text. The edge of the uncovered part, which
@@ -9,7 +9,7 @@ import AppKit
 import OpusArtifactsKit
 @testable import Opus
 
-final class RightDockResizeTests: XCTestCase {
+final class DrawerDockTests: XCTestCase {
     /// The terminal's place in the layout, counting the widths it is given.
     private final class TerminalArea: NSView {
         var widths: [CGFloat] = []
@@ -23,7 +23,7 @@ final class RightDockResizeTests: XCTestCase {
     private var terminal: TerminalArea!
     private var uncovered: NSLayoutGuide!
     private var drawer: NSView!
-    private var dock: RightDock!
+    private var dock: DrawerDock!
     private var drawerWidth: CGFloat = 300
     /// The end of the slide in flight, called by the test when it chooses.
     private var finishSlide: (() -> Void)?
@@ -61,8 +61,8 @@ final class RightDockResizeTests: XCTestCase {
             drawer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             drawerTrailing, width
         ])
-        dock = RightDock(
-            panels: [.reply: RightDock.Panel(view: drawer, trailing: drawerTrailing, width: width)],
+        dock = DrawerDock(
+            panels: [.reply: DrawerDock.Panel(view: drawer, trailing: drawerTrailing, width: width)],
             edge: edge,
             widthProvider: { [unowned self] occupant in occupant == .none ? 0 : self.drawerWidth },
             layout: { container.layoutSubtreeIfNeeded() },
