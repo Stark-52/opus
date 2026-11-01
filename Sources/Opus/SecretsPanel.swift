@@ -142,6 +142,16 @@ final class HoverIconButton: NSButton {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Not a no-op, though it only calls up. In a table row, a button that
+    /// inherits its mouseDown never saw a click arriving while Opus was in
+    /// the background (the click that brings it back, right after the
+    /// Finder came forward): the table dropped it, and the Artifacts
+    /// drawer's Finder button did nothing. One that overrides it gets the
+    /// click and tracks it as usual. ArtifactRevealClickTests holds it.
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+    }
 }
 
 /// Builds one HoverIconButton at the shared 20×20 hit target, sized and

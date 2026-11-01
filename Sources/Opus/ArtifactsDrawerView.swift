@@ -920,7 +920,9 @@ final class ArtifactCellView: NSTableCellView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+        // Shown with Opus in the background too: its click is taken then
+        // (see HoverIconButton.mouseDown), so it has to be there to aim at.
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
     }
 

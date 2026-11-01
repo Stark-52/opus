@@ -92,3 +92,56 @@ final class ArtifactCellRevealTests: XCTestCase {
         XCTAssertTrue(cell.revealButton.isHidden)
     }
 }
+
+/// A click on the Finder button, sent through a real window as AppKit
+/// delivers it. The test runner is in the background, as Opus is when the
+/// click on the button is the one that brings it back (right after the Finder
+/// came forward): a row's button used to lose exactly that click.
+final class ArtifactRevealClickTests: XCTestCase {
+    private final class Spy: NSObject {
+        var hits = 0
+        @objc func hit() { hits += 1 }
+    }
+
+    private func cells(in view: NSView) -> [ArtifactCellView] {
+        view.subviews.flatMap { ($0 as? ArtifactCellView).map { [$0] } ?? cells(in: $0) }
+    }
+
+    func testTheFinderButtonTakesTheClickThatBringsOpusBack() throws {
+        let path = "/Users/someone/Desktop/facture/brouillon.pdf"
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 340, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let drawer = ArtifactsDrawerView(frame: NSRect(x: 0, y: 0, width: 340, height: 600))
+        window.contentView = drawer
+        drawer.update(artifacts: [Artifact(key: path, kind: .file, resolvedPath: path, urlString: nil, timestamp: Date())],
+                      hasSession: true, hasTranscript: true)
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        drawer.layoutSubtreeIfNeeded()
+
+        let cell = try XCTUnwrap(cells(in: drawer).first)
+        let enter = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [],
+                                                         timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                         eventNumber: 0, trackingNumber: 0, userData: nil))
+        cell.mouseEntered(with: enter)
+        cell.layoutSubtreeIfNeeded()
+        let button = cell.revealButton
+        XCTAssertFalse(button.isHidden)
+        // The click is what is under test, not the Finder opening.
+        let spy = Spy()
+        button.target = spy
+        button.action = #selector(Spy.hit)
+
+        let center = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: center, modifierFlags: [],
+                                             timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                             clickCount: 1, pressure: 1))
+        }
+        NSApp.postEvent(try mouse(.leftMouseUp), atStart: false)
+        window.sendEvent(try mouse(.leftMouseDown))
+        _ = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true)
+        XCTAssertEqual(spy.hits, 1)
+    }
+}
