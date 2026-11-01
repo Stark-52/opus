@@ -99,7 +99,12 @@ public enum TranscriptArtifactExtractor {
                     })
                 }
             } else if ArtifactRuleTable.textScanKeys.contains(key), let s = value as? String {
-                result.append(contentsOf: scanText(s, cwd: cwd, timestamp: timestamp))
+                // Paths only, and files only: a command's URLs are endpoints
+                // it talks to (a local debug port, an API, the session link
+                // in a commit trailer), and its folders are where it moves.
+                result.append(contentsOf: TextArtifactScanner.paths(in: s).map {
+                    ArtifactCandidate(payload: .path($0), cwd: cwd, timestamp: timestamp, filesOnly: true)
+                })
             }
         }
         return result

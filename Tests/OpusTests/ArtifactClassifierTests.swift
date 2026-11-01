@@ -193,4 +193,67 @@ final class ArtifactClassifierTests: XCTestCase {
         let path = try makeFile("inside.md")
         XCTAssertEqual(classify(.path(path))?.resolvedPath, path)
     }
+
+    // MARK: What a shell command names
+
+    // Commands name folders to move around in (`cd`, `ls`, `S=…`) far more
+    // often than they name a product: measured on a real session, 92 folder
+    // rows came from commands alone and none was a deliverable.
+    func testAFolderAShellCommandNamedIsDropped() throws {
+        let path = try makeDir("rendus")
+        XCTAssertNil(ArtifactClassifier.classify(ArtifactCandidate(payload: .path(path), cwd: root.path,
+                                                                   filesOnly: true)))
+    }
+
+    func testAFileAShellCommandNamedIsKept() throws {
+        let path = try makeFile("planche.jpg")
+        let artifact = ArtifactClassifier.classify(ArtifactCandidate(payload: .path(path), cwd: root.path,
+                                                                     filesOnly: true))
+        XCTAssertEqual(artifact?.kind, .image)
+    }
+
+    // MARK: Places that hold no product, whoever names them
+
+    func testHiddenFilesAndFoldersAreDropped() throws {
+        let config = try makeDir(".config/tool")
+        let dotfile = try makeFile(".gitignore")
+        let inside = root.appendingPathComponent(".config/tool/settings.md")
+        try Data("x".utf8).write(to: inside)
+        XCTAssertNil(classify(.path(config)))
+        XCTAssertNil(classify(.path(dotfile)))
+        XCTAssertNil(classify(.path(inside.path)))
+    }
+
+    func testTheInsideOfAnAppBundleIsDropped() throws {
+        _ = try makeDir("Outil.app/Contents/MacOS")
+        let binary = root.appendingPathComponent("Outil.app/Contents/MacOS/Outil")
+        try Data("x".utf8).write(to: binary)
+        XCTAssertNil(classify(.path(binary.path)))
+    }
+
+    func testSystemFoldersAreDropped() {
+        XCTAssertNil(classify(.path("/bin/zsh")))
+        XCTAssertNil(classify(.path("/usr/bin/env")))
+    }
+
+    func testTheLibraryUnderHomeIsDroppedExceptCloudDrives() {
+        let home = "/Users/someone"
+        XCTAssertTrue(ArtifactClassifier.isNoise("/Users/someone/Library/Caches/browsers/shell", cwd: "/", home: home))
+        XCTAssertTrue(ArtifactClassifier.isNoise("/Users/someone/Library/Android/sdk/platform-tools/adb", cwd: "/", home: home))
+        XCTAssertFalse(ArtifactClassifier.isNoise("/Users/someone/Library/Mobile Documents/com~apple~CloudDocs/devis.pdf",
+                                                  cwd: "/", home: home))
+        XCTAssertFalse(ArtifactClassifier.isNoise("/Users/someone/Library/CloudStorage/Drive/devis.pdf", cwd: "/", home: home))
+    }
+
+    // Claude Code's own temporary folder holds background task logs next to
+    // the scratchpad; only what was made in the scratchpad is a product.
+    func testClaudeTemporaryFilesAreDroppedOutsideTheScratchpad() {
+        let session = "/private/tmp/claude-501/-Users-someone-proj/abc123"
+        let home = "/Users/someone"
+        XCTAssertTrue(ArtifactClassifier.isNoise("\(session)/tasks/b1x.output", cwd: "/", home: home))
+        XCTAssertTrue(ArtifactClassifier.isNoise("\(session)/scratchpad", cwd: "/", home: home))
+        XCTAssertFalse(ArtifactClassifier.isNoise("\(session)/scratchpad/facture/brouillon.pdf", cwd: "/", home: home))
+        XCTAssertFalse(ArtifactClassifier.isNoise("/tmp/claude-501/-Users-someone-proj/abc123/scratchpad/a.png",
+                                                  cwd: "/", home: home))
+    }
 }

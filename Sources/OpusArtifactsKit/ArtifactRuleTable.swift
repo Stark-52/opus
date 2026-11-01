@@ -47,7 +47,7 @@ public enum ArtifactRuleTable {
     /// Keys whose value is a URL.
     public static let urlKeys: Set<String> = ["url"]
 
-    /// Keys whose value is prose or shell that must be scanned rather than
-    /// taken whole.
+    /// Keys whose value is shell that must be scanned rather than taken
+    /// whole. Only the files it names count (see TranscriptArtifactExtractor).
     public static let textScanKeys: Set<String> = ["command"]
 }

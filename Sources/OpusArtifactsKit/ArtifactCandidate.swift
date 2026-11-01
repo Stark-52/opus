@@ -21,10 +21,15 @@ public struct ArtifactCandidate: Equatable, Sendable {
     /// The transcript entry's own timestamp, carried through so the artifact
     /// can be ordered against artifacts from a different session.
     public let timestamp: Date?
+    /// Named inside a shell command, which names folders to move around in
+    /// (`cd`, `ls`) far more often than it names a product: only a file
+    /// counts.
+    public let filesOnly: Bool
 
-    public init(payload: Payload, cwd: String, timestamp: Date? = nil) {
+    public init(payload: Payload, cwd: String, timestamp: Date? = nil, filesOnly: Bool = false) {
         self.payload = payload
         self.cwd = cwd
         self.timestamp = timestamp
+        self.filesOnly = filesOnly
     }
 }

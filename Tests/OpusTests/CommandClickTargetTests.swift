@@ -4,17 +4,24 @@ import SwiftTerm
 import OpusArtifactsKit
 @testable import Opus
 
-/// Cmd+click on a path: a folder opens in the Finder, a file in the editor
-/// at its line.
+/// Cmd+click on a path: a folder opens in the Finder, a text file in the
+/// editor at its line, any other file in its own app.
 final class CommandClickTargetTests: XCTestCase {
     func testAFolderOpensInTheFinder() {
-        XCTAssertEqual(TerminalContainerView.clickTarget(path: "/Users/a/Desktop/rendu-validation", line: nil, isDirectory: true),
+        XCTAssertEqual(TerminalContainerView.clickTarget(path: "/Users/a/Desktop/rendu-validation", line: nil,
+                                                         isDirectory: true, isText: false),
                        .finder(URL(fileURLWithPath: "/Users/a/Desktop/rendu-validation")))
     }
 
-    func testAFileOpensInTheEditorAtItsLine() {
-        XCTAssertEqual(TerminalContainerView.clickTarget(path: "/r/main.swift", line: 12, isDirectory: false),
+    func testATextFileOpensInTheEditorAtItsLine() {
+        XCTAssertEqual(TerminalContainerView.clickTarget(path: "/r/main.swift", line: 12, isDirectory: false, isText: true),
                        .editor(path: "/r/main.swift", line: 12))
+    }
+
+    func testAnyOtherFileOpensInItsOwnApp() {
+        XCTAssertEqual(TerminalContainerView.clickTarget(path: "/r/facture/brouillon.pdf", line: nil,
+                                                         isDirectory: false, isText: false),
+                       .ownApp(URL(fileURLWithPath: "/r/facture/brouillon.pdf")))
     }
 }
 

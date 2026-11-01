@@ -67,6 +67,7 @@ public enum ArtifactClassifier {
 
             var isDir: ObjCBool = false
             _ = fileManager.fileExists(atPath: path, isDirectory: &isDir)
+            if candidate.filesOnly, isDir.boolValue { return nil }
             let kind: ArtifactKind = isDir.boolValue ? .folder : (isImage(path) ? .image : .file)
             return Artifact(key: path, kind: kind, resolvedPath: path, urlString: nil,
                             timestamp: candidate.timestamp)
@@ -96,6 +97,16 @@ public enum ArtifactClassifier {
     ///   existed before the session started, so nothing real is hidden.
     /// - the home directory: same argument, one level up.
     ///
+    /// Then the places that hold no product whoever names them, added when a
+    /// real drawer filled with them (a browser binary under the caches, the
+    /// memory notes Claude keeps for itself, background task logs):
+    ///
+    /// - anything hidden (a component starting with "."): `~/.claude`,
+    ///   `~/.config`, `.gitignore`;
+    /// - the inside of an app bundle, and the system folders;
+    /// - `~/Library`, except the cloud drives that live there;
+    /// - Claude Code's temporary folder, except what is inside a scratchpad.
+    ///
     /// Both sides are standardized the same way `resolvePath` standardizes
     /// its output, otherwise a cwd carrying a trailing slash or an
     /// unresolved symlink would never compare equal. The incoming path
@@ -106,14 +117,31 @@ public enum ArtifactClassifier {
     /// project root appeared a SECOND time under a different dedup key.
     /// `TextArtifactScanner` now rejects "..." upstream, but tool_use keys
     /// reach this function with no scanner in front of them.
-    private static func isNoise(_ path: String, cwd: String) -> Bool {
+    static func isNoise(_ path: String, cwd: String, home: String = NSHomeDirectory()) -> Bool {
         if path.hasPrefix("/dev/") { return true }
         let normalized = (path as NSString).standardizingPath
         if normalized == "/" { return true }
         if normalized == (cwd as NSString).standardizingPath { return true }
-        if normalized == (NSHomeDirectory() as NSString).standardizingPath { return true }
+        let home = (home as NSString).standardizingPath
+        if normalized == home { return true }
+
+        let components = (normalized as NSString).pathComponents.dropFirst()
+        if components.contains(where: { $0.hasPrefix(".") }) { return true }
+        if components.dropLast().contains(where: { $0.hasSuffix(".app") }) { return true }
+        if let top = components.first, systemFolders.contains(top) { return true }
+        if normalized.hasPrefix(home + "/Library/"),
+           !cloudDrives.contains(where: { normalized.hasPrefix(home + "/Library/" + $0 + "/") }) { return true }
+        if let range = normalized.range(of: #"^(/private)?/tmp/claude-[0-9]+/"#, options: .regularExpression) {
+            return !normalized[range.upperBound...].contains("/scratchpad/")
+        }
         return false
     }
+
+    private static let systemFolders: Set<String> = [
+        "bin", "sbin", "usr", "System", "Library", "Applications", "opt", "etc",
+    ]
+
+    private static let cloudDrives = ["Mobile Documents", "CloudStorage"]
 
     /// The path as resolved, else the same path with sentence-ending dots
     /// removed. Same two-attempt shape the Cmd+click handler already uses

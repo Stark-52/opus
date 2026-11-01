@@ -960,7 +960,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
             }
             var isDirectory: ObjCBool = false
             _ = fm.fileExists(atPath: found.path, isDirectory: &isDirectory)
-            open(Self.clickTarget(path: found.path, line: found.line, isDirectory: isDirectory.boolValue))
+            open(Self.clickTarget(path: found.path, line: found.line, isDirectory: isDirectory.boolValue,
+                                  isText: !isDirectory.boolValue && TextSniffer.isTextFile(atPath: found.path)))
             return true
         }
         return false
@@ -1156,17 +1157,20 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     enum ClickTarget: Equatable {
         case finder(URL)
         case editor(path: String, line: Int?)
+        case ownApp(URL)
     }
 
     /// A folder opens in the Finder (an editor would open it as a project),
-    /// a file in the editor at its line.
-    static func clickTarget(path: String, line: Int?, isDirectory: Bool) -> ClickTarget {
-        isDirectory ? .finder(URL(fileURLWithPath: path)) : .editor(path: path, line: line)
+    /// a text file in the editor at its line, and any other file (a PDF, an
+    /// image, a video) in the app the system opens it with.
+    static func clickTarget(path: String, line: Int?, isDirectory: Bool, isText: Bool) -> ClickTarget {
+        if isDirectory { return .finder(URL(fileURLWithPath: path)) }
+        return isText ? .editor(path: path, line: line) : .ownApp(URL(fileURLWithPath: path))
     }
 
     private func open(_ target: ClickTarget) {
         switch target {
-        case .finder(let url): NSWorkspace.shared.open(url)
+        case .finder(let url), .ownApp(let url): NSWorkspace.shared.open(url)
         case .editor(let path, let line): openInEditor(path: path, line: line)
         }
     }

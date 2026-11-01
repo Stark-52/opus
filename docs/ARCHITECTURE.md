@@ -57,7 +57,7 @@ Opus.app
 │     └── context-usage gauge + the active tab's activity dot + a "NN% · NNk" readout, wired by TerminalContainerView.applyContextMeterResult
 │
 ├── PathDetector — pure token-scan for Cmd+click file[:line] detection in terminal text, across wrapped rows and spaces in names
-│     └── TerminalContainerView resolves the result against cwd and opens it via `OpusPreferences.editorCommand`
+│     └── TerminalContainerView resolves the result against cwd and opens a text file (TextSniffer) via `OpusPreferences.editorCommand`, any other file in its own app
 │
 ├── TerminalContainerView (NSView)
 │     ├── tabs[] / tabPanes[][] / tabActivePaneIndex[] / tabTitles[]

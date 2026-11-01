@@ -58,9 +58,20 @@ final class TranscriptArtifactExtractorTests: XCTestCase {
         ]}}
         """)
         XCTAssertEqual(out, [
-            ArtifactCandidate(payload: .path("out/hero.png"), cwd: cwd),
-            ArtifactCandidate(payload: .path("~/Desktop/"), cwd: cwd)
+            ArtifactCandidate(payload: .path("out/hero.png"), cwd: cwd, filesOnly: true),
+            ArtifactCandidate(payload: .path("~/Desktop/"), cwd: cwd, filesOnly: true)
         ])
+    }
+
+    // A command's URLs are endpoints it talks to (a local debug port, an
+    // API, the session link in a commit trailer), never a page to open.
+    func testUrlsInABashCommandYieldNothing() {
+        let out = run("""
+        {"type":"assistant","cwd":"/Users/a/proj","message":{"content":[
+          {"type":"tool_use","name":"Bash","input":{"command":"curl -s http://127.0.0.1:9333/json && git commit -m 'x\\n\\nSession: https://claude.ai/code/session_01'"}}
+        ]}}
+        """)
+        XCTAssertEqual(out, [])
     }
 
     func testUnknownMcpToolFollowingTheConventionIsCovered() {
