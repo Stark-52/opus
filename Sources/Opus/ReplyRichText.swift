@@ -102,7 +102,7 @@ enum ReplyRichText {
     private static func inline(_ markdown: String, font: NSFont) -> NSAttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         guard let parsed = try? AttributedString(markdown: markdown, options: options) else {
-            return NSAttributedString(string: markdown, attributes: [.font: font])
+            return ReplyMarkdown.separatingLines(NSAttributedString(string: markdown, attributes: [.font: font]))
         }
         let result = NSMutableAttributedString()
         for run in parsed.runs {
@@ -118,7 +118,7 @@ enum ReplyRichText {
             if let link = run.link { attributes[.link] = link }
             result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
         }
-        return result
+        return ReplyMarkdown.separatingLines(result)
     }
 
     /// `content` and its break, under one paragraph style.

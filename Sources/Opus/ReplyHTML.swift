@@ -74,8 +74,13 @@ enum ReplyHTML {
         return "<table><thead>\(head)</thead><tbody>\(body.joined())</tbody></table>"
     }
 
-    /// Inline markdown (bold, italic, strikethrough, code, links) as HTML.
+    /// Inline markdown (bold, italic, strikethrough, code, links) as HTML,
+    /// a line break kept inside the block as `<br>`.
     static func inline(_ markdown: String) -> String {
+        inlineRuns(markdown).replacingOccurrences(of: "\n", with: "<br>")
+    }
+
+    private static func inlineRuns(_ markdown: String) -> String {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         guard let parsed = try? AttributedString(markdown: markdown, options: options) else { return escape(markdown) }
         return parsed.runs.map { run in

@@ -83,6 +83,16 @@ final class ReplyDrawerCopyTests: XCTestCase {
                        "an editor or a terminal pastes the code, never a formatted copy of it")
     }
 
+    func testAQuotedMessageIsDrawnAndCopiedWithItsLineBreaks() {
+        let drawer = ReplyDrawerView(frame: NSRect(x: 0, y: 0, width: 380, height: 600))
+        drawer.reply = "> Salut :\n>\n> 1. un\n> 2. deux"
+        let all = buttons(in: drawer)
+
+        XCTAssertEqual(copied(by: all[1]), "Salut :\n\n1. un\n2. deux")
+        XCTAssertEqual(ReplyRendering.text(for: ReplyMarkdown.blocks(drawer.reply ?? "")[0]).string,
+                       "Salut :\u{2028}\u{2028}1. un\u{2028}2. deux")
+    }
+
     func testANewReplyReplacesTheBlocksAndNoReplyShowsNone() {
         let drawer = ReplyDrawerView(frame: NSRect(x: 0, y: 0, width: 380, height: 600))
         drawer.reply = "Un.\n\nDeux."

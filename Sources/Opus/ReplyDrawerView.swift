@@ -399,7 +399,8 @@ enum ReplyRendering {
     static func inline(_ markdown: String, font: NSFont, color: NSColor) -> NSAttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         guard let parsed = try? AttributedString(markdown: markdown, options: options) else {
-            return NSAttributedString(string: markdown, attributes: [.font: font, .foregroundColor: color])
+            return ReplyMarkdown.separatingLines(NSAttributedString(string: markdown,
+                                                                   attributes: [.font: font, .foregroundColor: color]))
         }
 
         let result = NSMutableAttributedString()
@@ -426,6 +427,6 @@ enum ReplyRendering {
             }
             result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
         }
-        return result
+        return ReplyMarkdown.separatingLines(result)
     }
 }

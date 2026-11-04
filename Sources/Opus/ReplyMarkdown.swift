@@ -7,6 +7,11 @@
 // version beside it): prose with its markers stripped, for messages and
 // posts; code as the code; a table as written, since that is how it pastes
 // into a README.
+//
+// Unlike markdown, a single line break is kept: Claude never wraps a line
+// to fit a width, so every break it writes is meant (a message drafted in
+// a quote, the sub-points under a list item, the lines of an address).
+// Joining them pasted a drafted message as one run-on line.
 
 import Foundation
 
@@ -22,9 +27,9 @@ struct ReplyBlock: Equatable {
     }
 
     let kind: Kind
-    /// Inline markdown the drawer renders: the heading's text, the joined
-    /// paragraph or quote, one entry per list item, the code body, the
-    /// table's rows.
+    /// Inline markdown the drawer renders: the heading's text, the
+    /// paragraph or the quote with its line breaks, one entry per list item
+    /// (with the lines written under it), the code body, the table's rows.
     let items: [String]
     /// A list item's marker as written ("-", "2.", with its indentation).
     let markers: [String]
@@ -59,7 +64,7 @@ enum ReplyMarkdown {
 
         func flushParagraph() {
             guard !paragraph.isEmpty else { return }
-            blocks.append(ReplyBlock(.paragraph, items: [paragraph.joined(separator: " ")]))
+            blocks.append(ReplyBlock(.paragraph, items: [paragraph.joined(separator: "\n")]))
             paragraph = []
         }
 
@@ -102,11 +107,14 @@ enum ReplyMarkdown {
                 flushParagraph()
                 var quoted: [String] = []
                 while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
-                    let body = lines[index].trimmingCharacters(in: .whitespaces).dropFirst()
-                    quoted.append(body.trimmingCharacters(in: .whitespaces))
+                    // "> " goes, the indentation after it stays: it lines
+                    // up the sub-points of a drafted message.
+                    var body = lines[index].trimmingCharacters(in: .whitespaces).dropFirst()
+                    if body.first == " " { body = body.dropFirst() }
+                    quoted.append(String(body))
                     index += 1
                 }
-                blocks.append(ReplyBlock(.quote, items: [quoted.joined(separator: " ")]))
+                blocks.append(ReplyBlock(.quote, items: [quoted.joined(separator: "\n")]))
             } else if let first = listItem(line) {
                 flushParagraph()
                 var markers = [first.marker]
@@ -118,7 +126,7 @@ enum ReplyMarkdown {
                         markers.append(item.marker)
                         items.append(item.text)
                     } else if next.first?.isWhitespace == true, !next.trimmingCharacters(in: .whitespaces).isEmpty {
-                        items[items.count - 1] += " " + next.trimmingCharacters(in: .whitespaces)
+                        items[items.count - 1] += "\n" + next.trimmingCharacters(in: .newlines)
                     } else if next.trimmingCharacters(in: .whitespaces).isEmpty,
                               index + 1 < lines.count, listItem(lines[index + 1]) != nil {
                         // A blank line between two items keeps the list going.
@@ -186,6 +194,16 @@ enum ReplyMarkdown {
         }.filter { row in
             !row.allSatisfy { $0.range(of: #"^:?-+:?$"#, options: .regularExpression) != nil }
         }
+    }
+
+    /// A line break kept inside a block, as rich text draws it: a line
+    /// separator, so the line stays in its paragraph, with its indent and
+    /// spacing, instead of starting a paragraph of its own.
+    static func separatingLines(_ text: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: text)
+        result.mutableString.replaceOccurrences(of: "\n", with: "\u{2028}", options: [],
+                                                range: NSRange(location: 0, length: result.length))
+        return result
     }
 
     /// Inline markdown to plain text: emphasis and code markers dropped, a

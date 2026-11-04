@@ -252,7 +252,14 @@ final class RenderProbeTests: XCTestCase {
         |---|---|
         | `Opus.app` | **installé** |
 
-        > une citation
+        > Salut, voilà les étapes :
+        >
+        > 1. Ouvrir la console.
+        > 2. Filmer les vidéos :
+        >    • Mobile : connexion du compte.
+        >    • Web : lancement du **direct**.
+        >
+        > Vas-y doucement.
         """
         let board = NSPasteboard(name: NSPasteboard.Name("opus-render-probe-paste"))
         defer { board.releaseGlobally() }
@@ -262,14 +269,39 @@ final class RenderProbeTests: XCTestCase {
         try XCTUnwrap(board.data(forType: .rtf)).write(to: URL(fileURLWithPath: (out as NSString).appendingPathComponent("reply-copy.rtf")))
 
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
-            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 560))
+            let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 520, height: 680))
             text.appearance = NSAppearance(named: appearance)
             text.usesAdaptiveColorMappingForDarkAppearance = true
             text.textContainerInset = NSSize(width: 16, height: 16)
             XCTAssertTrue(text.readSelection(from: board))
             print("reply probe pasted as", text.preferredPasteboardType(from: board.types ?? [], restrictedToTypesFrom: nil) ?? "none")
-            try RenderProbe.capture(text, size: NSSize(width: 520, height: 560),
+            try RenderProbe.capture(text, size: NSSize(width: 520, height: 680),
                                     to: (out as NSString).appendingPathComponent("reply-pasted-\(name).png"))
         }
+    }
+
+    /// The reply drawer drawing a message drafted as a quote: its lines,
+    /// list and sub-points each on their own line, as Claude wrote them.
+    func testRenderReplyDrawerWithAQuotedMessage() throws {
+        let out = try folderOrSkip()
+        let drawer = ReplyDrawerView(frame: NSRect(x: 0, y: 0, width: ReplyDrawerView.width, height: 420))
+        drawer.reply = """
+        Voici le message :
+
+        > Salut, voilà les étapes :
+        >
+        > 1. Ouvrir la console.
+        > 2. Filmer les vidéos :
+        >    • Mobile : connexion du compte.
+        >    • Web : lancement du **direct**.
+        >
+        > Vas-y doucement.
+
+        1. Premier point
+           avec sa suite sur une autre ligne.
+        2. Second point
+        """
+        try RenderProbe.capture(drawer, size: NSSize(width: ReplyDrawerView.width, height: 420),
+                                to: (out as NSString).appendingPathComponent("reply-drawer-quote.png"))
     }
 }

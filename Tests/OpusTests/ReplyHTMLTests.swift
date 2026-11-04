@@ -45,6 +45,13 @@ final class ReplyHTMLTests: XCTestCase {
         XCTAssertEqual(html("> une citation\n\n---"), "<blockquote><p>une citation</p></blockquote><hr>")
     }
 
+    func testALineBreakInsideABlockIsKept() {
+        XCTAssertEqual(html("> Salut :\n>\n> 1. un\n> 2. **deux**"),
+                       "<blockquote><p>Salut :<br><br>1. un<br>2. <strong>deux</strong></p></blockquote>")
+        XCTAssertEqual(html("Objet : test\nBonjour,"), "<p>Objet : test<br>Bonjour,</p>")
+        XCTAssertEqual(html("1. Filmer :\n   • Mobile"), "<ol><li>Filmer :<br>   • Mobile</li></ol>")
+    }
+
     func testTheDocumentDeclaresUTF8SoAccentsSurviveThePaste() {
         let document = ReplyHTML.document(ReplyMarkdown.blocks("Déjà"))
 

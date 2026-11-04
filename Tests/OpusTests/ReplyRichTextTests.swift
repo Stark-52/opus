@@ -24,6 +24,13 @@ final class ReplyRichTextTests: XCTestCase {
         return try XCTUnwrap(rich.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont)
     }
 
+    /// A line break inside a block is a line separator: the line stays in
+    /// its paragraph, so it keeps the paragraph's indent and spacing.
+    func testALineBreakInsideABlockStaysInItsParagraph() throws {
+        XCTAssertEqual(try pasted("> Salut :\n>\n> 1. un\n> 2. deux").string, "Salut :\u{2028}\u{2028}1. un\u{2028}2. deux")
+        XCTAssertEqual(try pasted("1. Filmer :\n   • Mobile").string, "1.\tFilmer :\u{2028}   • Mobile")
+    }
+
     func testBlocksArePlainParagraphsWithoutATrailingBreak() throws {
         XCTAssertEqual(try pasted("## Titre\nUn mot.\n\n> cité").string, "Titre\nUn mot.\ncité")
     }

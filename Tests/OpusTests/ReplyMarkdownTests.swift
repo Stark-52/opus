@@ -45,8 +45,49 @@ final class ReplyMarkdownTests: XCTestCase {
         let blocks = ReplyMarkdown.blocks(reply)
 
         XCTAssertEqual(blocks[1].copyText, "Le scroll reste en place, voir ScrollFollowTests.")
-        XCTAssertEqual(blocks[2].copyText, "- premier point sur deux lignes\n- second lien (https://example.com)")
+        XCTAssertEqual(blocks[2].copyText, "- premier point\n  sur deux lignes\n- second lien (https://example.com)")
         XCTAssertEqual(blocks[5].copyText, "une citation")
+    }
+
+    /// Claude never wraps a line to fit a width: every line break it writes
+    /// is meant, so the copy keeps it. A message drafted as a quote, with a
+    /// numbered list and sub-points, used to paste as one run-on line.
+    func testAQuotedMessageCopiesWithItsLineBreaks() {
+        let blocks = ReplyMarkdown.blocks("""
+        > Salut, voilà les étapes :
+        >
+        > 1. Ouvrir la console.
+        > 2. Filmer les vidéos :
+        >    • Mobile : connexion du compte.
+        >    • Web : lancement du **direct**.
+        >
+        > Vas-y doucement.
+        """)
+
+        XCTAssertEqual(blocks.map(\.kind), [.quote])
+        XCTAssertEqual(blocks[0].copyText, """
+        Salut, voilà les étapes :
+
+        1. Ouvrir la console.
+        2. Filmer les vidéos :
+           • Mobile : connexion du compte.
+           • Web : lancement du direct.
+
+        Vas-y doucement.
+        """)
+    }
+
+    func testTheLinesOfAParagraphStayOnTheirOwnLines() {
+        let blocks = ReplyMarkdown.blocks("Objet : la démo\nBonjour,\n• un point\n• un autre")
+
+        XCTAssertEqual(blocks.map(\.kind), [.paragraph])
+        XCTAssertEqual(blocks[0].copyText, "Objet : la démo\nBonjour,\n• un point\n• un autre")
+    }
+
+    func testAListItemKeepsTheLinesWrittenUnderIt() {
+        let blocks = ReplyMarkdown.blocks("1. Filmer :\n   • Mobile\n   • Web\n2. Envoyer")
+
+        XCTAssertEqual(blocks[0].copyText, "1. Filmer :\n   • Mobile\n   • Web\n2. Envoyer")
     }
 
     func testCodeAndTablesCopyAsWritten() {
