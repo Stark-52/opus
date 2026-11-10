@@ -48,6 +48,8 @@ final class ChromeTabStrip: NSView {
         }
     }
     private var animationTimer: Timer?
+    /// The week's usage in percent: past `ClaudeAvatar.tiredAt` the avatars droop.
+    var weekPercent: Double? { didSet { if weekPercent != oldValue { needsDisplay = true } } }
     /// When each tab entered its current state, same index space as `states`.
     private var stateSince: [Date] = []
     /// When each tab's burst of joy started, by tab index.
@@ -249,6 +251,7 @@ final class ChromeTabStrip: NSView {
                 if let mouseX {
                     pose.glance = max(-1, min(1, (mouseX - textX - size / 2) / 60)) * 0.06
                 }
+                pose = ClaudeAvatar.tired(pose, weekPercent: weekPercent)
                 if states[index] == .working, stateSince.indices.contains(index) {
                     pose.sweat = Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.sweatAfter
                 }

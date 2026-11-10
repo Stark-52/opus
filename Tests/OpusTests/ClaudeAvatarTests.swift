@@ -94,3 +94,18 @@ final class TabStateLineTests: XCTestCase {
         XCTAssertEqual(ChromeTabStrip.stateLine(.done, for: 65 * 60), "Claude a fini il y a 1 h 05")
     }
 }
+
+final class ClaudeAvatarTiredTests: XCTestCase {
+    func testOpenEyesDroopPastNinetyPercent() {
+        let open = ClaudeAvatar.Pose()
+        XCTAssertEqual(ClaudeAvatar.tired(open, weekPercent: 99).eyes, .tired)
+        XCTAssertEqual(ClaudeAvatar.tired(open, weekPercent: 89).eyes, .open)
+        XCTAssertEqual(ClaudeAvatar.tired(open, weekPercent: nil).eyes, .open)
+        XCTAssertEqual(ClaudeAvatar.tired(ClaudeAvatar.Pose(eyes: .happy), weekPercent: 99).eyes, .happy)
+    }
+
+    func testMenuBarTooltipCarriesTheWeek() {
+        XCTAssertEqual(MenuBarAvatar.toolTip(.working), "Claude travaille")
+        XCTAssertEqual(MenuBarAvatar.toolTip(.needsInput, weekPercent: 98.6), "Claude attend ta réponse\nsemaine 99\u{00A0}%")
+    }
+}

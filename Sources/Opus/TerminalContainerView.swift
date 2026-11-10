@@ -456,6 +456,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
                 guard let self else { return }
                 self.statusBar.usage = windows
                 self.usageWindows = windows
+                self.tabStrip.weekPercent = windows.first { $0.kind == .sevenDay }?.percent
+                MenuBarAvatar.shared.reportUsage(windows)
                 self.updateStatusRailTooltip()
             }
         }

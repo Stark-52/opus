@@ -15,7 +15,18 @@ enum ClaudeAvatar {
     static let framesPerSecond: Double = 24
     private static let rayCount = 8
 
-    enum Eyes: Equatable { case open, closed, happy }
+    enum Eyes: Equatable { case open, closed, happy, tired }
+
+    /// Week usage, in percent, from which open eyes droop.
+    static let tiredAt: Double = 90
+
+    /// `pose` with heavy lids when the week is nearly spent; other eyes stay.
+    static func tired(_ pose: Pose, weekPercent: Double?) -> Pose {
+        guard let weekPercent, weekPercent >= tiredAt, pose.eyes == .open else { return pose }
+        var drooping = pose
+        drooping.eyes = .tired
+        return drooping
+    }
 
     /// Everything that moves, for one instant. Distances are fractions of
     /// the avatar's side so one pose draws at any size.
@@ -140,6 +151,20 @@ enum ClaudeAvatar {
             case .open:
                 let w = max(1, s * 0.075), h = max(1.6, s * 0.13)
                 NSBezierPath(ovalIn: NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)).fill()
+            case .tired:
+                // The lower half of an open eye under a flat lid.
+                let w = max(1, s * 0.075), h = max(1.6, s * 0.13)
+                let eye = NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)
+                NSGraphicsContext.saveGraphicsState()
+                NSRect(x: eye.minX - 1, y: eye.minY - 1, width: eye.width + 2, height: h * 0.5 + 1).clip()
+                NSBezierPath(ovalIn: eye).fill()
+                NSGraphicsContext.restoreGraphicsState()
+                let lid = NSBezierPath()
+                lid.lineWidth = max(0.7, s * 0.04)
+                lid.lineCapStyle = .round
+                lid.move(to: NSPoint(x: eyeX - s * 0.055, y: eyeY + s * 0.005))
+                lid.line(to: NSPoint(x: eyeX + s * 0.055, y: eyeY + s * 0.005))
+                lid.stroke()
             case .closed:
                 let line = NSBezierPath()
                 line.lineWidth = max(0.8, s * 0.055)

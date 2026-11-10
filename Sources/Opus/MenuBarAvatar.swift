@@ -19,6 +19,8 @@ final class MenuBarAvatar {
     private var item: NSStatusItem?
     private var reports: [Report] = []
     private(set) var activity: PaneActivity = .idle
+    /// The week's usage in percent, for heavy lids and the tooltip.
+    private var weekPercent: Double?
     private var celebrationStart: Double?
     private var timer: Timer?
     private let clickTarget = ClickTarget()
@@ -84,6 +86,14 @@ final class MenuBarAvatar {
         refresh()
     }
 
+    /// The latest usage windows; only the week's matters here.
+    func reportUsage(_ windows: [UsageWindow]) {
+        let week = windows.first { $0.kind == .sevenDay }?.percent
+        guard week != weekPercent else { return }
+        weekPercent = week
+        render()
+    }
+
     /// Drops the reports of sources that went away, so a closed window does
     /// not leave the avatar working forever, and recomputes the state.
     private func refresh() {
@@ -123,22 +133,26 @@ final class MenuBarAvatar {
         let celebration = celebrationStart.flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }
         if let color = OpusTheme.activityColor(activity),
            let pose = celebration ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: reduceMotion) {
-            button.image = ClaudeAvatar.image(pose, color: color, size: Self.size)
+            button.image = ClaudeAvatar.image(ClaudeAvatar.tired(pose, weekPercent: weekPercent), color: color, size: Self.size)
         } else {
-            let image = ClaudeAvatar.image(celebration ?? ClaudeAvatar.Pose(), color: .black, size: Self.size, knockout: true)
+            let pose = ClaudeAvatar.tired(celebration ?? ClaudeAvatar.Pose(), weekPercent: weekPercent)
+            let image = ClaudeAvatar.image(pose, color: .black, size: Self.size, knockout: true)
             image.isTemplate = true
             button.image = image
         }
-        button.toolTip = Self.toolTip(activity)
+        button.toolTip = Self.toolTip(activity, weekPercent: weekPercent)
     }
 
-    static func toolTip(_ activity: PaneActivity) -> String {
+    static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil) -> String {
+        let state: String
         switch activity {
-        case .idle: return "Claude se repose"
-        case .working: return "Claude travaille"
-        case .needsInput: return "Claude attend ta réponse"
-        case .done: return "Claude a fini"
+        case .idle: state = "Claude se repose"
+        case .working: state = "Claude travaille"
+        case .needsInput: state = "Claude attend ta réponse"
+        case .done: state = "Claude a fini"
         }
+        guard let weekPercent else { return state }
+        return state + "\nsemaine \(Int(weekPercent.rounded()))\u{00A0}%"
     }
 }
 
