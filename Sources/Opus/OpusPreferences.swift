@@ -192,8 +192,6 @@ final class OpusPreferences {
         set { write(K.confirmRestart, newValue) }
     }
 
-    /// Native notification + Dock badge when a session rings the bell while
-    /// Opus is in the background. Default ON.
     /// The Claude avatar moves (Opus > Animate Claude). Default ON; off holds
     /// every avatar still in Opus alone, as reduce motion does system-wide.
     var avatarAnimated: Bool {
@@ -204,6 +202,8 @@ final class OpusPreferences {
         }
     }
 
+    /// Native notification + Dock badge when a session rings the bell while
+    /// Opus is in the background. Default ON.
     var notifyOnBell: Bool {
         get { defaults.object(forKey: K.notifyOnBell) == nil ? true : defaults.bool(forKey: K.notifyOnBell) }
         set { write(K.notifyOnBell, newValue) }

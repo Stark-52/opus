@@ -122,6 +122,7 @@ final class ChromeTabStrip: NSView {
 
     /// Reduce motion switched on or off: stop or start the avatars now.
     @objc private func displayOptionsChanged() {
+        reduceMotion = !ClaudeAvatar.motionAllowed
         needsDisplay = true
         updateAnimation()
     }
@@ -211,7 +212,8 @@ final class ChromeTabStrip: NSView {
                        available: bounds.width, height: bounds.height)
     }
 
-    private var reduceMotion: Bool { !ClaudeAvatar.motionAllowed }
+    /// Read once per change of the setting, not on every frame.
+    private var reduceMotion = !ClaudeAvatar.motionAllowed
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
     /// The clock a tab's avatar moves on: faster once it has waited long,

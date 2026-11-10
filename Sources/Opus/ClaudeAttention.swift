@@ -8,6 +8,8 @@ import UserNotifications
 final class ClaudeAttention {
     static let shared = ClaudeAttention()
     private var authRequested = false
+    /// Notifications were refused: later bells skip building one.
+    private var authDenied = false
 
     /// Timestamp of the last signal actually fired. Exposed read-only so
     /// tests can assert debounce behavior without touching AppKit/UN state.
@@ -63,7 +65,11 @@ final class ClaudeAttention {
               let png = ClaudeAvatar.pngData(pose, color: OpusTheme.red, size: 256) else { return nil }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("opus-avatar-\(UUID().uuidString).png")
         guard (try? png.write(to: url)) != nil else { return nil }
-        return try? UNNotificationAttachment(identifier: "claude-avatar", url: url, options: nil)
+        guard let attachment = try? UNNotificationAttachment(identifier: "claude-avatar", url: url, options: nil) else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return attachment
     }
 
     private func postNotification(title: String) {
@@ -80,10 +86,15 @@ final class ClaudeAttention {
                 identifier: Self.notificationIdentifier, content: content, trigger: nil)
             center.add(req, withCompletionHandler: nil)
         }
-        if authRequested { fire(); return }
+        if authRequested {
+            if !authDenied { fire() }
+            return
+        }
         authRequested = true
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            if granted { DispatchQueue.main.async(execute: fire) }
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            DispatchQueue.main.async {
+                if granted { fire() } else { self?.authDenied = true }
+            }
         }
     }
 }
@@ -98,6 +109,23 @@ final class DockAvatar {
     /// What the tile shows; nil when it is the plain icon.
     private var shown: PaneActivity?
     private var timer: Timer?
+
+    private init() {
+        // Animate Claude or reduce motion switched: a tile already up starts
+        // over under the new rule (moving, or held on its resting frame).
+        let restart: (Notification) -> Void = { [weak self] _ in
+            guard let self, let current = self.shown else { return }
+            self.timer?.invalidate()
+            self.timer = nil
+            self.shown = nil
+            self.show(current)
+        }
+        NotificationCenter.default.addObserver(forName: .opusAvatarMotionChanged, object: nil, queue: .main,
+                                               using: restart)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main,
+            using: restart)
+    }
 
     /// `activity` is .done or .needsInput; by default, done when the tabs
     /// say so and needs-input otherwise.

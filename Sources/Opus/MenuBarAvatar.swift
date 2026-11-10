@@ -45,7 +45,8 @@ final class MenuBarAvatar {
     /// The whole button, count included, for the preview's snapshots.
     var currentButton: NSView? { item?.button }
 
-    private var reduceMotion: Bool { !ClaudeAvatar.motionAllowed }
+    /// Read once per change of the setting, not on every frame.
+    private var reduceMotion = !ClaudeAvatar.motionAllowed
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
     /// A click shows the tab that waits for you, else the one that just
@@ -57,6 +58,8 @@ final class MenuBarAvatar {
         self.reveal = reveal
         // Variable: the count of waiting sessions sits beside the avatar.
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.imagePosition = .imageLeading
+        item.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         if autosave { item.autosaveName = "OpusClaudeAvatar" }
         item.behavior = .removalAllowed
         clickTarget.action = { [weak self] in
@@ -80,14 +83,17 @@ final class MenuBarAvatar {
         updateTimer()
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.render()
-            self?.updateTimer()
-        }
+        ) { [weak self] _ in self?.motionChanged() }
         NotificationCenter.default.addObserver(forName: .opusAvatarMotionChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.render()
-            self?.updateTimer()
+            self?.motionChanged()
         }
+    }
+
+    private func motionChanged() {
+        reduceMotion = !ClaudeAvatar.motionAllowed
+        if reduceMotion { celebrationStart = nil }
+        render()
+        updateTimer()
     }
 
     private func tabToShow() -> (Report, Int)? {
@@ -172,11 +178,15 @@ final class MenuBarAvatar {
             image.isTemplate = true
             button.image = image
         }
-        button.imagePosition = .imageLeading
-        button.title = Self.badge(waiting)
-        button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        button.toolTip = Self.toolTip(activity, weekPercent: weekPercent, waiting: waiting)
-        button.setAccessibilityLabel(button.toolTip)
+        // Only the image changes from frame to frame: title and tooltip are
+        // set when they change, so the status item is not laid out again.
+        let badge = Self.badge(waiting)
+        if button.title != badge { button.title = badge }
+        let tip = Self.toolTip(activity, weekPercent: weekPercent, waiting: waiting)
+        if button.toolTip != tip {
+            button.toolTip = tip
+            button.setAccessibilityLabel(tip)
+        }
     }
 
     /// The count beside the avatar: empty for none or one.
