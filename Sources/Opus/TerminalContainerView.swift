@@ -2529,8 +2529,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         )
         closeBtn.bezelStyle = .rounded
 
+        // Claude, asleep above the title.
+        let sleeper = ClaudeAvatarView()
+        sleeper.color = OpusTheme.cream(0.75)
+        sleeper.translatesAutoresizingMaskIntoConstraints = false
+        sleeper.widthAnchor.constraint(equalToConstant: 72).isActive = true
+        sleeper.heightAnchor.constraint(equalToConstant: 72).isActive = true
+
         // Stack vertically — robust on any pane size (no overflow, no clipping).
-        let stack = NSStackView(views: [title, subtitle, restartBtn, closeBtn])
+        let stack = NSStackView(views: [sleeper, title, subtitle, restartBtn, closeBtn])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 10

@@ -48,3 +48,18 @@ final class ClaudeAvatarTests: XCTestCase {
         XCTAssertFalse(ClaudeAvatar.blinking(3.65, every: 3.6))
     }
 }
+
+final class ClaudeAvatarMoodTests: XCTestCase {
+    func testSleepingSnoresWithEyesShut() {
+        let pose = ClaudeAvatar.sleeping(time: 1.3)
+        XCTAssertEqual(pose.eyes, .closed)
+        XCTAssertNotNil(pose.snore)
+        XCTAssertTrue((0..<1).contains(pose.snore!))
+        XCTAssertNil(ClaudeAvatar.pose(.working, time: 1)?.snore)
+    }
+
+    func testLookingAroundMovesItsEyes() {
+        XCTAssertNotEqual(ClaudeAvatar.lookingAround(time: 0.5).glance,
+                          ClaudeAvatar.lookingAround(time: 2).glance)
+    }
+}

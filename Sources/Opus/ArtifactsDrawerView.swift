@@ -75,6 +75,8 @@ final class ArtifactsDrawerView: NSView {
 
     private let header = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No artifacts in this session")
+    /// Claude looking around the empty drawer, above `emptyLabel`.
+    private let emptyAvatar = ClaudeAvatarView()
     private let filterField = NSTextField(frame: .zero)
     private let tableView = ArtifactTableView(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
@@ -165,6 +167,10 @@ final class ArtifactsDrawerView: NSView {
         addSubview(filterField)
         addSubview(scrollView)
         addSubview(emptyLabel)
+        emptyAvatar.color = OpusTheme.cream(0.35)
+        emptyAvatar.pose = { ClaudeAvatar.lookingAround(time: $0) }
+        emptyAvatar.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(emptyAvatar)
 
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor, constant: OpusTheme.insetPanel),
@@ -187,6 +193,10 @@ final class ArtifactsDrawerView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -OpusTheme.controlGap),
 
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyAvatar.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyAvatar.bottomAnchor.constraint(equalTo: emptyLabel.topAnchor, constant: -10),
+            emptyAvatar.widthAnchor.constraint(equalToConstant: 48),
+            emptyAvatar.heightAnchor.constraint(equalToConstant: 48),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: OpusTheme.insetPanel),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -OpusTheme.insetPanel),
@@ -397,6 +407,7 @@ final class ArtifactsDrawerView: NSView {
             emptyLabel.stringValue = reason.message
         }
         emptyLabel.isHidden = !visible.isEmpty
+        emptyAvatar.isHidden = emptyLabel.isHidden
         scrollView.isHidden = visible.isEmpty
 
         // Reload ONLY when the rows actually changed. `reloadData()` throws
