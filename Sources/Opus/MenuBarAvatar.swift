@@ -55,7 +55,10 @@ final class MenuBarAvatar {
         item.button?.target = clickTarget
         item.button?.action = #selector(ClickTarget.fire)
         self.item = item
+        // Hello: one spin at launch.
+        if !reduceMotion { celebrationStart = now }
         render()
+        updateTimer()
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -122,7 +125,7 @@ final class MenuBarAvatar {
            let pose = celebration ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: reduceMotion) {
             button.image = ClaudeAvatar.image(pose, color: color, size: Self.size)
         } else {
-            let image = ClaudeAvatar.image(ClaudeAvatar.Pose(), color: .black, size: Self.size, knockout: true)
+            let image = ClaudeAvatar.image(celebration ?? ClaudeAvatar.Pose(), color: .black, size: Self.size, knockout: true)
             image.isTemplate = true
             button.image = image
         }

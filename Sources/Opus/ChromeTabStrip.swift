@@ -34,7 +34,9 @@ final class ChromeTabStrip: NSView {
                 }
             } else {
                 for index in states.indices where oldValue[index] != states[index] { stateSince[index] = Date() }
-                for index in states.indices where states[index] != .done { celebrations.removeValue(forKey: index) }
+                for index in states.indices where states[index] != .done && oldValue[index] != states[index] {
+                    celebrations.removeValue(forKey: index)
+                }
                 if !reduceMotion {
                     for index in states.indices where oldValue[index] == .working && states[index] == .done {
                         celebrations[index] = now
@@ -209,7 +211,11 @@ final class ChromeTabStrip: NSView {
                 self.updateAnimation()
             }
             guard let window = self.window, window.occlusionState.contains(.visible) else { return }
-            for tab in self.layoutRects().tabs where tab.maxX > 0 && tab.minX < self.tabRoom {
+            // Only the avatars that move: done and resting ones hold still.
+            for (index, tab) in self.layoutRects().tabs.enumerated() where tab.maxX > 0 && tab.minX < self.tabRoom {
+                let moves = self.celebrations[index] != nil
+                    || (self.states.indices.contains(index) && ClaudeAvatar.isAnimated(self.states[index], reduceMotion: self.reduceMotion))
+                guard moves else { continue }
                 self.setNeedsDisplay(NSRect(x: tab.minX + 6, y: tab.minY, width: ClaudeAvatar.tabSize + 4, height: tab.height))
             }
         }
@@ -229,9 +235,12 @@ final class ChromeTabStrip: NSView {
             }
             var textX = rect.minX + 8
             if index < states.count, states[index] == .idle {
-                // Resting: a pale, still, sleeping Claude keeps the titles in line.
+                // Resting: a pale, still, sleeping Claude keeps the titles in line;
+                // a boop wakes it up for a spin.
                 let size = ClaudeAvatar.tabSize
-                ClaudeAvatar.draw(ClaudeAvatar.Pose(eyes: .closed), color: OpusTheme.cream(isActive ? 0.4 : 0.25),
+                let boop = celebrations[index].flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }
+                ClaudeAvatar.draw(boop ?? ClaudeAvatar.Pose(eyes: .closed),
+                                  color: OpusTheme.cream(boop != nil ? 0.7 : (isActive ? 0.4 : 0.25)),
                                   in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
                var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
@@ -294,7 +303,14 @@ final class ChromeTabStrip: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let index = hit(convert(event.locationInWindow, from: nil)) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        guard let index = hit(point) else { return }
+        // Boop: a click on a tab's avatar makes it spin.
+        if index >= 0, let tab = layoutRects().tabs[safe: index],
+           point.x < tab.minX + 8 + ClaudeAvatar.tabSize + 2, !reduceMotion {
+            celebrations[index] = now
+            updateAnimation()
+        }
         if index == -1 { onNewTab?() } else if index != activeIndex { onSwitch?(index) }
     }
 }
@@ -311,4 +327,8 @@ extension ChromeTabStrip: NSViewToolTipOwner {
         else { return base }
         return base + "\n" + line
     }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
