@@ -110,9 +110,29 @@ private final class SessionCellView: NSTableCellView {
         if let color = OpusTheme.activityColor(activity) {
             avatar.color = color
             avatar.animates = ClaudeAvatar.isAnimated(activity, reduceMotion: false)
-            avatar.pose = { ClaudeAvatar.pose(activity, time: $0) }
+            // Under the pointer, the row's avatar smiles at you.
+            avatar.pose = { [weak self] time in
+                var pose = ClaudeAvatar.pose(activity, time: time)
+                if self?.hovered == true, pose?.eyes != .closed { pose?.eyes = .happy }
+                return pose
+            }
         }
     }
+
+    private var hovered = false { didSet { if hovered != oldValue { avatar.needsDisplay = true } } }
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
 }
 
 final class SessionSwitcherPanel: NSObject {

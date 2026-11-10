@@ -330,3 +330,19 @@ final class ClaudeAvatarDecorTests: XCTestCase {
         XCTAssertEqual(MenuBarAvatar.toolTip(.done, finished: 3), "Claude a fini\n3 tâches finies aujourd'hui")
     }
 }
+
+final class TabAccessibilityTests: XCTestCase {
+    func testEachTabSaysWhatClaudeDoes() {
+        let strip = ChromeTabStrip(frame: NSRect(x: 0, y: 0, width: 600, height: 32))
+        strip.titles = ["Avatar", "Prospection", ""]
+        strip.states = [.working, .idle, .needsInput]
+        let children = strip.accessibilityChildren() as? [TabAccessibilityElement]
+        XCTAssertEqual(children?.count, 3)
+        XCTAssertEqual(children?[0].accessibilityLabel(), "Avatar, Claude travaille depuis moins d'une minute")
+        XCTAssertEqual(children?[1].accessibilityLabel(), "Prospection")
+        XCTAssertEqual(children?[2].accessibilityLabel(), "Claude, Claude t'attend depuis moins d'une minute")
+        XCTAssertEqual(children?[0].accessibilityValue() as? Int, 1)
+        XCTAssertEqual(children?[1].accessibilityValue() as? Int, 0)
+        XCTAssertEqual(strip.accessibilityRole(), .tabGroup)
+    }
+}

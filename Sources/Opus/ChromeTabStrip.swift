@@ -185,6 +185,13 @@ final class ChromeTabStrip: NSView {
         }
     }
 
+    /// What Claude does in tab `index` and for how long, for its tooltip and
+    /// VoiceOver; nil at rest.
+    func stateLine(forTab index: Int) -> String? {
+        guard states.indices.contains(index), stateSince.indices.contains(index) else { return nil }
+        return Self.stateLine(states[index], for: Date().timeIntervalSince(stateSince[index]))
+    }
+
     /// A tab's tooltip: its title, and the shortcut that reaches it when it
     /// has one (Cmd+1 to Cmd+9).
     static func toolTip(index: Int, title: String) -> String {
@@ -400,13 +407,63 @@ extension ChromeTabStrip: NSViewToolTipOwner {
         let index = Int(bitPattern: data) - 1
         guard titles.indices.contains(index) else { return "" }
         let base = Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
-        guard states.indices.contains(index), stateSince.indices.contains(index),
-              let line = Self.stateLine(states[index], for: Date().timeIntervalSince(stateSince[index]))
-        else { return base }
+        guard let line = stateLine(forTab: index) else { return base }
         return base + "\n" + line
     }
 }
 
 private extension Array {
     subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
+}
+
+// MARK: - Accessibility
+
+/// One tab to VoiceOver: its title, what Claude is doing there and for how
+/// long, selected when active; pressing it switches to the tab.
+final class TabAccessibilityElement: NSAccessibilityElement {
+    weak var strip: ChromeTabStrip?
+    let index: Int
+
+    init(strip: ChromeTabStrip, index: Int) {
+        self.strip = strip
+        self.index = index
+        super.init()
+        setAccessibilityRole(.radioButton)
+        setAccessibilityParent(strip)
+    }
+
+    override func accessibilityLabel() -> String? { strip?.accessibilityLabel(forTab: index) }
+    override func accessibilityValue() -> Any? { strip.map { $0.activeIndex == index ? 1 : 0 } }
+    override func accessibilityFrame() -> NSRect { strip?.screenFrame(forTab: index) ?? .zero }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard let strip, index != strip.activeIndex else { return false }
+        strip.onSwitch?(index)
+        return true
+    }
+}
+
+extension ChromeTabStrip {
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .tabGroup }
+    override func accessibilityLabel() -> String? { "Onglets" }
+
+    override func accessibilityChildren() -> [Any]? {
+        titles.indices.map { TabAccessibilityElement(strip: self, index: $0) }
+    }
+
+    /// "Title, Claude travaille depuis 4 min", or the title alone at rest.
+    func accessibilityLabel(forTab index: Int) -> String? {
+        guard titles.indices.contains(index) else { return nil }
+        let title = titles[index].isEmpty ? "Claude" : titles[index]
+        guard let line = stateLine(forTab: index) else { return title }
+        return "\(title), \(line)"
+    }
+
+    func screenFrame(forTab index: Int) -> NSRect {
+        let tabs = Self.tabFrames(titles: titles, activeIndex: activeIndex, font: Self.titleFont,
+                                  available: bounds.width, height: bounds.height).tabs
+        guard tabs.indices.contains(index), let window else { return .zero }
+        return window.convertToScreen(convert(tabs[index], to: nil))
+    }
 }

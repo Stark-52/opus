@@ -188,7 +188,8 @@ final class MenuBarAvatar {
             if !reduceMotion {
                 shown = ClaudeAvatar.lateNight(shown, hour: Calendar.current.component(.hour, from: Date()), time: now)
             }
-            button.image = ClaudeAvatar.image(shown, color: color, size: Self.size)
+            let lightBar = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+            button.image = ClaudeAvatar.image(shown, color: color, size: Self.size, shadow: lightBar)
         } else {
             let pose = ClaudeAvatar.tired(celebration ?? ClaudeAvatar.Pose(), weekPercent: weekPercent)
             let image = ClaudeAvatar.image(pose, color: .black, size: Self.size, knockout: true)

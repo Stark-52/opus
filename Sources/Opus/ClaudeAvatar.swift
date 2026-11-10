@@ -694,8 +694,17 @@ enum ClaudeAvatar {
     }
 
     /// The avatar alone as an image, fitted so no pose is cut (the menu bar).
-    static func image(_ pose: Pose, color: NSColor, size: CGFloat, knockout: Bool = false) -> NSImage {
+    /// `shadow` lays a soft dark edge under every shape, so a pale state
+    /// color still reads on a light menu bar.
+    static func image(_ pose: Pose, color: NSColor, size: CGFloat, knockout: Bool = false, shadow: Bool = false) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            if shadow {
+                let edge = NSShadow()
+                edge.shadowBlurRadius = 0.9
+                edge.shadowOffset = .zero
+                edge.shadowColor = NSColor.black.withAlphaComponent(0.6)
+                edge.set()
+            }
             draw(pose, color: color, in: fittedRect(in: rect), knockout: knockout)
             return true
         }
