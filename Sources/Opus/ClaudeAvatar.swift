@@ -126,6 +126,22 @@ enum ClaudeAvatar {
         return .idle
     }
 
+    /// How long Claude waits before its hops speed up.
+    static let insistAfter: TimeInterval = 3 * 60
+    /// How much faster an insistent wait moves.
+    static let insistSpeed: Double = 1.6
+
+    /// Late at night (23 h to 6 h) an awake avatar yawns once every twelve
+    /// seconds, for 1.5 s; other hours, and closed or smiling eyes, are left be.
+    static func lateNight(_ pose: Pose, hour: Int, time t: Double) -> Pose {
+        guard hour >= 23 || hour < 6, pose.eyes == .open || pose.eyes == .tired else { return pose }
+        let phase = t.truncatingRemainder(dividingBy: 12)
+        guard phase > 10.5 else { return pose }
+        var yawning = pose
+        yawning.yawn = CGFloat(sin(.pi * (phase - 10.5) / 1.5))
+        return yawning
+    }
+
     /// Eyes shut for the last 0.12 s of each period, never at rest.
     static func blinking(_ time: Double, every period: Double) -> Bool {
         guard time > 0 else { return false }

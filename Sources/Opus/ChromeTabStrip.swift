@@ -194,6 +194,13 @@ final class ChromeTabStrip: NSView {
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
+    /// The clock a tab's avatar moves on: faster once it has waited long.
+    private func avatarTime(_ index: Int) -> Double {
+        guard states.indices.contains(index), states[index] == .needsInput, stateSince.indices.contains(index),
+              Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.insistAfter else { return now }
+        return now * ClaudeAvatar.insistSpeed
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateAnimation()
@@ -250,12 +257,15 @@ final class ChromeTabStrip: NSView {
                                   in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
                var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
-                   ?? ClaudeAvatar.pose(states[index], time: now, reduceMotion: reduceMotion) {
+                   ?? ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion) {
                 let size = ClaudeAvatar.tabSize
                 if let mouseX {
                     pose.glance = max(-1, min(1, (mouseX - textX - size / 2) / 60)) * 0.06
                 }
                 pose = ClaudeAvatar.tired(pose, weekPercent: weekPercent)
+                if !reduceMotion {
+                    pose = ClaudeAvatar.lateNight(pose, hour: Calendar.current.component(.hour, from: Date()), time: now)
+                }
                 if states[index] == .working, stateSince.indices.contains(index) {
                     pose.sweat = Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.sweatAfter
                 }

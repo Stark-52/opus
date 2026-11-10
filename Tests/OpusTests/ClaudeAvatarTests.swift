@@ -133,3 +133,14 @@ final class ClaudeAvatarYawnTests: XCTestCase {
         XCTAssertEqual(ClaudeAvatar.pose(.working, time: 8.25)?.yawn, 0)
     }
 }
+
+final class ClaudeAvatarLateNightTests: XCTestCase {
+    func testYawnsOnlyLateAndOnlyAwake() {
+        let awake = ClaudeAvatar.Pose()
+        XCTAssertGreaterThan(ClaudeAvatar.lateNight(awake, hour: 23, time: 11.25).yawn, 0.9)
+        XCTAssertGreaterThan(ClaudeAvatar.lateNight(awake, hour: 3, time: 11.25).yawn, 0.9)
+        XCTAssertEqual(ClaudeAvatar.lateNight(awake, hour: 14, time: 11.25).yawn, 0)
+        XCTAssertEqual(ClaudeAvatar.lateNight(awake, hour: 23, time: 5).yawn, 0)
+        XCTAssertEqual(ClaudeAvatar.lateNight(ClaudeAvatar.Pose(eyes: .happy), hour: 23, time: 11.25).yawn, 0)
+    }
+}

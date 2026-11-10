@@ -138,7 +138,11 @@ final class MenuBarAvatar {
         let celebration = celebrationStart.flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }
         if let color = OpusTheme.activityColor(activity),
            let pose = celebration ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: reduceMotion) {
-            button.image = ClaudeAvatar.image(ClaudeAvatar.tired(pose, weekPercent: weekPercent), color: color, size: Self.size)
+            var shown = ClaudeAvatar.tired(pose, weekPercent: weekPercent)
+            if !reduceMotion {
+                shown = ClaudeAvatar.lateNight(shown, hour: Calendar.current.component(.hour, from: Date()), time: now)
+            }
+            button.image = ClaudeAvatar.image(shown, color: color, size: Self.size)
         } else {
             let pose = ClaudeAvatar.tired(celebration ?? ClaudeAvatar.Pose(), weekPercent: weekPercent)
             let image = ClaudeAvatar.image(pose, color: .black, size: Self.size, knockout: true)
