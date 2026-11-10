@@ -88,8 +88,10 @@ final class DockAvatar {
     private var shown: PaneActivity?
     private var timer: Timer?
 
-    func show() {
-        let activity: PaneActivity = MenuBarAvatar.shared.activity == .done ? .done : .needsInput
+    /// `activity` is .done or .needsInput; by default, done when the tabs
+    /// say so and needs-input otherwise.
+    func show(_ wanted: PaneActivity? = nil) {
+        let activity: PaneActivity = wanted ?? (MenuBarAvatar.shared.activity == .done ? .done : .needsInput)
         guard shown != activity else { return }
         timer?.invalidate()
         timer = nil
@@ -113,8 +115,15 @@ final class DockAvatar {
 
     /// The tabs changed state: a tile already up follows them, since the
     /// bell can ring before the hook that says Claude has finished.
+    /// Only between the two states a bell means: a tab starting work or a
+    /// closed tab leaves the tile as it is.
     func follow() {
-        if shown != nil { show() }
+        guard shown != nil else { return }
+        switch MenuBarAvatar.shared.activity {
+        case .done: show(.done)
+        case .needsInput: show(.needsInput)
+        case .working, .idle: break
+        }
     }
 
     func hide() {

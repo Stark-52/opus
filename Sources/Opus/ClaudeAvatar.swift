@@ -181,11 +181,14 @@ enum ClaudeAvatar {
                 arc.line(to: NSPoint(x: eyeX, y: eyeY + s * 0.035))
                 arc.line(to: NSPoint(x: eyeX + s * 0.055, y: eyeY - s * 0.025))
                 arc.stroke()
-                // A little blush under each smiling eye.
-                OpusTheme.red.withAlphaComponent(0.55).setFill()
-                NSBezierPath(ovalIn: NSRect(x: eyeX + side * s * 0.04 - s * 0.05, y: eyeY - s * 0.12,
-                                            width: s * 0.1, height: s * 0.055)).fill()
-                OpusTheme.caretText.set()
+                // A little blush under each smiling eye; none in a template
+                // image, where it would punch a hole.
+                if !knockout {
+                    OpusTheme.red.withAlphaComponent(0.55).setFill()
+                    NSBezierPath(ovalIn: NSRect(x: eyeX + side * s * 0.04 - s * 0.05, y: eyeY - s * 0.12,
+                                                width: s * 0.1, height: s * 0.055)).fill()
+                    OpusTheme.caretText.set()
+                }
             }
         }
 
