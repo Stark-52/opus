@@ -210,6 +210,8 @@ final class ClaudeAvatarView: NSView {
     var pose: (Double) -> ClaudeAvatar.Pose? = { ClaudeAvatar.sleeping(time: $0) } {
         didSet { needsDisplay = true }
     }
+    /// Keep the top of the view for the "z"s; off, the avatar fills it, centered.
+    var snoreRoom = true { didSet { needsDisplay = true } }
     private var timer: Timer?
 
     override func viewDidMoveToWindow() {
@@ -229,8 +231,8 @@ final class ClaudeAvatarView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard let pose = pose(still ? 0 : ProcessInfo.processInfo.systemUptime) else { return }
-        let side = min(bounds.width, bounds.height) * 0.72
-        ClaudeAvatar.draw(pose, color: color,
-                          in: NSRect(x: bounds.midX - side / 2, y: bounds.minY, width: side, height: side))
+        let side = min(bounds.width, bounds.height) * (snoreRoom ? 0.72 : 1)
+        let y = snoreRoom ? bounds.minY : bounds.midY - side / 2
+        ClaudeAvatar.draw(pose, color: color, in: NSRect(x: bounds.midX - side / 2, y: y, width: side, height: side))
     }
 }

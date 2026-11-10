@@ -228,7 +228,12 @@ final class ChromeTabStrip: NSView {
                 NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
             }
             var textX = rect.minX + 8
-            if index < states.count, let color = OpusTheme.activityColor(states[index]),
+            if index < states.count, states[index] == .idle {
+                // Resting: a pale, still, sleeping Claude keeps the titles in line.
+                let size = ClaudeAvatar.tabSize
+                ClaudeAvatar.draw(ClaudeAvatar.Pose(eyes: .closed), color: OpusTheme.cream(isActive ? 0.4 : 0.25),
+                                  in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
+            } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
                var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
                    ?? ClaudeAvatar.pose(states[index], time: now, reduceMotion: reduceMotion) {
                 let size = ClaudeAvatar.tabSize

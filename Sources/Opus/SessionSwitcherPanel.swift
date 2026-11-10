@@ -49,9 +49,14 @@ private final class SessionRowBackground: NSTableRowView {
 private final class SessionCellView: NSTableCellView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// What Claude is doing in this session, when it is doing something.
+    private let avatar = ClaudeAvatarView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        avatar.snoreRoom = false
+        avatar.isHidden = true
+        avatar.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
         titleLabel.textColor = OpusTheme.cream(0.95)
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -77,21 +82,32 @@ private final class SessionCellView: NSTableCellView {
 
         addSubview(titleLabel)
         addSubview(subtitleLabel)
+        addSubview(avatar)
         NSLayoutConstraint.activate([
+            avatar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            avatar.centerYAnchor.constraint(equalTo: centerYAnchor),
+            avatar.widthAnchor.constraint(equalToConstant: 18),
+            avatar.heightAnchor.constraint(equalToConstant: 18),
+
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(equalTo: avatar.leadingAnchor, constant: -6),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 4),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            subtitleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            subtitleLabel.trailingAnchor.constraint(equalTo: avatar.leadingAnchor, constant: -6),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
         ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(title: String, subtitle: String) {
+    func configure(title: String, subtitle: String, activity: PaneActivity) {
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
+        avatar.isHidden = activity == .idle
+        if let color = OpusTheme.activityColor(activity) {
+            avatar.color = color
+            avatar.pose = { ClaudeAvatar.pose(activity, time: $0) }
+        }
     }
 }
 
@@ -405,7 +421,8 @@ extension SessionSwitcherPanel: NSTableViewDataSource, NSTableViewDelegate {
         let folder = (summary.cwd as NSString).lastPathComponent
         let branch = summary.gitBranch.map { " · \($0)" } ?? ""
         let relative = SessionIndex.relativeAge(from: summary.mtime)
-        cell.configure(title: summary.title, subtitle: "\(folder)\(branch) · \(relative)")
+        cell.configure(title: summary.title, subtitle: "\(folder)\(branch) · \(relative)",
+                       activity: ClaudeStateStore.shared.state(forSessionId: summary.sessionId))
         return cell
     }
 
