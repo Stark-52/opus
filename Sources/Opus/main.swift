@@ -722,6 +722,11 @@ final class QuickTerminalPanel: NSObject {
         visible ? hide() : show()
     }
 
+    /// Shows the panel, and leaves it be when it is already up.
+    func reveal() {
+        if !visible { show() }
+    }
+
     // The "mouse" screen — matches Ghostty's quick-terminal-screen=mouse so the
     // panel always slides down on whichever monitor the user is currently using.
     private func activeScreen() -> NSScreen {
@@ -1008,10 +1013,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // composeSpawnCommand injects --settings unconditionally for .claude.
         eventSocketServer.start()
         // Claude in the menu bar: the strongest state across every tab.
-        MenuBarAvatar.shared.install { [weak self] in
+        MenuBarAvatar.shared.install(onClick: { [weak self] in
             guard let self else { return }
             if self.nativePanel != nil { self.toggleNativePanel() } else { NSApp.activate(ignoringOtherApps: true) }
-        }
+        }, reveal: { [weak self] in
+            if let panel = self?.nativePanel { panel.reveal() } else { NSApp.activate(ignoringOtherApps: true) }
+        })
         // Must exist BEFORE any claude spawns — composeSpawnCommand's .claude
         // preset always points --settings at this path (see HookSettingsWriter).
         // Idempotent: cheap to call unconditionally on every launch.
@@ -1255,6 +1262,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func toggleNativePanel() {
         nativePanel?.toggle()
+    }
+
+    @objc func toggleMenuBarAvatar(_ sender: NSMenuItem) {
+        MenuBarAvatar.shared.isShown.toggle()
     }
 
     @objc func openSettings() {
@@ -1555,6 +1566,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         settingsItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(settingsItem)
+        appMenu.addItem(NSMenuItem(title: "Show Claude in Menu Bar", action: #selector(toggleMenuBarAvatar(_:)),
+                                   keyEquivalent: ""))
 
         appMenu.addItem(NSMenuItem.separator())
 
@@ -1721,3 +1734,14 @@ app.delegate = delegate
 // the standard "running" dot. Use .accessory if you want truly invisible.
 app.setActivationPolicy(.regular)
 app.run()
+
+extension AppDelegate: NSMenuItemValidation {
+    /// Ticks "Show Claude in Menu Bar" from the item itself, which Cmd-drag
+    /// can remove behind the menu's back.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(toggleMenuBarAvatar(_:)) {
+            menuItem.state = MenuBarAvatar.shared.isShown ? .on : .off
+        }
+        return true
+    }
+}

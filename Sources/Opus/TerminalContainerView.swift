@@ -2298,7 +2298,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // (paneActivityChanged, closePane, markActiveTabSeen,
         // updateTabIndicator) keeps this one current for free too.
         activeActivity = tabStrip.states.indices.contains(activeTabIndex) ? tabStrip.states[activeTabIndex] : .idle
-        MenuBarAvatar.shared.report(tabStrip.states, from: self)
+        MenuBarAvatar.shared.report(tabStrip.states, from: self) { [weak self] index in
+            self?.switchTab(to: index)
+        }
         // Task 6 follow-up: this is the activity-only refresh path — it can
         // fire (e.g. a hook event flips .idle → .working) without the
         // context-meter timer having run at all, so the tooltip needs its

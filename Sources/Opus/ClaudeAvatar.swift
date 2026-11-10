@@ -30,7 +30,12 @@ enum ClaudeAvatar {
         var eyes: Eyes = .open
         /// Where the drifting "z"s are, 0 to 1; nil when awake.
         var snore: CGFloat?
+        /// A drop of sweat on the brow, after a long stretch of work.
+        var sweat = false
     }
+
+    /// How long Claude works before the drop of sweat shows.
+    static let sweatAfter: TimeInterval = 5 * 60
 
     /// Whether `activity` moves, so a host knows when to keep a timer.
     static func isAnimated(_ activity: PaneActivity, reduceMotion: Bool) -> Bool {
@@ -160,6 +165,22 @@ enum ClaudeAvatar {
         }
 
         NSGraphicsContext.restoreGraphicsState()
+
+        // Sweat: a drop on the right edge of the face, point up.
+        if pose.sweat {
+            let x = center.x + s * 0.29, y = center.y + s * 0.04, r = s * 0.075
+            let drop = NSBezierPath()
+            drop.move(to: NSPoint(x: x, y: y + r * 2.4))
+            drop.curve(to: NSPoint(x: x, y: y - r), controlPoint1: NSPoint(x: x + r * 1.5, y: y + r * 0.4),
+                       controlPoint2: NSPoint(x: x + r * 1.4, y: y - r))
+            drop.curve(to: NSPoint(x: x, y: y + r * 2.4), controlPoint1: NSPoint(x: x - r * 1.4, y: y - r),
+                       controlPoint2: NSPoint(x: x - r * 1.5, y: y + r * 0.4))
+            NSColor(red: 0.85, green: 0.95, blue: 1, alpha: 1).setFill()
+            drop.fill()
+            OpusTheme.caretText.setStroke()
+            drop.lineWidth = max(0.6, s * 0.025)
+            drop.stroke()
+        }
 
         // Snoring.
         if let snore = pose.snore {

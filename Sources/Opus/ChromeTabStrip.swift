@@ -26,7 +26,11 @@ final class ChromeTabStrip: NSView {
         didSet {
             if oldValue.count != states.count {
                 celebrations.removeAll()
-            } else if !reduceMotion {
+                stateSince = states.map { _ in Date() }
+            } else {
+                for index in states.indices where oldValue[index] != states[index] { stateSince[index] = Date() }
+            }
+            if oldValue.count == states.count, !reduceMotion {
                 for index in states.indices where oldValue[index] == .working && states[index] == .done {
                     celebrations[index] = now
                 }
@@ -36,6 +40,8 @@ final class ChromeTabStrip: NSView {
         }
     }
     private var animationTimer: Timer?
+    /// When each tab entered its current state, same index space as `states`.
+    private var stateSince: [Date] = []
     /// When each tab's burst of joy started, by tab index.
     private var celebrations: [Int: Double] = [:]
     /// The cursor's x while it is over the strip: every avatar looks at it.
@@ -117,6 +123,24 @@ final class ChromeTabStrip: NSView {
                 NSRect(x: available - plusWidth, y: y, width: plusWidth, height: tabHeight))
     }
 
+    /// What Claude is doing in a tab and for how long, for its tooltip;
+    /// nil when idle.
+    static func stateLine(_ activity: PaneActivity, for elapsed: TimeInterval) -> String? {
+        let minutes = Int(elapsed / 60)
+        let span: String
+        switch minutes {
+        case ..<1: span = "moins d'une minute"
+        case ..<60: span = "\(minutes) min"
+        default: span = "\(minutes / 60) h \(String(format: "%02d", minutes % 60))"
+        }
+        switch activity {
+        case .idle: return nil
+        case .working: return "Claude travaille depuis \(span)"
+        case .needsInput: return "Claude t'attend depuis \(span)"
+        case .done: return "Claude a fini il y a \(span)"
+        }
+    }
+
     /// A tab's tooltip: its title, and the shortcut that reaches it when it
     /// has one (Cmd+1 to Cmd+9).
     static func toolTip(index: Int, title: String) -> String {
@@ -170,7 +194,9 @@ final class ChromeTabStrip: NSView {
                 self.updateAnimation()
             }
             guard let window = self.window, window.occlusionState.contains(.visible) else { return }
-            self.needsDisplay = true
+            for tab in self.layoutRects().tabs where tab.maxX > 0 && tab.minX < self.tabRoom {
+                self.setNeedsDisplay(NSRect(x: tab.minX + 6, y: tab.minY, width: ClaudeAvatar.tabSize + 4, height: tab.height))
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         animationTimer = timer
@@ -194,6 +220,9 @@ final class ChromeTabStrip: NSView {
                 if let mouseX {
                     pose.glance = max(-1, min(1, (mouseX - textX - size / 2) / 60)) * 0.06
                 }
+                if states[index] == .working, stateSince.indices.contains(index) {
+                    pose.sweat = Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.sweatAfter
+                }
                 ClaudeAvatar.draw(pose, color: color,
                                   in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
             }
@@ -207,9 +236,12 @@ final class ChromeTabStrip: NSView {
             ]
             let title = titles[index].isEmpty ? "Claude" : titles[index]
             let textHeight = ceil(Self.titleFont.ascender - Self.titleFont.descender)
-            (title as NSString).draw(
-                with: NSRect(x: textX, y: rect.midY - textHeight / 2, width: rect.maxX - 10 - textX, height: textHeight),
-                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attrs)
+            let textRect = NSRect(x: textX, y: rect.midY - textHeight / 2, width: rect.maxX - 10 - textX, height: textHeight)
+            // An animation frame only dirties the avatars: leave the titles be.
+            if needsToDraw(textRect) {
+                (title as NSString).draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+                                         attributes: attrs)
+            }
         }
         NSGraphicsContext.restoreGraphicsState()
         if plus.maxX <= bounds.width {
@@ -253,6 +285,10 @@ extension ChromeTabStrip: NSViewToolTipOwner {
         guard let data else { return "Nouvel onglet (Cmd+T)" }
         let index = Int(bitPattern: data) - 1
         guard titles.indices.contains(index) else { return "" }
-        return Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
+        let base = Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
+        guard states.indices.contains(index), stateSince.indices.contains(index),
+              let line = Self.stateLine(states[index], for: Date().timeIntervalSince(stateSince[index]))
+        else { return base }
+        return base + "\n" + line
     }
 }

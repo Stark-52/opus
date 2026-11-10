@@ -13,6 +13,7 @@ final class MenuBarAvatar {
     private struct Report {
         weak var source: AnyObject?
         var states: [PaneActivity]
+        var focus: (Int) -> Void
     }
 
     private var item: NSStatusItem?
@@ -21,26 +22,51 @@ final class MenuBarAvatar {
     private var celebrationStart: Double?
     private var timer: Timer?
     private let clickTarget = ClickTarget()
+    /// Brings Opus forward without hiding it, before a tab is focused.
+    private var reveal: () -> Void = {}
+
+    /// Whether the avatar sits in the menu bar; Cmd-drag can clear it too.
+    var isShown: Bool {
+        get { item?.isVisible ?? false }
+        set { item?.isVisible = newValue }
+    }
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
-    func install(onClick: @escaping () -> Void) {
+    /// A click shows the tab that waits for you, else the one that just
+    /// finished; with neither it calls `onClick` (show or hide Opus).
+    func install(onClick: @escaping () -> Void, reveal: @escaping () -> Void) {
         guard item == nil else { return }
+        self.reveal = reveal
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.autosaveName = "OpusClaudeAvatar"
         item.behavior = .removalAllowed
-        clickTarget.action = onClick
+        clickTarget.action = { [weak self] in
+            guard let self, let (report, index) = self.tabToShow() else { return onClick() }
+            self.reveal()
+            report.focus(index)
+        }
         item.button?.target = clickTarget
         item.button?.action = #selector(ClickTarget.fire)
         self.item = item
         render()
     }
 
-    /// `source`'s tabs, one state each; a source that goes away stops counting.
-    func report(_ states: [PaneActivity], from source: AnyObject) {
+    private func tabToShow() -> (Report, Int)? {
+        for wanted in [PaneActivity.needsInput, .done] {
+            for report in reports where report.source != nil {
+                if let index = report.states.firstIndex(of: wanted) { return (report, index) }
+            }
+        }
+        return nil
+    }
+
+    /// `source`'s tabs, one state each, and how to bring one of them up;
+    /// a source that goes away stops counting.
+    func report(_ states: [PaneActivity], from source: AnyObject, focus: @escaping (Int) -> Void) {
         reports.removeAll { $0.source == nil || $0.source === source }
-        reports.append(Report(source: source, states: states))
+        reports.append(Report(source: source, states: states, focus: focus))
         let next = ClaudeAvatar.strongest(reports.flatMap(\.states))
         guard next != activity else { return }
         if activity == .working, next == .done, !reduceMotion { celebrationStart = now }

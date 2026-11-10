@@ -85,3 +85,12 @@ final class ClaudeAvatarJoyTests: XCTestCase {
         XCTAssertEqual(ClaudeAvatar.strongest([]), .idle)
     }
 }
+
+final class TabStateLineTests: XCTestCase {
+    func testSaysWhatAndHowLong() {
+        XCTAssertNil(ChromeTabStrip.stateLine(.idle, for: 600))
+        XCTAssertEqual(ChromeTabStrip.stateLine(.working, for: 20), "Claude travaille depuis moins d'une minute")
+        XCTAssertEqual(ChromeTabStrip.stateLine(.needsInput, for: 4 * 60 + 30), "Claude t'attend depuis 4 min")
+        XCTAssertEqual(ChromeTabStrip.stateLine(.done, for: 65 * 60), "Claude a fini il y a 1 h 05")
+    }
+}
