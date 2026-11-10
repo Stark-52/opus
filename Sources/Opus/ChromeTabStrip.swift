@@ -310,7 +310,7 @@ final class ChromeTabStrip: NSView {
         guard let index = hit(point) else { return }
         // Boop: a click on a tab's avatar makes it spin.
         if index >= 0, let tab = layoutRects().tabs[safe: index],
-           point.x < tab.minX + 8 + ClaudeAvatar.tabSize + 2, !reduceMotion {
+           point.x >= tab.minX + 6, point.x < tab.minX + 8 + ClaudeAvatar.tabSize + 2, !reduceMotion {
             celebrations[index] = now
             updateAnimation()
         }

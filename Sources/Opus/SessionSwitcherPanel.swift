@@ -51,6 +51,8 @@ private final class SessionCellView: NSTableCellView {
     private let subtitleLabel = NSTextField(labelWithString: "")
     /// What Claude is doing in this session, when it is doing something.
     private let avatar = ClaudeAvatarView()
+    /// Zero while the avatar is hidden, so the titles get its room back.
+    private lazy var avatarWidth = avatar.widthAnchor.constraint(equalToConstant: 0)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -86,7 +88,7 @@ private final class SessionCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             avatar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             avatar.centerYAnchor.constraint(equalTo: centerYAnchor),
-            avatar.widthAnchor.constraint(equalToConstant: 18),
+            avatarWidth,
             avatar.heightAnchor.constraint(equalToConstant: 18),
 
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -104,6 +106,7 @@ private final class SessionCellView: NSTableCellView {
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
         avatar.isHidden = activity == .idle
+        avatarWidth.constant = avatar.isHidden ? 0 : 18
         if let color = OpusTheme.activityColor(activity) {
             avatar.color = color
             avatar.animates = ClaudeAvatar.isAnimated(activity, reduceMotion: false)
