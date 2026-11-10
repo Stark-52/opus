@@ -581,6 +581,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
         guard let sessionId = activeSessionId() else {
             statusBar.contextFraction = nil
+            tabStrip.activeContext = nil
             contextTokens = nil
             updateStatusRailTooltip()
             return
@@ -611,6 +612,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     private func applyContextMeterResult(_ result: (tokens: Int, limit: Int)?) {
         guard let result, result.limit > 0 else {
             statusBar.contextFraction = nil
+            tabStrip.activeContext = nil
             contextTokens = nil
             updateStatusRailTooltip()
             return
@@ -618,6 +620,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let rawFraction = Double(result.tokens) / Double(result.limit)
         let clampedFraction = CGFloat(min(max(rawFraction, 0), 1))
         statusBar.contextFraction = clampedFraction
+        tabStrip.activeContext = clampedFraction
         contextTokens = (result.tokens, result.limit)
         updateStatusRailTooltip()
     }

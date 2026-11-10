@@ -54,6 +54,8 @@ final class ChromeTabStrip: NSView {
         }
     }
     private var animationTimer: Timer?
+    /// The active tab's context share: past `ClaudeAvatar.puffedAt` its cheeks puff out.
+    var activeContext: CGFloat? { didSet { if activeContext != oldValue { needsDisplay = true } } }
     /// The week's usage in percent: past `ClaudeAvatar.tiredAt` the avatars droop.
     var weekPercent: Double? { didSet { if weekPercent != oldValue { needsDisplay = true } } }
     /// When each tab entered its current state, same index space as `states`.
@@ -307,7 +309,12 @@ final class ChromeTabStrip: NSView {
                     pose = ClaudeAvatar.lateNight(pose, hour: Calendar.current.component(.hour, from: Date()), time: now)
                 }
                 if states[index] == .working, stateSince.indices.contains(index) {
-                    pose.sweat = Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.sweatAfter
+                    let worked = Date().timeIntervalSince(stateSince[index])
+                    pose.sweat = worked >= ClaudeAvatar.sweatAfter
+                    if worked >= ClaudeAvatar.steamAfter { pose.steam = CGFloat(now) }
+                }
+                if index == activeIndex, let context = activeContext, context >= ClaudeAvatar.puffedAt {
+                    pose.puffed = true
                 }
                 var shade = color
                 if let fade = fades[index], now - fade.start < Self.fadeLength {

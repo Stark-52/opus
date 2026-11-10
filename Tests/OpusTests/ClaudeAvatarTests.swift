@@ -298,3 +298,35 @@ final class ClaudeAvatarMomentTests: XCTestCase {
         XCTAssertEqual(ClaudeAvatar.dozing(time: 3).eyes, .closed)
     }
 }
+
+final class ClaudeAvatarDecorTests: XCTestCase {
+    private let cal = Calendar(identifier: .gregorian)
+    private func date(_ month: Int, _ day: Int, _ hour: Int, year: Int = 2026) -> Date {
+        var parts = DateComponents()
+        parts.year = year; parts.month = month; parts.day = day; parts.hour = hour
+        return cal.date(from: parts)!
+    }
+
+    func testHolidayHats() {
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(10, 31, 12), asleep: false, calendar: cal), .witch)
+        XCTAssertNil(ClaudeAvatar.seasonalHat(date(10, 20, 12), asleep: false, calendar: cal))
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(12, 31, 12), asleep: false, calendar: cal), .party)
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(1, 1, 12), asleep: false, calendar: cal), .party)
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(12, 30, 12), asleep: false, calendar: cal), .santa)
+    }
+
+    func testWeekendAndCoffeeHours() {
+        XCTAssertTrue(ClaudeAvatar.weekend(date(11, 14, 12), calendar: cal))    // a Saturday
+        XCTAssertTrue(ClaudeAvatar.weekend(date(11, 15, 12), calendar: cal))    // a Sunday
+        XCTAssertFalse(ClaudeAvatar.weekend(date(11, 11, 12), calendar: cal))   // a Wednesday
+        XCTAssertTrue(ClaudeAvatar.coffeeHours(date(11, 11, 3), calendar: cal))
+        XCTAssertFalse(ClaudeAvatar.coffeeHours(date(11, 11, 6), calendar: cal))
+    }
+
+    func testEveryTenthFinishGetsHearts() {
+        XCTAssertFalse(MenuBarAvatar.hearts(afterFinishing: 9))
+        XCTAssertTrue(MenuBarAvatar.hearts(afterFinishing: 10))
+        XCTAssertTrue(MenuBarAvatar.hearts(afterFinishing: 20))
+        XCTAssertEqual(MenuBarAvatar.toolTip(.done, finished: 3), "Claude a fini\n3 tâches finies aujourd'hui")
+    }
+}

@@ -20,7 +20,7 @@ enum ClaudeAvatar {
     static let framesPerSecond: Double = 24
     private static let rayCount = 8
 
-    enum Eyes: Equatable { case open, closed, happy, tired, wide, dizzy }
+    enum Eyes: Equatable { case open, closed, happy, tired, wide, dizzy, hearts }
 
     /// A short scene a tab plays over its state, after a change or a boop.
     enum Moment: Equatable { case celebrate, getUp, nod, startle, wink, jump, dizzy }
@@ -89,13 +89,17 @@ enum ClaudeAvatar {
     static func dozing(time t: Double) -> Pose {
         Pose(rayPulse: CGFloat(sin(t * 1.3)) * 0.025, eyes: .closed, squash: 0.04, asleep: true)
     }
-    enum Hat: Equatable { case nightcap, santa, party }
+    enum Hat: Equatable { case nightcap, santa, party, witch }
 
-    /// The hat the calendar puts on: Santa's from December 15th to the 31st,
-    /// a nightcap on a sleeper from 22 h to 7 h, else none.
+    /// The hat the calendar puts on: a witch's from October 25th to 31st,
+    /// Santa's from December 15th to 30th, a party hat on New Year's Eve and
+    /// Day, a nightcap on a sleeper from 22 h to 7 h, else none.
     static func seasonalHat(_ date: Date, asleep: Bool, calendar: Calendar = .current) -> Hat? {
         let parts = calendar.dateComponents([.month, .day, .hour], from: date)
-        if parts.month == 12, (parts.day ?? 0) >= 15 { return .santa }
+        let month = parts.month ?? 0, day = parts.day ?? 0
+        if (month == 12 && day == 31) || (month == 1 && day == 1) { return .party }
+        if month == 10, day >= 25 { return .witch }
+        if month == 12, day >= 15 { return .santa }
         if asleep, let hour = parts.hour, hour >= 22 || hour < 7 { return .nightcap }
         return nil
     }
@@ -164,6 +168,31 @@ enum ClaudeAvatar {
         var wink = false
         /// Phase of the little stars circling a dizzy head; nil without them.
         var stars: CGFloat?
+        /// Phase of steam puffs rising off the head, after long work; nil without.
+        var steam: CGFloat?
+        /// Cheeks puffed out: the context is nearly full.
+        var puffed = false
+        /// Sunglasses and a coffee cup, on or off whatever the calendar says;
+        /// nil leaves them to the date (weekend, 1 h to 5 h).
+        var shades: Bool?
+        var coffee: Bool?
+    }
+
+    /// How long Claude works before steam rises off its head.
+    static let steamAfter: TimeInterval = 30 * 60
+    /// Context share from which the cheeks puff out.
+    static let puffedAt: CGFloat = 0.9
+
+    /// Sunglasses on Saturdays and Sundays.
+    static func weekend(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let weekday = calendar.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7
+    }
+
+    /// A cup of coffee in hand from 1 h to 5 h.
+    static func coffeeHours(_ date: Date, calendar: Calendar = .current) -> Bool {
+        let hour = calendar.component(.hour, from: date)
+        return hour >= 1 && hour < 5
     }
 
     /// Smallest side at which eye highlights and confetti are drawn.
@@ -356,11 +385,45 @@ enum ClaudeAvatar {
         }
         rays.stroke()
 
-        // Body.
-        let radius = s * 0.29
+        // Body; puffed cheeks bulge on both sides when the context is nearly full.
+        let radius = s * (pose.puffed ? 0.305 : 0.29)
         color.setFill()
         NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
                                     width: radius * 2, height: radius * 2)).fill()
+        if pose.puffed {
+            for side in [-1.0, 1.0] as [CGFloat] {
+                let cheek = NSPoint(x: center.x + side * s * 0.25, y: center.y - s * 0.07)
+                let r = s * 0.11
+                NSBezierPath(ovalIn: NSRect(x: cheek.x - r, y: cheek.y - r, width: r * 2, height: r * 2)).fill()
+            }
+        }
+
+        // Steam puffs rising off the head, after a long stretch of work.
+        if let steam = pose.steam, !knockout {
+            for k in 0..<3 {
+                let p = (steam * 0.6 + CGFloat(k) / 3).truncatingRemainder(dividingBy: 1)
+                let x = center.x + s * (-0.12 + 0.12 * CGFloat(k)) + sin(p * 6) * s * 0.03
+                let y = center.y + s * (0.3 + 0.18 * p)
+                let r = s * (0.035 + 0.04 * p)
+                OpusTheme.cream.withAlphaComponent(0.25 + (1 - p) * 0.7).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x - r, y: y - r, width: r * 2, height: r * 2)).fill()
+            }
+            color.setFill()
+        }
+
+        // A cup of coffee held on the left, deep in the night.
+        if s >= detailMinSide, !knockout, !pose.asleep, pose.eyes != .closed, pose.coffee ?? coffeeHours(Date()) {
+            let cup = NSRect(x: center.x - s * 0.5, y: center.y - s * 0.36, width: s * 0.15, height: s * 0.17)
+            let handle = NSBezierPath(ovalIn: NSRect(x: cup.minX - s * 0.06, y: cup.midY - s * 0.045, width: s * 0.09, height: s * 0.09))
+            handle.lineWidth = s * 0.025
+            OpusTheme.cream.setStroke()
+            handle.stroke()
+            OpusTheme.cream.setFill()
+            NSBezierPath(roundedRect: cup, xRadius: s * 0.02, yRadius: s * 0.02).fill()
+            OpusTheme.coffee.setFill()
+            NSRect(x: cup.minX + s * 0.015, y: cup.maxY - s * 0.04, width: cup.width - s * 0.03, height: s * 0.025).fill()
+            color.setFill()
+        }
 
         // Hat, on the body and under the face's features.
         if let hat = pose.hat ?? seasonalHat(Date(), asleep: pose.asleep) {
@@ -374,7 +437,30 @@ enum ClaudeAvatar {
         let eyeY = center.y + s * (0.02 + pose.lift)
         for side in [-1.0, 1.0] as [CGFloat] {
             let eyeX = center.x + side * s * 0.11 + pose.glance * s
-            switch pose.wink && side > 0 ? Eyes.happy : pose.eyes {
+            let shaded = (pose.shades ?? weekend(Date())) && [.open, .tired, .wide].contains(pose.eyes)
+            switch shaded ? Eyes.closed : (pose.wink && side > 0 ? Eyes.happy : pose.eyes) {
+            case _ where shaded:
+                // Weekend: a pair of dark glasses, a lens over each eye.
+                let lens = NSRect(x: eyeX - s * 0.085, y: eyeY - s * 0.06, width: s * 0.17, height: s * 0.11)
+                NSBezierPath(roundedRect: lens, xRadius: s * 0.04, yRadius: s * 0.04).fill()
+                if side < 0 {
+                    let bridge = NSBezierPath()
+                    bridge.lineWidth = max(0.6, s * 0.025)
+                    bridge.move(to: NSPoint(x: eyeX + s * 0.08, y: eyeY + s * 0.02))
+                    bridge.line(to: NSPoint(x: eyeX + s * 0.14, y: eyeY + s * 0.02))
+                    bridge.stroke()
+                }
+            case .hearts:
+                let r = s * 0.045
+                let heart = NSBezierPath()
+                heart.move(to: NSPoint(x: eyeX, y: eyeY - r * 1.3))
+                heart.curve(to: NSPoint(x: eyeX, y: eyeY + r * 0.5),
+                            controlPoint1: NSPoint(x: eyeX - r * 2.2, y: eyeY), controlPoint2: NSPoint(x: eyeX - r, y: eyeY + r * 1.6))
+                heart.curve(to: NSPoint(x: eyeX, y: eyeY - r * 1.3),
+                            controlPoint1: NSPoint(x: eyeX + r, y: eyeY + r * 1.6), controlPoint2: NSPoint(x: eyeX + r * 2.2, y: eyeY))
+                if !knockout { OpusTheme.santa.setFill() }
+                heart.fill()
+                OpusTheme.caretText.set()
             case .wide:
                 let w = max(1.3, s * 0.1), h = max(2, s * 0.17)
                 NSBezierPath(ovalIn: NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)).fill()
@@ -556,8 +642,27 @@ enum ClaudeAvatar {
         case .nightcap: fill = OpusTheme.nightcap; trim = OpusTheme.cream
         case .santa: fill = OpusTheme.santa; trim = OpusTheme.cream
         case .party: fill = OpusTheme.amber; trim = OpusTheme.red
+        case .witch: fill = OpusTheme.witch; trim = OpusTheme.amber
         }
         (knockout ? NSColor.black : fill).setFill()
+        if hat == .witch {
+            // A wide brim along the base and an amber band above it.
+            let brim = NSBezierPath()
+            brim.lineWidth = s * 0.06
+            brim.lineCapStyle = .round
+            brim.move(to: at(-half * 1.7, 0))
+            brim.line(to: at(half * 1.7, 0))
+            (knockout ? NSColor.black : fill).setStroke()
+            brim.stroke()
+            cone.fill()
+            let band = NSBezierPath()
+            band.lineWidth = s * 0.03
+            band.move(to: at(-half * 0.85, height * 0.12))
+            band.line(to: at(half * 0.85, height * 0.12))
+            (knockout ? NSColor.black : trim).setStroke()
+            band.stroke()
+            return
+        }
         cone.fill()
         if hat == .santa {
             let band = NSBezierPath()

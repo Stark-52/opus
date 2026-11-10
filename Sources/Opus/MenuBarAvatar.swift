@@ -24,6 +24,14 @@ final class MenuBarAvatar {
     private var weekPercent: Double?
     /// How many tabs wait for an answer; from two up, the count shows.
     private var waiting = 0
+    /// Turns finished today (counted when the strongest state goes from
+    /// working to done); every tenth celebration gets heart eyes.
+    private var finished: (day: Int, count: Int) = (0, 0)
+    private var heartsThisTime = false
+
+    static func hearts(afterFinishing count: Int) -> Bool {
+        count > 0 && count % 10 == 0
+    }
     private var celebrationStart: Double?
     private var timer: Timer?
     private let clickTarget = ClickTarget()
@@ -136,7 +144,12 @@ final class MenuBarAvatar {
             render()
         }
         guard next != activity else { return }
-        if activity == .working, next == .done, !reduceMotion { celebrationStart = now }
+        if activity == .working, next == .done {
+            let day = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+            finished = finished.day == day ? (day, finished.count + 1) : (day, 1)
+            heartsThisTime = Self.hearts(afterFinishing: finished.count)
+            if !reduceMotion { celebrationStart = now }
+        }
         if next != .done { celebrationStart = nil }
         activity = next
         render()
@@ -171,6 +184,7 @@ final class MenuBarAvatar {
         if let color = OpusTheme.activityColor(activity),
            let pose = celebration ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: reduceMotion) {
             var shown = ClaudeAvatar.tired(pose, weekPercent: weekPercent)
+            if celebration != nil, heartsThisTime { shown.eyes = .hearts }
             if !reduceMotion {
                 shown = ClaudeAvatar.lateNight(shown, hour: Calendar.current.component(.hour, from: Date()), time: now)
             }
@@ -185,7 +199,9 @@ final class MenuBarAvatar {
         // set when they change, so the status item is not laid out again.
         let badge = Self.badge(waiting)
         if button.title != badge { button.title = badge }
-        let tip = Self.toolTip(activity, weekPercent: weekPercent, waiting: waiting)
+        let today = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+        let tip = Self.toolTip(activity, weekPercent: weekPercent, waiting: waiting,
+                               finished: finished.day == today ? finished.count : 0)
         if button.toolTip != tip {
             button.toolTip = tip
             button.setAccessibilityLabel(tip)
@@ -197,7 +213,13 @@ final class MenuBarAvatar {
         waiting >= 2 ? "\(waiting)" : ""
     }
 
-    static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil, waiting: Int = 0) -> String {
+    static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil, waiting: Int = 0, finished: Int = 0) -> String {
+        let base = stateToolTip(activity, weekPercent: weekPercent, waiting: waiting)
+        guard finished > 0 else { return base }
+        return base + "\n" + (finished == 1 ? "1 tâche finie aujourd'hui" : "\(finished) tâches finies aujourd'hui")
+    }
+
+    private static func stateToolTip(_ activity: PaneActivity, weekPercent: Double?, waiting: Int) -> String {
         let state: String
         switch activity {
         case .idle: state = "Claude se repose"
