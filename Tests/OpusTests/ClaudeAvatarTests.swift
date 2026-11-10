@@ -1,0 +1,50 @@
+import XCTest
+@testable import Opus
+
+final class ClaudeAvatarTests: XCTestCase {
+    func testIdleDrawsNothingLikeTheDotDid() {
+        XCTAssertNil(ClaudeAvatar.pose(.idle, time: 1))
+        XCTAssertNil(OpusTheme.activityColor(.idle))
+    }
+
+    func testOnlyWorkingAndWaitingMove() {
+        XCTAssertTrue(ClaudeAvatar.isAnimated(.working, reduceMotion: false))
+        XCTAssertTrue(ClaudeAvatar.isAnimated(.needsInput, reduceMotion: false))
+        XCTAssertFalse(ClaudeAvatar.isAnimated(.done, reduceMotion: false))
+        XCTAssertFalse(ClaudeAvatar.isAnimated(.idle, reduceMotion: false))
+        XCTAssertFalse(ClaudeAvatar.isAnimated(.working, reduceMotion: true))
+    }
+
+    func testWorkingTurnsItsRays() {
+        let a = ClaudeAvatar.pose(.working, time: 0.5)!
+        let b = ClaudeAvatar.pose(.working, time: 1.0)!
+        XCTAssertNotEqual(a.rotation, b.rotation)
+        XCTAssertEqual(a.hop, 0)
+    }
+
+    func testWaitingHopsAndStaysInsideItsSquare() {
+        let hops = stride(from: 0.0, to: 3.0, by: 0.01).map { ClaudeAvatar.pose(.needsInput, time: $0)!.hop }
+        XCTAssertGreaterThan(hops.max()!, 0.1)
+        XCTAssertGreaterThanOrEqual(hops.min()!, 0)
+        // Rays reach 0.48 of the side from the center: a hop of 0.12 keeps
+        // the avatar within a 24 pt tab at 16 pt.
+        XCTAssertLessThanOrEqual(hops.max()!, 0.12)
+    }
+
+    func testDoneSmilesAndHoldsStill() {
+        XCTAssertEqual(ClaudeAvatar.pose(.done, time: 7), ClaudeAvatar.Pose(eyes: .happy))
+    }
+
+    func testReduceMotionHoldsTheRestingPose() {
+        XCTAssertEqual(ClaudeAvatar.pose(.working, time: 5, reduceMotion: true),
+                       ClaudeAvatar.pose(.working, time: 0))
+        XCTAssertEqual(ClaudeAvatar.pose(.needsInput, time: 0)?.eyes, .open)
+    }
+
+    func testBlinksBrieflyOncePerPeriod() {
+        XCTAssertFalse(ClaudeAvatar.blinking(0, every: 3.6))
+        XCTAssertFalse(ClaudeAvatar.blinking(1, every: 3.6))
+        XCTAssertTrue(ClaudeAvatar.blinking(3.55, every: 3.6))
+        XCTAssertFalse(ClaudeAvatar.blinking(3.65, every: 3.6))
+    }
+}

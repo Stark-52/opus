@@ -1,6 +1,6 @@
 // ChromeTabStrip: the window's tabs, compact and aligned left like Safari's:
-// each as wide as its title within a floor and a ceiling, the activity dot
-// before the title, a "+" after the last. Shown with a single tab too, whose
+// each as wide as its title within a floor and a ceiling, the Claude avatar
+// (ClaudeAvatar) before the title, a "+" after the last. Shown with a single tab too, whose
 // title then reads as the window's.
 
 import AppKit
@@ -10,8 +10,8 @@ final class ChromeTabStrip: NSView {
     static let maxTabWidth: CGFloat = 220
     static let tabGap: CGFloat = 4
     static let plusWidth: CGFloat = 24
-    /// Dot, its gap, and the horizontal padding around the title.
-    private static let tabChrome: CGFloat = OpusTheme.dotSize + 6 + 2 * 10
+    /// Avatar, its gap, and the horizontal padding around the title.
+    private static let tabChrome: CGFloat = ClaudeAvatar.tabSize + 5 + 2 * 10
     static let titleFont = NSFont.systemFont(ofSize: 11.5)
 
     var titles: [String] = [] {
@@ -21,8 +21,14 @@ final class ChromeTabStrip: NSView {
             invalidateIntrinsicContentSize()
         }
     }
-    /// One per tab, same index space as `titles`; missing entries draw no dot.
-    var states: [PaneActivity] = [] { didSet { needsDisplay = true } }
+    /// One per tab, same index space as `titles`; missing entries draw no avatar.
+    var states: [PaneActivity] = [] {
+        didSet {
+            needsDisplay = true
+            updateAnimation()
+        }
+    }
+    private var animationTimer: Timer?
     var activeIndex = 0 {
         didSet {
             needsDisplay = true
@@ -127,6 +133,30 @@ final class ChromeTabStrip: NSView {
                        available: bounds.width, height: bounds.height)
     }
 
+    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var now: Double { ProcessInfo.processInfo.systemUptime }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAnimation()
+    }
+
+    /// Keeps a redraw timer only while a tab's avatar moves and the strip
+    /// is in a window; a hidden window skips the frames.
+    private func updateAnimation() {
+        let moving = window != nil && states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) }
+        guard moving != (animationTimer != nil) else { return }
+        animationTimer?.invalidate()
+        animationTimer = nil
+        guard moving else { return }
+        let timer = Timer(timeInterval: 1 / ClaudeAvatar.framesPerSecond, repeats: true) { [weak self] _ in
+            guard let self, let window = self.window, window.occlusionState.contains(.visible) else { return }
+            self.needsDisplay = true
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        animationTimer = timer
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         let (tabs, plus) = layoutRects()
         NSGraphicsContext.saveGraphicsState()
@@ -137,14 +167,14 @@ final class ChromeTabStrip: NSView {
                 (isActive ? OpusTheme.cream(0.09) : OpusTheme.cream(0.05)).setFill()
                 NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
             }
-            var textX = rect.minX + 10
-            if index < states.count, let dotColor = OpusTheme.activityColor(states[index]) {
-                let dot = NSRect(x: textX, y: rect.midY - OpusTheme.dotSize / 2,
-                                 width: OpusTheme.dotSize, height: OpusTheme.dotSize)
-                dotColor.setFill()
-                NSBezierPath(ovalIn: dot).fill()
+            var textX = rect.minX + 8
+            if index < states.count, let color = OpusTheme.activityColor(states[index]),
+               let pose = ClaudeAvatar.pose(states[index], time: now, reduceMotion: reduceMotion) {
+                let size = ClaudeAvatar.tabSize
+                ClaudeAvatar.draw(pose, color: color,
+                                  in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
             }
-            textX += OpusTheme.dotSize + 6
+            textX += ClaudeAvatar.tabSize + 5
             let para = NSMutableParagraphStyle()
             para.lineBreakMode = .byTruncatingTail
             let attrs: [NSAttributedString.Key: Any] = [

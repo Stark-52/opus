@@ -33,7 +33,7 @@ final class ClaudeAttention {
 
     private init() {
         postSystemSignals = { [weak self] title in
-            NSApp.dockTile.badgeLabel = "●"
+            DockAvatar.shared.show()
             NSApp.requestUserAttention(.informationalRequest)   // Dock bounce, once
             self?.postNotification(title: title)
         }
@@ -49,7 +49,7 @@ final class ClaudeAttention {
     }
 
     func clear() {
-        NSApp.dockTile.badgeLabel = nil
+        DockAvatar.shared.hide()
     }
 
     /// Constant so a fresh signal REPLACES any still-showing banner instead
@@ -74,5 +74,48 @@ final class ClaudeAttention {
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             if granted { DispatchQueue.main.async(execute: fire) }
         }
+    }
+}
+
+/// The Dock tile while Claude waits for the user: the app icon with the
+/// avatar hopping in its corner, where a "●" badge used to sit.
+final class DockAvatar {
+    static let shared = DockAvatar()
+    private var shown = false
+    private var timer: Timer?
+
+    func show() {
+        guard !shown else { return }
+        shown = true
+        let tile = NSApp.dockTile
+        tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size))
+        tile.display()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { _ in NSApp.dockTile.display() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func hide() {
+        timer?.invalidate()
+        timer = nil
+        guard shown else { return }
+        shown = false
+        NSApp.dockTile.contentView = nil
+        NSApp.dockTile.display()
+    }
+}
+
+private final class DockAvatarView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSApp.applicationIconImage?.draw(in: bounds)
+        guard let pose = ClaudeAvatar.pose(.needsInput, time: ProcessInfo.processInfo.systemUptime,
+                                           reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        else { return }
+        let side = bounds.width * 0.46
+        let spot = NSRect(x: bounds.maxX - side, y: bounds.minY + bounds.height * 0.02, width: side, height: side)
+        OpusTheme.panelBackground.setFill()
+        NSBezierPath(ovalIn: spot.insetBy(dx: side * 0.04, dy: side * 0.04)).fill()
+        ClaudeAvatar.draw(pose, color: OpusTheme.red, in: spot.insetBy(dx: side * 0.1, dy: side * 0.1))
     }
 }
