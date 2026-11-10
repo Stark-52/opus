@@ -111,6 +111,12 @@ final class DockAvatar {
         self.timer = timer
     }
 
+    /// The tabs changed state: a tile already up follows them, since the
+    /// bell can ring before the hook that says Claude has finished.
+    func follow() {
+        if shown != nil { show() }
+    }
+
     func hide() {
         timer?.invalidate()
         timer = nil

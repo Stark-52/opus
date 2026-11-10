@@ -105,6 +105,7 @@ final class MenuBarAvatar {
         activity = next
         render()
         updateTimer()
+        DockAvatar.shared.follow()
     }
 
     private func updateTimer() {
