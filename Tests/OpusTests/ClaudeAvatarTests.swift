@@ -109,3 +109,19 @@ final class ClaudeAvatarTiredTests: XCTestCase {
         XCTAssertEqual(MenuBarAvatar.toolTip(.needsInput, weekPercent: 98.6), "Claude attend ta réponse\nsemaine 99\u{00A0}%")
     }
 }
+
+final class ClaudeAvatarGestureTests: XCTestCase {
+    func testWaitingWavesAndAsks() {
+        let waves = stride(from: 0.0, to: 2.0, by: 0.05).compactMap { ClaudeAvatar.pose(.needsInput, time: $0)?.wave }
+        XCTAssertGreaterThan(waves.max()!, 0.3)
+        XCTAssertLessThan(waves.min()!, -0.3)
+        XCTAssertTrue(ClaudeAvatar.pose(.needsInput, time: 1)!.asks)
+        XCTAssertFalse(ClaudeAvatar.pose(.working, time: 1)!.asks)
+    }
+
+    func testWorkingLooksUpToThinkNowAndThen() {
+        XCTAssertEqual(ClaudeAvatar.pose(.working, time: 1)!.lift, 0)
+        XCTAssertGreaterThan(ClaudeAvatar.pose(.working, time: 5)!.lift, 0)
+        XCTAssertEqual(ClaudeAvatar.pose(.working, time: 5, reduceMotion: true)!.lift, 0)
+    }
+}

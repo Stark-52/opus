@@ -43,7 +43,16 @@ enum ClaudeAvatar {
         var snore: CGFloat?
         /// A drop of sweat on the brow, after a long stretch of work.
         var sweat = false
+        /// Upward look of the eyes, as when thinking.
+        var lift: CGFloat = 0
+        /// Angle added to the top right ray: a hand that waves.
+        var wave: CGFloat = 0
+        /// A "?" bubble beside the head, drawn only where it can be read.
+        var asks = false
     }
+
+    /// Smallest side at which the "?" bubble is drawn.
+    static let bubbleMinSide: CGFloat = 30
 
     /// How long Claude works before the drop of sweat shows.
     static let sweatAfter: TimeInterval = 5 * 60
@@ -63,14 +72,19 @@ enum ClaudeAvatar {
         case .done:
             return Pose(eyes: .happy)
         case .working:
+            // Every six seconds, a second and a half looking up to the right.
+            let thinking = t.truncatingRemainder(dividingBy: 6) > 4.5
             return Pose(rotation: CGFloat(t * 1.8),
-                        glance: CGFloat(sin(t * 2.2)) * 0.05,
+                        glance: thinking ? 0.05 : CGFloat(sin(t * 2.2)) * 0.05,
                         rayPulse: CGFloat(sin(t * 6)) * 0.03,
-                        eyes: blinking(t, every: 3.6) ? .closed : .open)
+                        eyes: blinking(t, every: 3.6) ? .closed : .open,
+                        lift: thinking ? 0.05 : 0)
         case .needsInput:
             return Pose(rotation: CGFloat(sin(t * 5)) * 0.15,
                         hop: CGFloat(max(0, sin(t * 5))) * 0.12,
-                        eyes: blinking(t, every: 2.8) ? .closed : .open)
+                        eyes: blinking(t, every: 2.8) ? .closed : .open,
+                        wave: CGFloat(sin(t * 10)) * 0.45,
+                        asks: true)
         }
     }
 
@@ -125,7 +139,8 @@ enum ClaudeAvatar {
         rays.lineWidth = max(1, s * 0.09)
         rays.lineCapStyle = .round
         for index in 0..<rayCount {
-            let angle = pose.rotation + CGFloat(index) * .pi * 2 / CGFloat(rayCount)
+            // Ray 1 points up and to the right: the waving hand.
+            let angle = pose.rotation + CGFloat(index) * .pi * 2 / CGFloat(rayCount) + (index == 1 ? pose.wave : 0)
             let pulse = index.isMultiple(of: 2) ? pose.rayPulse : -pose.rayPulse
             let inner = s * 0.36
             let outer = s * (0.48 + pulse)
@@ -144,7 +159,7 @@ enum ClaudeAvatar {
         NSGraphicsContext.saveGraphicsState()
         if knockout { NSGraphicsContext.current?.compositingOperation = .destinationOut }
         OpusTheme.caretText.set()
-        let eyeY = center.y + s * 0.02
+        let eyeY = center.y + s * (0.02 + pose.lift)
         for side in [-1.0, 1.0] as [CGFloat] {
             let eyeX = center.x + side * s * 0.11 + pose.glance * s
             switch pose.eyes {
@@ -193,6 +208,24 @@ enum ClaudeAvatar {
         }
 
         NSGraphicsContext.restoreGraphicsState()
+
+        // A "?" in a small cream bubble, up and to the right of the head.
+        if pose.asks, s >= bubbleMinSide, !knockout {
+            let r = s * 0.15
+            let bubble = NSPoint(x: center.x + s * 0.42, y: center.y + s * 0.4)
+            OpusTheme.cream.setFill()
+            NSBezierPath(ovalIn: NSRect(x: bubble.x - r, y: bubble.y - r, width: r * 2, height: r * 2)).fill()
+            let tail = NSBezierPath()
+            tail.move(to: NSPoint(x: bubble.x - r * 0.7, y: bubble.y - r * 0.5))
+            tail.line(to: NSPoint(x: bubble.x - r * 1.3, y: bubble.y - r * 1.3))
+            tail.line(to: NSPoint(x: bubble.x - r * 0.2, y: bubble.y - r * 0.9))
+            tail.fill()
+            let font = NSFont.systemFont(ofSize: r * 1.5, weight: .heavy)
+            let mark = "?" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: OpusTheme.caretText]
+            let size = mark.size(withAttributes: attrs)
+            mark.draw(at: NSPoint(x: bubble.x - size.width / 2, y: bubble.y - size.height / 2), withAttributes: attrs)
+        }
 
         // Sweat: a drop on the right edge of the face, point up.
         if pose.sweat {
