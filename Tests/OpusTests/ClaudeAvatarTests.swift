@@ -220,3 +220,12 @@ final class ClaudeAvatarInkTests: XCTestCase {
         }
     }
 }
+
+final class ClaudeAvatarPNGTests: XCTestCase {
+    func testWaitingThumbnailIsAPNG() {
+        let data = ClaudeAvatar.pngData(ClaudeAvatar.pose(.needsInput, time: 0.3)!, color: OpusTheme.red, size: 256)
+        XCTAssertNotNil(data)
+        XCTAssertEqual(Array(data!.prefix(4)), [0x89, 0x50, 0x4E, 0x47])
+        XCTAssertNotNil(NSImage(data: data!))
+    }
+}

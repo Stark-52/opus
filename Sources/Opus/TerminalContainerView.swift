@@ -2518,7 +2518,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         subtitle.textColor = OpusTheme.cream(0.65)
         subtitle.alignment = .center
 
-        let restartBtn = NSButton(
+        let restartBtn = HoverButton(
             title: "Start new session",
             target: self,
             action: isShared ? #selector(restartSharedFromOverlay(_:))
@@ -2540,6 +2540,17 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         sleeper.translatesAutoresizingMaskIntoConstraints = false
         sleeper.widthAnchor.constraint(equalToConstant: 72).isActive = true
         sleeper.heightAnchor.constraint(equalToConstant: 72).isActive = true
+        // Pointing at "Start new session" wakes it: eyes open, a hop and a wave.
+        restartBtn.onHover = { [weak sleeper] inside in
+            sleeper?.color = OpusTheme.cream(inside ? 0.95 : 0.75)
+            sleeper?.pose = inside
+                ? { time in
+                    var ready = ClaudeAvatar.pose(.needsInput, time: time)
+                    ready?.asks = false
+                    return ready
+                }
+                : { ClaudeAvatar.sleeping(time: $0) }
+        }
 
         // Stack vertically — robust on any pane size (no overflow, no clipping).
         let stack = NSStackView(views: [sleeper, title, subtitle, restartBtn, closeBtn])

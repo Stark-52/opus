@@ -448,6 +448,48 @@ enum ClaudeAvatar {
     }
 }
 
+extension ClaudeAvatar {
+    /// The avatar as PNG bytes, `size` pixels square on a clear ground, fitted
+    /// so no pose is cut (a notification's thumbnail).
+    static func pngData(_ pose: Pose, color: NSColor, size: Int) -> Data? {
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        draw(pose, color: color, in: fittedRect(in: NSRect(x: 0, y: 0, width: size, height: size)))
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])
+    }
+}
+
+/// A button that says when the pointer enters and leaves it, so something
+/// beside it can react (the ended session's sleeper wakes up).
+final class HoverButton: NSButton {
+    var onHover: ((Bool) -> Void)?
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onHover?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHover?(false)
+    }
+}
+
 /// An avatar that animates itself, for surfaces with room for one. The
 /// avatar takes the lower part of the view and leaves the top for the "z"s.
 final class ClaudeAvatarView: NSView {

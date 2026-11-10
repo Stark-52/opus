@@ -56,6 +56,16 @@ final class ClaudeAttention {
     /// of stacking one notification per bell over a long session.
     private static let notificationIdentifier = "opus.claude.attention"
 
+    /// The waiting avatar, "?" bubble and all, as the banner's thumbnail.
+    /// Written to a fresh file each time: the notification center moves it.
+    private static func avatarAttachment() -> UNNotificationAttachment? {
+        guard let pose = ClaudeAvatar.pose(.needsInput, time: 0.3),
+              let png = ClaudeAvatar.pngData(pose, color: OpusTheme.red, size: 256) else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("opus-avatar-\(UUID().uuidString).png")
+        guard (try? png.write(to: url)) != nil else { return nil }
+        return try? UNNotificationAttachment(identifier: "claude-avatar", url: url, options: nil)
+    }
+
     private func postNotification(title: String) {
         // UNUserNotificationCenter requires a real bundle; badge + Dock
         // bounce (postSystemSignals' other side effects) stay alive without one.
@@ -65,6 +75,7 @@ final class ClaudeAttention {
             let content = UNMutableNotificationContent()
             content.title = "Claude needs you"
             content.body = title.isEmpty ? "The session is waiting." : title
+            if let attachment = Self.avatarAttachment() { content.attachments = [attachment] }
             let req = UNNotificationRequest(
                 identifier: Self.notificationIdentifier, content: content, trigger: nil)
             center.add(req, withCompletionHandler: nil)
