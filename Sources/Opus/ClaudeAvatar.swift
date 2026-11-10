@@ -177,6 +177,19 @@ enum ClaudeAvatar {
                     hat: .party)
     }
 
+    /// How long getting up to work lasts.
+    static let gettingUpLength: Double = 0.6
+
+    /// Getting up to work: a stretch upward with a quick yawn, eyes opening
+    /// halfway through. nil once it is over.
+    static func gettingUp(elapsed e: Double) -> Pose? {
+        guard e >= 0, e < gettingUpLength else { return nil }
+        let arc = CGFloat(sin(.pi * e / gettingUpLength))
+        return Pose(eyes: e < 0.25 ? .closed : .open,
+                    yawn: e < 0.4 ? CGFloat(sin(.pi * e / 0.4)) : 0,
+                    squash: -0.12 * arc)
+    }
+
     /// Waiting for you outranks working, which outranks done.
     static func strongest(_ states: [PaneActivity]) -> PaneActivity {
         if states.contains(.needsInput) { return .needsInput }

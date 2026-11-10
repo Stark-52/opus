@@ -27,6 +27,7 @@ final class ChromeTabStrip: NSView {
             if oldValue.count != states.count {
                 celebrations.removeAll()
                 fades.removeAll()
+                startsToWork.removeAll()
                 // Tabs mostly come and go at the end: a tab still in the same
                 // state at the same index keeps its clock.
                 let old = stateSince
@@ -52,6 +53,10 @@ final class ChromeTabStrip: NSView {
                     for index in states.indices where oldValue[index] == .working && states[index] == .done {
                         celebrations[index] = now
                     }
+                    for index in states.indices
+                    where states[index] == .working && (oldValue[index] == .idle || oldValue[index] == .done) {
+                        startsToWork[index] = now
+                    }
                 }
             }
             needsDisplay = true
@@ -63,6 +68,8 @@ final class ChromeTabStrip: NSView {
     var weekPercent: Double? { didSet { if weekPercent != oldValue { needsDisplay = true } } }
     /// When each tab entered its current state, same index space as `states`.
     private var stateSince: [Date] = []
+    /// When each tab got up to work (from resting or done), by tab index.
+    private var startsToWork: [Int: Double] = [:]
     /// When each tab's burst of joy started, by tab index.
     private var celebrations: [Int: Double] = [:]
     /// The cursor's x while it is over the strip: every avatar looks at it.
@@ -243,6 +250,8 @@ final class ChromeTabStrip: NSView {
             guard let self else { return }
             let over = self.celebrations.filter { self.now - $0.value >= ClaudeAvatar.celebrationLength }
             let faded = self.fades.filter { self.now - $0.value.start >= Self.fadeLength }
+            let up = self.startsToWork.filter { self.now - $0.value >= ClaudeAvatar.gettingUpLength }
+            up.keys.forEach { self.startsToWork.removeValue(forKey: $0) }
             if !over.isEmpty || !faded.isEmpty {
                 over.keys.forEach { self.celebrations.removeValue(forKey: $0) }
                 faded.keys.forEach { self.fades.removeValue(forKey: $0) }
@@ -286,6 +295,7 @@ final class ChromeTabStrip: NSView {
                                   in: spot)
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
                var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
+                   ?? startsToWork[index].flatMap({ ClaudeAvatar.gettingUp(elapsed: now - $0) })
                    ?? ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion) {
                 let size = ClaudeAvatar.tabSize
                 let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)

@@ -256,3 +256,15 @@ final class ClaudeAvatarWeekTests: XCTestCase {
         XCTAssertFalse(ClaudeAvatar.weekReset(from: nil, to: 2))
     }
 }
+
+final class ClaudeAvatarGettingUpTests: XCTestCase {
+    func testStretchesYawnsAndOpensItsEyes() {
+        XCTAssertEqual(ClaudeAvatar.gettingUp(elapsed: 0.1)?.eyes, .closed)
+        XCTAssertEqual(ClaudeAvatar.gettingUp(elapsed: 0.4)?.eyes, .open)
+        XCTAssertGreaterThan(ClaudeAvatar.gettingUp(elapsed: 0.2)!.yawn, 0.8)
+        XCTAssertLessThan(ClaudeAvatar.gettingUp(elapsed: 0.3)!.squash, -0.1)
+        XCTAssertNil(ClaudeAvatar.gettingUp(elapsed: ClaudeAvatar.gettingUpLength))
+        let squashes = stride(from: 0.0, to: ClaudeAvatar.gettingUpLength, by: 0.01).compactMap { ClaudeAvatar.gettingUp(elapsed: $0)?.squash }
+        XCTAssertGreaterThanOrEqual(squashes.min()!, -0.12)
+    }
+}
