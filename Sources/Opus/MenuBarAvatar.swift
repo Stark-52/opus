@@ -141,6 +141,7 @@ final class MenuBarAvatar {
             button.image = image
         }
         button.toolTip = Self.toolTip(activity, weekPercent: weekPercent)
+        button.setAccessibilityLabel(button.toolTip)
     }
 
     static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil) -> String {

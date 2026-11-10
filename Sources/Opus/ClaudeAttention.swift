@@ -77,20 +77,27 @@ final class ClaudeAttention {
     }
 }
 
-/// The Dock tile while Claude waits for the user: the app icon with the
-/// avatar hopping in its corner, where a "●" badge used to sit.
+/// The Dock tile while a bell is pending: the app icon with the avatar in
+/// its corner, where a "●" badge used to sit. The bell rings both when
+/// Claude needs an answer and when it has finished, so the avatar takes the
+/// state the tabs report (MenuBarAvatar): red and hopping, or green and
+/// smiling; red when the tabs say neither.
 final class DockAvatar {
     static let shared = DockAvatar()
-    private var shown = false
+    /// What the tile shows; nil when it is the plain icon.
+    private var shown: PaneActivity?
     private var timer: Timer?
 
     func show() {
-        guard !shown else { return }
-        shown = true
+        let activity: PaneActivity = MenuBarAvatar.shared.activity == .done ? .done : .needsInput
+        guard shown != activity else { return }
+        timer?.invalidate()
+        timer = nil
+        shown = activity
         let tile = NSApp.dockTile
-        tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size))
+        tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size), activity: activity)
         tile.display()
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        guard activity == .needsInput, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         // Every Dock frame crosses to the Dock process: a slow rate, and a
         // minute of hopping before the tile rests on its last frame.
         let start = ProcessInfo.processInfo.systemUptime
@@ -107,23 +114,32 @@ final class DockAvatar {
     func hide() {
         timer?.invalidate()
         timer = nil
-        guard shown else { return }
-        shown = false
+        guard shown != nil else { return }
+        shown = nil
         NSApp.dockTile.contentView = nil
         NSApp.dockTile.display()
     }
 }
 
 private final class DockAvatarView: NSView {
+    private let activity: PaneActivity
+
+    init(frame: NSRect, activity: PaneActivity) {
+        self.activity = activity
+        super.init(frame: frame)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
     override func draw(_ dirtyRect: NSRect) {
         NSApp.applicationIconImage?.draw(in: bounds)
-        guard let pose = ClaudeAvatar.pose(.needsInput, time: ProcessInfo.processInfo.systemUptime,
+        guard let color = OpusTheme.activityColor(activity),
+              let pose = ClaudeAvatar.pose(activity, time: ProcessInfo.processInfo.systemUptime,
                                            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         else { return }
         let side = bounds.width * 0.46
         let spot = NSRect(x: bounds.maxX - side, y: bounds.minY + bounds.height * 0.02, width: side, height: side)
         OpusTheme.panelBackground.setFill()
         NSBezierPath(ovalIn: spot.insetBy(dx: side * 0.04, dy: side * 0.04)).fill()
-        ClaudeAvatar.draw(pose, color: OpusTheme.red, in: spot.insetBy(dx: side * 0.1, dy: side * 0.1))
+        ClaudeAvatar.draw(pose, color: color, in: spot.insetBy(dx: side * 0.1, dy: side * 0.1))
     }
 }
