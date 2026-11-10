@@ -46,14 +46,22 @@ final class MenuBarAvatar {
 
     /// A click shows the tab that waits for you, else the one that just
     /// finished; with neither it calls `onClick` (show or hide Opus).
-    func install(onClick: @escaping () -> Void, reveal: @escaping () -> Void) {
+    /// `autosave` off keeps the item's position and visibility out of the
+    /// defaults Opus shares, for a preview beside a running Opus.
+    func install(onClick: @escaping () -> Void, reveal: @escaping () -> Void, autosave: Bool = true) {
         guard item == nil else { return }
         self.reveal = reveal
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.autosaveName = "OpusClaudeAvatar"
+        if autosave { item.autosaveName = "OpusClaudeAvatar" }
         item.behavior = .removalAllowed
         clickTarget.action = { [weak self] in
             self?.refresh()
+            // Boop: a click makes it spin, whatever it does next.
+            if let self, !self.reduceMotion {
+                self.celebrationStart = self.now
+                self.render()
+                self.updateTimer()
+            }
             guard let self, let (report, index) = self.tabToShow() else { return onClick() }
             self.reveal()
             report.focus(index)

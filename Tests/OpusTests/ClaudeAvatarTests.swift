@@ -144,3 +144,23 @@ final class ClaudeAvatarLateNightTests: XCTestCase {
         XCTAssertEqual(ClaudeAvatar.lateNight(ClaudeAvatar.Pose(eyes: .happy), hour: 23, time: 11.25).yawn, 0)
     }
 }
+
+final class ClaudeAvatarCartoonTests: XCTestCase {
+    func testSquashStaysGentleAndRestsAtZero() {
+        let squashes = stride(from: 0.0, to: 3.0, by: 0.01).compactMap { ClaudeAvatar.pose(.needsInput, time: $0)?.squash }
+        XCTAssertLessThanOrEqual(squashes.map(abs).max()!, 0.12)
+        XCTAssertGreaterThan(squashes.max()!, 0.1)      // crouches
+        XCTAssertLessThan(squashes.min()!, -0.03)       // stretches
+        XCTAssertEqual(ClaudeAvatar.pose(.needsInput, time: 0)?.squash, 0)
+    }
+
+    func testCelebrationThrowsConfettiOnce() {
+        XCTAssertEqual(ClaudeAvatar.celebrating(elapsed: 0)?.confetti, 0)
+        XCTAssertEqual(Double(ClaudeAvatar.celebrating(elapsed: 0.7)!.confetti!), 0.5, accuracy: 0.01)
+        XCTAssertNil(ClaudeAvatar.pose(.done, time: 1)?.confetti)
+    }
+
+    func testLateNightYawnSurvivesABlink() {
+        XCTAssertGreaterThan(ClaudeAvatar.lateNight(ClaudeAvatar.Pose(eyes: .closed), hour: 23, time: 11.25).yawn, 0.9)
+    }
+}

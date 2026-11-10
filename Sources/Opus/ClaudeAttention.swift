@@ -99,13 +99,16 @@ final class DockAvatar {
         let tile = NSApp.dockTile
         tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size), activity: activity)
         tile.display()
-        guard activity == .needsInput, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        // Every Dock frame crosses to the Dock process: a slow rate, and a
-        // minute of hopping before the tile rests on its last frame.
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        // Every Dock frame crosses to the Dock process: a minute of slow
+        // hopping when Claude waits, one quick burst of confetti when it has
+        // finished, then the tile rests on its last frame.
         let start = ProcessInfo.processInfo.systemUptime
-        let timer = Timer(timeInterval: 1.0 / 6, repeats: true) { [weak self] timer in
+        let finished = activity == .done
+        let length = finished ? ClaudeAvatar.celebrationLength + 0.2 : 60
+        let timer = Timer(timeInterval: finished ? 1.0 / 15 : 1.0 / 6, repeats: true) { [weak self] timer in
             NSApp.dockTile.display()
-            guard ProcessInfo.processInfo.systemUptime - start > 60 else { return }
+            guard ProcessInfo.processInfo.systemUptime - start > length else { return }
             timer.invalidate()
             self?.timer = nil
         }
@@ -138,6 +141,8 @@ final class DockAvatar {
 
 private final class DockAvatarView: NSView {
     private let activity: PaneActivity
+    /// When the tile went up: a done tile celebrates from there.
+    private let shownAt = ProcessInfo.processInfo.systemUptime
 
     init(frame: NSRect, activity: PaneActivity) {
         self.activity = activity
@@ -147,14 +152,16 @@ private final class DockAvatarView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSApp.applicationIconImage?.draw(in: bounds)
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let now = ProcessInfo.processInfo.systemUptime
+        let party = activity == .done && !still ? ClaudeAvatar.celebrating(elapsed: now - shownAt) : nil
         guard let color = OpusTheme.activityColor(activity),
-              let pose = ClaudeAvatar.pose(activity, time: ProcessInfo.processInfo.systemUptime,
-                                           reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+              let pose = party ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: still)
         else { return }
         let side = bounds.width * 0.46
         let spot = NSRect(x: bounds.maxX - side, y: bounds.minY + bounds.height * 0.02, width: side, height: side)
         OpusTheme.panelBackground.setFill()
         NSBezierPath(ovalIn: spot.insetBy(dx: side * 0.04, dy: side * 0.04)).fill()
-        ClaudeAvatar.draw(pose, color: color, in: spot.insetBy(dx: side * 0.1, dy: side * 0.1))
+        ClaudeAvatar.draw(pose, color: color, in: ClaudeAvatar.fittedRect(in: spot.insetBy(dx: side * 0.04, dy: side * 0.04)))
     }
 }

@@ -24,13 +24,13 @@ enum AvatarPreview {
 
     static func run(_ app: NSApplication) -> Never {
         app.setActivationPolicy(.regular)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 330),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 880, height: 330),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Opus avatar preview"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(calibratedWhite: 0.09, alpha: 1)
         window.isReleasedWhenClosed = false
-        let root = Backdrop(frame: NSRect(x: 0, y: 0, width: 760, height: 330))
+        let root = Backdrop(frame: NSRect(x: 0, y: 0, width: 880, height: 330))
         window.contentView = root
 
         let titles = ["Travaille", "T'attend", "A fini", "Au repos", "Longue tâche"]
@@ -50,6 +50,9 @@ enum AvatarPreview {
                 pose?.sweat = true
                 return pose
             }),
+            ("fête", OpusTheme.green, false, { t in
+                ClaudeAvatar.celebrating(elapsed: t.truncatingRemainder(dividingBy: 2.4)) ?? ClaudeAvatar.pose(.done, time: t)
+            }),
         ]
         for (index, mood) in moods.enumerated() {
             let view = ClaudeAvatarView(frame: NSRect(x: 24 + CGFloat(index) * 120, y: 70, width: 96, height: 96))
@@ -60,7 +63,7 @@ enum AvatarPreview {
             label(mood.0, x: 24 + CGFloat(index) * 120, y: 40, width: 96, in: root)
         }
 
-        MenuBarAvatar.shared.install(onClick: {}, reveal: {})
+        MenuBarAvatar.shared.install(onClick: {}, reveal: {}, autosave: false)
         DockAvatar.shared.show(.needsInput)
         var step = 0
         let advance = {

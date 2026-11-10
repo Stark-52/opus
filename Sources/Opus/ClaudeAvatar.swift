@@ -51,7 +51,15 @@ enum ClaudeAvatar {
         var asks = false
         /// How wide the mouth opens in a yawn, 0 to 1; no mouth at 0.
         var yawn: CGFloat = 0
+        /// Squash (positive: wider and shorter, on landing) or stretch
+        /// (negative: on take-off), about the bottom of the body.
+        var squash: CGFloat = 0
+        /// Progress of a confetti burst, 0 to 1; nil without one.
+        var confetti: CGFloat?
     }
+
+    /// Smallest side at which eye highlights and confetti are drawn.
+    static let detailMinSide: CGFloat = 24
 
     /// Smallest side at which the "?" bubble is drawn.
     static let bubbleMinSide: CGFloat = 30
@@ -82,11 +90,15 @@ enum ClaudeAvatar {
                         eyes: blinking(t, every: 3.6) ? .closed : .open,
                         lift: thinking ? 0.05 : 0)
         case .needsInput:
-            return Pose(rotation: CGFloat(sin(t * 5)) * 0.15,
-                        hop: CGFloat(max(0, sin(t * 5))) * 0.12,
+            // Crouch while on the ground, stretch a little leaving it.
+            let s5 = sin(t * 5)
+            let squash = s5 < 0 ? -s5 * 0.12 : (s5 > 0 ? -abs(cos(t * 5)) * 0.05 : 0)
+            return Pose(rotation: CGFloat(s5) * 0.15,
+                        hop: CGFloat(max(0, s5)) * 0.12,
                         eyes: blinking(t, every: 2.8) ? .closed : .open,
                         wave: CGFloat(sin(t * 10)) * 0.45,
-                        asks: true)
+                        asks: true,
+                        squash: CGFloat(squash))
         }
     }
 
@@ -112,10 +124,13 @@ enum ClaudeAvatar {
     static func celebrating(elapsed e: Double) -> Pose? {
         guard e >= 0, e < celebrationLength else { return nil }
         let k = CGFloat(1 - e / celebrationLength)
+        let bounce = CGFloat(abs(sin(e * 8)))
         return Pose(rotation: CGFloat(e * 7) * k,
-                    hop: CGFloat(abs(sin(e * 8))) * 0.12 * k,
+                    hop: bounce * 0.12 * k,
                     rayPulse: CGFloat(sin(e * 14)) * 0.04 * k,
-                    eyes: .happy)
+                    eyes: .happy,
+                    squash: (1 - bounce) * 0.1 * k,
+                    confetti: CGFloat(e / celebrationLength))
     }
 
     /// Waiting for you outranks working, which outranks done.
@@ -134,7 +149,8 @@ enum ClaudeAvatar {
     /// Late at night (23 h to 6 h) an awake avatar yawns once every twelve
     /// seconds, for 1.5 s; other hours, and closed or smiling eyes, are left be.
     static func lateNight(_ pose: Pose, hour: Int, time t: Double) -> Pose {
-        guard hour >= 23 || hour < 6, pose.eyes == .open || pose.eyes == .tired else { return pose }
+        // Closed counts as awake here: a blink inside a yawn keeps the mouth.
+        guard hour >= 23 || hour < 6, pose.eyes != .happy else { return pose }
         let phase = t.truncatingRemainder(dividingBy: 12)
         guard phase > 10.5 else { return pose }
         var yawning = pose
@@ -153,6 +169,45 @@ enum ClaudeAvatar {
     static func draw(_ pose: Pose, color: NSColor, in rect: NSRect, knockout: Bool = false) {
         let s = min(rect.width, rect.height)
         let center = NSPoint(x: rect.midX, y: rect.midY + pose.hop * s)
+
+        // Confetti, behind the avatar: twelve pieces thrown out from the
+        // edge of the body, falling, turning, fading.
+        if let burst = pose.confetti, s >= detailMinSide, !knockout {
+            let colors = [OpusTheme.cyan, OpusTheme.amber, OpusTheme.red, OpusTheme.green, OpusTheme.cream]
+            let start = NSPoint(x: rect.midX, y: rect.midY)
+            for k in 0..<12 {
+                let angle = CGFloat(k) / 12 * .pi * 2 + 0.3
+                let reach = s * (0.3 + (0.3 + 0.12 * CGFloat(k % 3)) * burst)
+                let x = start.x + cos(angle) * reach
+                let y = start.y + sin(angle) * reach - s * 0.35 * burst * burst
+                let turn = angle + burst * 9
+                let w = s * 0.085, h = s * 0.042
+                let c = cos(turn), sn = sin(turn)
+                let offsets: [(CGFloat, CGFloat)] = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
+                var corners: [NSPoint] = []
+                for (dx, dy) in offsets {
+                    let px: CGFloat = x + dx * c - dy * sn
+                    let py: CGFloat = y + dx * sn + dy * c
+                    corners.append(NSPoint(x: px, y: py))
+                }
+                let piece = NSBezierPath()
+                piece.move(to: corners[0])
+                corners.dropFirst().forEach { piece.line(to: $0) }
+                piece.close()
+                colors[k % colors.count].withAlphaComponent(1 - burst * burst).setFill()
+                piece.fill()
+        
+        // Squash and stretch about the bottom of the body.
+        // Confetti, drawn before, stays outside the transform.
+        NSGraphicsContext.saveGraphicsState()
+        if pose.squash != 0 {
+            let base = NSPoint(x: center.x, y: center.y - s * 0.3)
+            let squash = NSAffineTransform()
+            squash.translateX(by: base.x, yBy: base.y)
+            squash.scaleX(by: 1 + pose.squash, yBy: 1 - pose.squash)
+            squash.translateX(by: -base.x, yBy: -base.y)
+            squash.concat()
+        }
 
         // Rays.
         color.setStroke()
@@ -187,6 +242,13 @@ enum ClaudeAvatar {
             case .open:
                 let w = max(1, s * 0.075), h = max(1.6, s * 0.13)
                 NSBezierPath(ovalIn: NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)).fill()
+                // A glint, where the eye is big enough to hold one.
+                if s >= detailMinSide, !knockout {
+                    let r = s * 0.02
+                    OpusTheme.cream.setFill()
+                    NSBezierPath(ovalIn: NSRect(x: eyeX - w * 0.2 - r, y: eyeY + h * 0.18 - r, width: r * 2, height: r * 2)).fill()
+                    OpusTheme.caretText.set()
+                }
             case .tired:
                 // The lower half of an open eye under a flat lid.
                 let w = max(1, s * 0.075), h = max(1.6, s * 0.13)
@@ -278,6 +340,10 @@ enum ClaudeAvatar {
                     at: NSPoint(x: center.x + s * (0.42 + 0.1 * p), y: center.y + s * (0.40 + 0.22 * p)),
                     withAttributes: [.font: font, .foregroundColor: color.withAlphaComponent(color.alphaComponent * (1 - p))])
             }
+        }
+        NSGraphicsContext.restoreGraphicsState()
+
+    }
         }
     }
 

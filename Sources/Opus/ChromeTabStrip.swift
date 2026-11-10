@@ -26,6 +26,7 @@ final class ChromeTabStrip: NSView {
         didSet {
             if oldValue.count != states.count {
                 celebrations.removeAll()
+                fades.removeAll()
                 // Tabs mostly come and go at the end: a tab still in the same
                 // state at the same index keeps its clock.
                 let old = stateSince
@@ -37,7 +38,12 @@ final class ChromeTabStrip: NSView {
                     for index in oldValue.count..<states.count { celebrations[index] = now }
                 }
             } else {
-                for index in states.indices where oldValue[index] != states[index] { stateSince[index] = Date() }
+                for index in states.indices where oldValue[index] != states[index] {
+                    stateSince[index] = Date()
+                    if !reduceMotion {
+                        fades[index] = (OpusTheme.activityColor(oldValue[index]) ?? OpusTheme.cream(0.25), now)
+                    }
+                }
                 for index in states.indices where states[index] != .done && oldValue[index] != states[index] {
                     celebrations.removeValue(forKey: index)
                 }
@@ -59,7 +65,10 @@ final class ChromeTabStrip: NSView {
     /// When each tab's burst of joy started, by tab index.
     private var celebrations: [Int: Double] = [:]
     /// The cursor's x while it is over the strip: every avatar looks at it.
-    private var mouseX: CGFloat? { didSet { if mouseX != oldValue { needsDisplay = true } } }
+    private var hover: NSPoint? { didSet { if hover != oldValue { needsDisplay = true } } }
+    /// Where a tab's color is coming from after a state change, and since when.
+    private var fades: [Int: (from: NSColor, start: Double)] = [:]
+    private static let fadeLength: Double = 0.35
     var activeIndex = 0 {
         didSet {
             needsDisplay = true
@@ -194,11 +203,13 @@ final class ChromeTabStrip: NSView {
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
-    /// The clock a tab's avatar moves on: faster once it has waited long.
+    /// The clock a tab's avatar moves on: faster once it has waited long,
+    /// without a jump where it speeds up.
     private func avatarTime(_ index: Int) -> Double {
-        guard states.indices.contains(index), states[index] == .needsInput, stateSince.indices.contains(index),
-              Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.insistAfter else { return now }
-        return now * ClaudeAvatar.insistSpeed
+        guard states.indices.contains(index), states[index] == .needsInput, stateSince.indices.contains(index)
+        else { return now }
+        let insisting = Date().timeIntervalSince(stateSince[index]) - ClaudeAvatar.insistAfter
+        return insisting > 0 ? now + insisting * (ClaudeAvatar.insistSpeed - 1) : now
     }
 
     override func viewDidMoveToWindow() {
@@ -210,7 +221,7 @@ final class ChromeTabStrip: NSView {
     /// is in a window; a hidden window skips the frames.
     private func updateAnimation() {
         let moving = window != nil
-            && (!celebrations.isEmpty || states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) })
+            && (!celebrations.isEmpty || !fades.isEmpty || states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) })
         guard moving != (animationTimer != nil) else { return }
         animationTimer?.invalidate()
         animationTimer = nil
@@ -218,15 +229,17 @@ final class ChromeTabStrip: NSView {
         let timer = Timer(timeInterval: 1 / ClaudeAvatar.framesPerSecond, repeats: true) { [weak self] _ in
             guard let self else { return }
             let over = self.celebrations.filter { self.now - $0.value >= ClaudeAvatar.celebrationLength }
-            if !over.isEmpty {
+            let faded = self.fades.filter { self.now - $0.value.start >= Self.fadeLength }
+            if !over.isEmpty || !faded.isEmpty {
                 over.keys.forEach { self.celebrations.removeValue(forKey: $0) }
+                faded.keys.forEach { self.fades.removeValue(forKey: $0) }
                 self.needsDisplay = true
                 self.updateAnimation()
             }
             guard let window = self.window, window.occlusionState.contains(.visible) else { return }
             // Only the avatars that move: done and resting ones hold still.
             for (index, tab) in self.layoutRects().tabs.enumerated() where tab.maxX > 0 && tab.minX < self.tabRoom {
-                let moves = self.celebrations[index] != nil
+                let moves = self.celebrations[index] != nil || self.fades[index] != nil
                     || (self.states.indices.contains(index) && ClaudeAvatar.isAnimated(self.states[index], reduceMotion: self.reduceMotion))
                 guard moves else { continue }
                 self.setNeedsDisplay(NSRect(x: tab.minX + 6, y: tab.minY, width: ClaudeAvatar.tabSize + 4, height: tab.height))
@@ -252,15 +265,21 @@ final class ChromeTabStrip: NSView {
                 // a boop wakes it up for a spin.
                 let size = ClaudeAvatar.tabSize
                 let boop = celebrations[index].flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }
-                ClaudeAvatar.draw(boop ?? ClaudeAvatar.Pose(eyes: .closed),
-                                  color: OpusTheme.cream(boop != nil ? 0.7 : (isActive ? 0.4 : 0.25)),
-                                  in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
+                let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)
+                // Under the pointer it opens its eyes to look at you.
+                let looked = hover.map { spot.insetBy(dx: -2, dy: -2).contains($0) } ?? false
+                ClaudeAvatar.draw(boop ?? ClaudeAvatar.Pose(eyes: looked ? .open : .closed),
+                                  color: OpusTheme.cream(boop != nil || looked ? 0.7 : (isActive ? 0.4 : 0.25)),
+                                  in: spot)
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
                var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
                    ?? ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion) {
                 let size = ClaudeAvatar.tabSize
-                if let mouseX {
-                    pose.glance = max(-1, min(1, (mouseX - textX - size / 2) / 60)) * 0.06
+                let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)
+                if let hover {
+                    pose.glance = max(-1, min(1, (hover.x - textX - size / 2) / 60)) * 0.06
+                    // Right on it: pleased to be looked at.
+                    if spot.insetBy(dx: -2, dy: -2).contains(hover), pose.eyes != .closed { pose.eyes = .happy }
                 }
                 pose = ClaudeAvatar.tired(pose, weekPercent: weekPercent)
                 if !reduceMotion {
@@ -269,8 +288,12 @@ final class ChromeTabStrip: NSView {
                 if states[index] == .working, stateSince.indices.contains(index) {
                     pose.sweat = Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.sweatAfter
                 }
-                ClaudeAvatar.draw(pose, color: color,
-                                  in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
+                var shade = color
+                if let fade = fades[index], now - fade.start < Self.fadeLength {
+                    let p = CGFloat((now - fade.start) / Self.fadeLength)
+                    shade = fade.from.blended(withFraction: p, of: color) ?? color
+                }
+                ClaudeAvatar.draw(pose, color: shade, in: spot)
             }
             textX += ClaudeAvatar.tabSize + 5
             let para = NSMutableParagraphStyle()
@@ -311,12 +334,12 @@ final class ChromeTabStrip: NSView {
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         hoveredIndex = hit(point)
-        mouseX = point.x
+        hover = point
     }
 
     override func mouseExited(with event: NSEvent) {
         hoveredIndex = nil
-        mouseX = nil
+        hover = nil
     }
 
     override func mouseDown(with event: NSEvent) {
