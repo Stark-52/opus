@@ -96,6 +96,7 @@ final class OpusPreferences {
         static let resumeLastConversation = "opus.resumeLastConversation"
         static let confirmRestart         = "opus.confirmRestart"
         static let notifyOnBell           = "opus.notifyOnBell"
+        static let avatarAnimated         = "opus.avatarAnimated"
         static let recentProjects         = "opus.recentProjects"
         static let panelPinned            = "opus.panelPinned"
         // Appearance (used in Phase 4)
@@ -193,6 +194,16 @@ final class OpusPreferences {
 
     /// Native notification + Dock badge when a session rings the bell while
     /// Opus is in the background. Default ON.
+    /// The Claude avatar moves (Opus > Animate Claude). Default ON; off holds
+    /// every avatar still in Opus alone, as reduce motion does system-wide.
+    var avatarAnimated: Bool {
+        get { defaults.object(forKey: K.avatarAnimated) == nil ? true : defaults.bool(forKey: K.avatarAnimated) }
+        set {
+            write(K.avatarAnimated, newValue)
+            NotificationCenter.default.post(name: .opusAvatarMotionChanged, object: nil)
+        }
+    }
+
     var notifyOnBell: Bool {
         get { defaults.object(forKey: K.notifyOnBell) == nil ? true : defaults.bool(forKey: K.notifyOnBell) }
         set { write(K.notifyOnBell, newValue) }

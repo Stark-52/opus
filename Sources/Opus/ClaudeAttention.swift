@@ -110,7 +110,7 @@ final class DockAvatar {
         let tile = NSApp.dockTile
         tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size), activity: activity)
         tile.display()
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        guard ClaudeAvatar.motionAllowed else { return }
         // Every Dock frame crosses to the Dock process: a minute of slow
         // hopping when Claude waits, one quick burst of confetti when it has
         // finished, then the tile rests on its last frame.
@@ -163,7 +163,7 @@ private final class DockAvatarView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSApp.applicationIconImage?.draw(in: bounds)
-        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let still = !ClaudeAvatar.motionAllowed
         let now = ProcessInfo.processInfo.systemUptime
         let party = activity == .done && !still ? ClaudeAvatar.celebrating(elapsed: now - shownAt) : nil
         guard let color = OpusTheme.activityColor(activity),

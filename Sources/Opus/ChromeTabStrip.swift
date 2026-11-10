@@ -116,6 +116,8 @@ final class ChromeTabStrip: NSView {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(displayOptionsChanged),
             name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(displayOptionsChanged), name: .opusAvatarMotionChanged, object: nil)
     }
 
     /// Reduce motion switched on or off: stop or start the avatars now.
@@ -209,7 +211,7 @@ final class ChromeTabStrip: NSView {
                        available: bounds.width, height: bounds.height)
     }
 
-    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var reduceMotion: Bool { !ClaudeAvatar.motionAllowed }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
     /// The clock a tab's avatar moves on: faster once it has waited long,

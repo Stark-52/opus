@@ -8,6 +8,11 @@
 
 import AppKit
 
+extension Notification.Name {
+    /// Opus > Animate Claude was switched; hosts restart or stop their frames.
+    static let opusAvatarMotionChanged = Notification.Name("com.stark52.opus.avatarMotionChanged")
+}
+
 enum ClaudeAvatar {
     /// Side of the square the avatar is drawn in, in the tab strip.
     static let tabSize: CGFloat = 16
@@ -82,6 +87,12 @@ enum ClaudeAvatar {
 
     /// How long Claude works before the drop of sweat shows.
     static let sweatAfter: TimeInterval = 5 * 60
+
+    /// Avatars may move: neither the system's reduce motion nor Opus >
+    /// Animate Claude holds them still.
+    static var motionAllowed: Bool {
+        !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion && OpusPreferences.shared.avatarAnimated
+    }
 
     /// Whether `activity` moves, so a host knows when to keep a timer.
     static func isAnimated(_ activity: PaneActivity, reduceMotion: Bool) -> Bool {
@@ -507,10 +518,17 @@ final class ClaudeAvatarView: NSView {
         super.viewDidMoveToWindow()
         timer?.invalidate()
         timer = nil
-        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        guard window != nil else { return }
+        // Always ticking while in a window, so switching Animate Claude or
+        // reduce motion takes effect at once; held still, a tick draws
+        // the resting pose once and then does nothing.
+        var drewStill = false
         let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
             guard let self, self.animates, !self.isHiddenOrHasHiddenAncestor,
                   self.window?.occlusionState.contains(.visible) == true else { return }
+            let moving = ClaudeAvatar.motionAllowed
+            guard moving || !drewStill else { return }
+            drewStill = !moving
             self.needsDisplay = true
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -518,7 +536,7 @@ final class ClaudeAvatarView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let still = !ClaudeAvatar.motionAllowed
         guard let pose = pose(still ? 0 : ProcessInfo.processInfo.systemUptime) else { return }
         let side = min(bounds.width, bounds.height) * 0.72
         let rect = snoreRoom ? NSRect(x: bounds.midX - side / 2, y: bounds.minY, width: side, height: side)

@@ -45,7 +45,7 @@ final class MenuBarAvatar {
     /// The whole button, count included, for the preview's snapshots.
     var currentButton: NSView? { item?.button }
 
-    private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    private var reduceMotion: Bool { !ClaudeAvatar.motionAllowed }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
     /// A click shows the tab that waits for you, else the one that just
@@ -81,6 +81,10 @@ final class MenuBarAvatar {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            self?.render()
+            self?.updateTimer()
+        }
+        NotificationCenter.default.addObserver(forName: .opusAvatarMotionChanged, object: nil, queue: .main) { [weak self] _ in
             self?.render()
             self?.updateTimer()
         }

@@ -1268,6 +1268,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MenuBarAvatar.shared.isShown.toggle()
     }
 
+    @objc func toggleAvatarAnimation(_ sender: NSMenuItem) {
+        OpusPreferences.shared.avatarAnimated.toggle()
+    }
+
     @objc func openSettings() {
         SettingsWindowController.shared.show()
     }
@@ -1568,6 +1572,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(settingsItem)
         appMenu.addItem(NSMenuItem(title: "Show Claude in Menu Bar", action: #selector(toggleMenuBarAvatar(_:)),
                                    keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "Animate Claude", action: #selector(toggleAvatarAnimation(_:)),
+                                   keyEquivalent: ""))
 
         appMenu.addItem(NSMenuItem.separator())
 
@@ -1744,6 +1750,9 @@ extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(toggleMenuBarAvatar(_:)) {
             menuItem.state = MenuBarAvatar.shared.isShown ? .on : .off
+        }
+        if menuItem.action == #selector(toggleAvatarAnimation(_:)) {
+            menuItem.state = OpusPreferences.shared.avatarAnimated ? .on : .off
         }
         return true
     }
