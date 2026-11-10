@@ -346,3 +346,16 @@ final class TabAccessibilityTests: XCTestCase {
         XCTAssertEqual(strip.accessibilityRole(), .tabGroup)
     }
 }
+
+final class TabAccessibilityStabilityTests: XCTestCase {
+    func testElementsStayTheSameUntilTabsChange() {
+        let strip = ChromeTabStrip(frame: NSRect(x: 0, y: 0, width: 600, height: 32))
+        strip.titles = ["A", "B"]
+        strip.states = [.working, .idle]
+        let first = strip.accessibilityChildren() as? [TabAccessibilityElement]
+        let again = strip.accessibilityChildren() as? [TabAccessibilityElement]
+        XCTAssertTrue(first![0] === again![0])
+        strip.titles = ["A", "B", "C"]
+        XCTAssertEqual((strip.accessibilityChildren() as? [TabAccessibilityElement])?.count, 3)
+    }
+}

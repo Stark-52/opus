@@ -103,6 +103,7 @@ private final class SessionCellView: NSTableCellView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(title: String, subtitle: String, activity: PaneActivity) {
+        hovered = false
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
         avatar.isHidden = activity == .idle

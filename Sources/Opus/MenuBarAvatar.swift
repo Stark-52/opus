@@ -28,6 +28,7 @@ final class MenuBarAvatar {
     /// working to done); every tenth celebration gets heart eyes.
     private var finished: (day: Int, count: Int) = (0, 0)
     private var heartsThisTime = false
+    private var appearanceWatch: NSKeyValueObservation?
 
     static func hearts(afterFinishing count: Int) -> Bool {
         count > 0 && count % 10 == 0
@@ -75,6 +76,7 @@ final class MenuBarAvatar {
             // Boop: a click makes it spin, whatever it does next.
             if let self, !self.reduceMotion {
                 self.celebrationStart = self.now
+                self.heartsThisTime = false
                 self.render()
                 self.updateTimer()
             }
@@ -85,6 +87,10 @@ final class MenuBarAvatar {
         item.button?.target = clickTarget
         item.button?.action = #selector(ClickTarget.fire)
         self.item = item
+        // A light or dark menu bar changes the soft edge: redraw on the switch.
+        appearanceWatch = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.render() }
+        }
         // Hello: one spin at launch.
         if !reduceMotion { celebrationStart = now }
         render()
@@ -126,7 +132,10 @@ final class MenuBarAvatar {
         let week = windows.first { $0.kind == .sevenDay }?.percent
         guard week != weekPercent else { return }
         // A fresh week deserves a party.
-        if ClaudeAvatar.weekReset(from: weekPercent, to: week), !reduceMotion { celebrationStart = now }
+        if ClaudeAvatar.weekReset(from: weekPercent, to: week), !reduceMotion {
+            celebrationStart = now
+            heartsThisTime = false
+        }
         weekPercent = week
         render()
         updateTimer()
@@ -178,6 +187,7 @@ final class MenuBarAvatar {
         guard let button = item?.button else { return }
         if let start = celebrationStart, ClaudeAvatar.celebrating(elapsed: now - start) == nil {
             celebrationStart = nil
+            heartsThisTime = false
             updateTimer()
         }
         let celebration = celebrationStart.flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }

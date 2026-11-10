@@ -65,6 +65,8 @@ final class ChromeTabStrip: NSView {
     /// Recent boops, to cycle their kinds and catch five in a row.
     private var boopTimes: [Double] = []
     private var boopCount = 0
+    /// One element per tab, kept so VoiceOver holds on to the same object.
+    fileprivate var accessibilityTabs: [TabAccessibilityElement] = []
     /// The cursor's x while it is over the strip: every avatar looks at it.
     /// Only the avatars look at the pointer: redraw them, not the titles.
     private var hover: NSPoint? {
@@ -449,7 +451,10 @@ extension ChromeTabStrip {
     override func accessibilityLabel() -> String? { "Onglets" }
 
     override func accessibilityChildren() -> [Any]? {
-        titles.indices.map { TabAccessibilityElement(strip: self, index: $0) }
+        if accessibilityTabs.count != titles.count {
+            accessibilityTabs = titles.indices.map { TabAccessibilityElement(strip: self, index: $0) }
+        }
+        return accessibilityTabs
     }
 
     /// "Title, Claude travaille depuis 4 min", or the title alone at rest.

@@ -412,7 +412,7 @@ enum ClaudeAvatar {
         }
 
         // A cup of coffee held on the left, deep in the night.
-        if s >= detailMinSide, !knockout, !pose.asleep, pose.eyes != .closed, pose.coffee ?? coffeeHours(Date()) {
+        if s >= detailMinSide, !knockout, !pose.asleep, pose.coffee ?? coffeeHours(Date()) {
             let cup = NSRect(x: center.x - s * 0.5, y: center.y - s * 0.36, width: s * 0.15, height: s * 0.17)
             let handle = NSBezierPath(ovalIn: NSRect(x: cup.minX - s * 0.06, y: cup.midY - s * 0.045, width: s * 0.09, height: s * 0.09))
             handle.lineWidth = s * 0.025
@@ -437,7 +437,7 @@ enum ClaudeAvatar {
         let eyeY = center.y + s * (0.02 + pose.lift)
         for side in [-1.0, 1.0] as [CGFloat] {
             let eyeX = center.x + side * s * 0.11 + pose.glance * s
-            let shaded = (pose.shades ?? weekend(Date())) && [.open, .tired, .wide].contains(pose.eyes)
+            let shaded = (pose.shades ?? weekend(Date())) && !pose.wink && [.open, .tired, .wide].contains(pose.eyes)
             switch shaded ? Eyes.closed : (pose.wink && side > 0 ? Eyes.happy : pose.eyes) {
             case _ where shaded:
                 // Weekend: a pair of dark glasses, a lens over each eye.
