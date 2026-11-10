@@ -13,13 +13,14 @@ import AppKit
 enum AvatarPreview {
     static let flag = "--avatar-preview"
 
-    /// One row per step, one state per tab. Each step turns at least one
-    /// working tab to done, so the burst of joy shows every cycle.
+    /// One row per step, one state per tab. The steps between them turn a
+    /// working tab to done (burst of joy), a resting one to working (getting
+    /// up), and leave two tabs waiting at once (the menu bar's count).
     static let script: [[PaneActivity]] = [
         [.working, .needsInput, .done, .idle, .needsInput],
         [.done, .needsInput, .done, .idle, .working],
         [.needsInput, .working, .idle, .idle, .working],
-        [.working, .done, .idle, .idle, .done],
+        [.working, .done, .working, .idle, .done],
     ]
 
     static func run(_ app: NSApplication) -> Never {
