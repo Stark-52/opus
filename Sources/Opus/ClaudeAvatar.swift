@@ -235,6 +235,8 @@ final class ClaudeAvatarView: NSView {
     var pose: (Double) -> ClaudeAvatar.Pose? = { ClaudeAvatar.sleeping(time: $0) } {
         didSet { needsDisplay = true }
     }
+    /// Off for a pose that holds still: no frames are drawn for it.
+    var animates = true
     /// Keep the top of the view for the "z"s; off, the avatar fills it, centered.
     var snoreRoom = true { didSet { needsDisplay = true } }
     private var timer: Timer?
@@ -245,7 +247,7 @@ final class ClaudeAvatarView: NSView {
         timer = nil
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
-            guard let self, !self.isHiddenOrHasHiddenAncestor,
+            guard let self, self.animates, !self.isHiddenOrHasHiddenAncestor,
                   self.window?.occlusionState.contains(.visible) == true else { return }
             self.needsDisplay = true
         }

@@ -26,7 +26,7 @@ final class SocketServer {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-        path.withCString { cstr in
+        _ = path.withCString { cstr in
             withUnsafeMutableBytes(of: &addr.sun_path) { dest in
                 strncpy(dest.baseAddress!.assumingMemoryBound(to: CChar.self), cstr, dest.count - 1)
             }

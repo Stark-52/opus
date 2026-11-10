@@ -106,6 +106,7 @@ private final class SessionCellView: NSTableCellView {
         avatar.isHidden = activity == .idle
         if let color = OpusTheme.activityColor(activity) {
             avatar.color = color
+            avatar.animates = ClaudeAvatar.isAnimated(activity, reduceMotion: false)
             avatar.pose = { ClaudeAvatar.pose(activity, time: $0) }
         }
     }
