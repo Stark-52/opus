@@ -168,6 +168,20 @@ final class MenuBarAvatar {
         if menu.items.isEmpty {
             menu.addItem(NSMenuItem(title: "Aucun onglet", action: nil, keyEquivalent: ""))
         }
+        menu.addItem(.separator())
+        let animate = NSMenuItem(title: "Animer Claude", action: #selector(ClickTarget.fire), keyEquivalent: "")
+        animate.state = OpusPreferences.shared.avatarAnimated ? .on : .off
+        let toggle = ClickTarget()
+        toggle.action = { OpusPreferences.shared.avatarAnimated.toggle() }
+        animate.target = toggle
+        menuTargets.append(toggle)
+        menu.addItem(animate)
+        let open = NSMenuItem(title: "Afficher Opus", action: #selector(ClickTarget.fire), keyEquivalent: "")
+        let show = ClickTarget()
+        show.action = { [weak self] in self?.reveal() }
+        open.target = show
+        menuTargets.append(show)
+        menu.addItem(open)
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
     }
 
