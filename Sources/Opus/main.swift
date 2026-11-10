@@ -1007,6 +1007,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // socketServer: hooks fire regardless of display mode, and
         // composeSpawnCommand injects --settings unconditionally for .claude.
         eventSocketServer.start()
+        // Claude in the menu bar: the strongest state across every tab.
+        MenuBarAvatar.shared.install { [weak self] in
+            guard let self else { return }
+            if self.nativePanel != nil { self.toggleNativePanel() } else { NSApp.activate(ignoringOtherApps: true) }
+        }
         // Must exist BEFORE any claude spawns — composeSpawnCommand's .claude
         // preset always points --settings at this path (see HookSettingsWriter).
         // Idempotent: cheap to call unconditionally on every launch.

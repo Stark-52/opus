@@ -63,3 +63,25 @@ final class ClaudeAvatarMoodTests: XCTestCase {
                           ClaudeAvatar.lookingAround(time: 2).glance)
     }
 }
+
+final class ClaudeAvatarJoyTests: XCTestCase {
+    func testCelebrationSmilesThenEnds() {
+        XCTAssertEqual(ClaudeAvatar.celebrating(elapsed: 0.3)?.eyes, .happy)
+        XCTAssertNil(ClaudeAvatar.celebrating(elapsed: ClaudeAvatar.celebrationLength))
+        XCTAssertNil(ClaudeAvatar.celebrating(elapsed: -1))
+    }
+
+    func testCelebrationStaysInsideItsSquare() {
+        let hops = stride(from: 0.0, to: ClaudeAvatar.celebrationLength, by: 0.01)
+            .compactMap { ClaudeAvatar.celebrating(elapsed: $0)?.hop }
+        XCTAssertLessThanOrEqual(hops.max()!, 0.12)
+        XCTAssertGreaterThanOrEqual(hops.min()!, 0)
+    }
+
+    func testMenuBarShowsTheStrongestState() {
+        XCTAssertEqual(ClaudeAvatar.strongest([.done, .working, .idle]), .working)
+        XCTAssertEqual(ClaudeAvatar.strongest([.working, .needsInput]), .needsInput)
+        XCTAssertEqual(ClaudeAvatar.strongest([.idle, .done]), .done)
+        XCTAssertEqual(ClaudeAvatar.strongest([]), .idle)
+    }
+}

@@ -69,6 +69,28 @@ enum ClaudeAvatar {
         Pose(glance: CGFloat(sin(t * 0.9)) * 0.06, eyes: blinking(t, every: 4.2) ? .closed : .open)
     }
 
+    /// How long the burst of joy lasts when a turn ends.
+    static let celebrationLength: Double = 1.4
+
+    /// The burst of joy right after working turns to done: a spin and a few
+    /// hops that settle into the smile. nil once it is over.
+    static func celebrating(elapsed e: Double) -> Pose? {
+        guard e >= 0, e < celebrationLength else { return nil }
+        let k = CGFloat(1 - e / celebrationLength)
+        return Pose(rotation: CGFloat(e * 7) * k,
+                    hop: CGFloat(abs(sin(e * 8))) * 0.12 * k,
+                    rayPulse: CGFloat(sin(e * 14)) * 0.04 * k,
+                    eyes: .happy)
+    }
+
+    /// Waiting for you outranks working, which outranks done.
+    static func strongest(_ states: [PaneActivity]) -> PaneActivity {
+        if states.contains(.needsInput) { return .needsInput }
+        if states.contains(.working) { return .working }
+        if states.contains(.done) { return .done }
+        return .idle
+    }
+
     /// Eyes shut for the last 0.12 s of each period, never at rest.
     static func blinking(_ time: Double, every period: Double) -> Bool {
         guard time > 0 else { return false }
@@ -76,7 +98,8 @@ enum ClaudeAvatar {
     }
 
     /// Draws `pose` in `color`, centered in `rect` (its shorter side sets the size).
-    static func draw(_ pose: Pose, color: NSColor, in rect: NSRect) {
+    /// `knockout` cuts the eyes out instead of painting them, for template images.
+    static func draw(_ pose: Pose, color: NSColor, in rect: NSRect, knockout: Bool = false) {
         let s = min(rect.width, rect.height)
         let center = NSPoint(x: rect.midX, y: rect.midY + pose.hop * s)
 
@@ -102,6 +125,8 @@ enum ClaudeAvatar {
                                     width: radius * 2, height: radius * 2)).fill()
 
         // Eyes.
+        NSGraphicsContext.saveGraphicsState()
+        if knockout { NSGraphicsContext.current?.compositingOperation = .destinationOut }
         OpusTheme.caretText.set()
         let eyeY = center.y + s * 0.02
         for side in [-1.0, 1.0] as [CGFloat] {
@@ -134,6 +159,8 @@ enum ClaudeAvatar {
             }
         }
 
+        NSGraphicsContext.restoreGraphicsState()
+
         // Snoring.
         if let snore = pose.snore {
             for k in 0..<2 {
@@ -147,9 +174,9 @@ enum ClaudeAvatar {
     }
 
     /// The avatar alone as an image, for surfaces that take one (the Dock).
-    static func image(_ pose: Pose, color: NSColor, size: CGFloat) -> NSImage {
+    static func image(_ pose: Pose, color: NSColor, size: CGFloat, knockout: Bool = false) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            draw(pose, color: color, in: rect)
+            draw(pose, color: color, in: rect, knockout: knockout)
             return true
         }
     }

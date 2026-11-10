@@ -24,11 +24,22 @@ final class ChromeTabStrip: NSView {
     /// One per tab, same index space as `titles`; missing entries draw no avatar.
     var states: [PaneActivity] = [] {
         didSet {
+            if oldValue.count != states.count {
+                celebrations.removeAll()
+            } else if !reduceMotion {
+                for index in states.indices where oldValue[index] == .working && states[index] == .done {
+                    celebrations[index] = now
+                }
+            }
             needsDisplay = true
             updateAnimation()
         }
     }
     private var animationTimer: Timer?
+    /// When each tab's burst of joy started, by tab index.
+    private var celebrations: [Int: Double] = [:]
+    /// The cursor's x while it is over the strip: every avatar looks at it.
+    private var mouseX: CGFloat? { didSet { if mouseX != oldValue { needsDisplay = true } } }
     var activeIndex = 0 {
         didSet {
             needsDisplay = true
@@ -144,13 +155,21 @@ final class ChromeTabStrip: NSView {
     /// Keeps a redraw timer only while a tab's avatar moves and the strip
     /// is in a window; a hidden window skips the frames.
     private func updateAnimation() {
-        let moving = window != nil && states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) }
+        let moving = window != nil
+            && (!celebrations.isEmpty || states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) })
         guard moving != (animationTimer != nil) else { return }
         animationTimer?.invalidate()
         animationTimer = nil
         guard moving else { return }
         let timer = Timer(timeInterval: 1 / ClaudeAvatar.framesPerSecond, repeats: true) { [weak self] _ in
-            guard let self, let window = self.window, window.occlusionState.contains(.visible) else { return }
+            guard let self else { return }
+            let over = self.celebrations.filter { self.now - $0.value >= ClaudeAvatar.celebrationLength }
+            if !over.isEmpty {
+                over.keys.forEach { self.celebrations.removeValue(forKey: $0) }
+                self.needsDisplay = true
+                self.updateAnimation()
+            }
+            guard let window = self.window, window.occlusionState.contains(.visible) else { return }
             self.needsDisplay = true
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -169,8 +188,12 @@ final class ChromeTabStrip: NSView {
             }
             var textX = rect.minX + 8
             if index < states.count, let color = OpusTheme.activityColor(states[index]),
-               let pose = ClaudeAvatar.pose(states[index], time: now, reduceMotion: reduceMotion) {
+               var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
+                   ?? ClaudeAvatar.pose(states[index], time: now, reduceMotion: reduceMotion) {
                 let size = ClaudeAvatar.tabSize
+                if let mouseX {
+                    pose.glance = max(-1, min(1, (mouseX - textX - size / 2) / 60)) * 0.06
+                }
                 ClaudeAvatar.draw(pose, color: color,
                                   in: NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size))
             }
@@ -208,10 +231,15 @@ final class ChromeTabStrip: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        hoveredIndex = hit(convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        hoveredIndex = hit(point)
+        mouseX = point.x
     }
 
-    override func mouseExited(with event: NSEvent) { hoveredIndex = nil }
+    override func mouseExited(with event: NSEvent) {
+        hoveredIndex = nil
+        mouseX = nil
+    }
 
     override func mouseDown(with event: NSEvent) {
         guard let index = hit(convert(event.locationInWindow, from: nil)) else { return }
