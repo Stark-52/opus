@@ -268,3 +268,33 @@ final class ClaudeAvatarGettingUpTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(squashes.min()!, -0.12)
     }
 }
+
+final class ClaudeAvatarMomentTests: XCTestCase {
+    func testEachChangeHasItsScene() {
+        XCTAssertEqual(ClaudeAvatar.transition(from: .working, to: .done), .celebrate)
+        XCTAssertEqual(ClaudeAvatar.transition(from: .idle, to: .working), .getUp)
+        XCTAssertEqual(ClaudeAvatar.transition(from: .done, to: .working), .getUp)
+        XCTAssertEqual(ClaudeAvatar.transition(from: .needsInput, to: .working), .nod)
+        XCTAssertEqual(ClaudeAvatar.transition(from: .working, to: .needsInput), .startle)
+        XCTAssertNil(ClaudeAvatar.transition(from: .done, to: .idle))
+    }
+
+    func testEveryMomentStaysInsideItsSquareAndEnds() {
+        let all: [ClaudeAvatar.Moment] = [.celebrate, .getUp, .nod, .startle, .wink, .jump, .dizzy]
+        for kind in all {
+            let length = ClaudeAvatar.length(kind)
+            let poses = stride(from: 0.0, to: length, by: 0.01).compactMap { ClaudeAvatar.moment(kind, elapsed: $0) }
+            XCTAssertFalse(poses.isEmpty, "\(kind)")
+            XCTAssertLessThanOrEqual(poses.map(\.hop).max()!, 0.12, "\(kind)")
+            XCTAssertLessThanOrEqual(poses.map { abs($0.squash) }.max()!, 0.12, "\(kind)")
+            XCTAssertNil(ClaudeAvatar.moment(kind, elapsed: length), "\(kind)")
+        }
+    }
+
+    func testBoopsWinkAndDizzyLook() {
+        XCTAssertTrue(ClaudeAvatar.moment(.wink, elapsed: 0.3)!.wink)
+        XCTAssertEqual(ClaudeAvatar.moment(.dizzy, elapsed: 0.5)?.eyes, .dizzy)
+        XCTAssertNotNil(ClaudeAvatar.moment(.dizzy, elapsed: 0.5)?.stars)
+        XCTAssertEqual(ClaudeAvatar.dozing(time: 3).eyes, .closed)
+    }
+}

@@ -25,9 +25,8 @@ final class ChromeTabStrip: NSView {
     var states: [PaneActivity] = [] {
         didSet {
             if oldValue.count != states.count {
-                celebrations.removeAll()
+                moments.removeAll()
                 fades.removeAll()
-                startsToWork.removeAll()
                 // Tabs mostly come and go at the end: a tab still in the same
                 // state at the same index keeps its clock.
                 let old = stateSince
@@ -36,7 +35,7 @@ final class ChromeTabStrip: NSView {
                 }
                 // A new tab says hello with a spin (not the very first fill).
                 if !oldValue.isEmpty, states.count > oldValue.count, !reduceMotion {
-                    for index in oldValue.count..<states.count { celebrations[index] = now }
+                    for index in oldValue.count..<states.count { moments[index] = (.celebrate, now) }
                 }
             } else {
                 for index in states.indices where oldValue[index] != states[index] {
@@ -45,18 +44,9 @@ final class ChromeTabStrip: NSView {
                     if !reduceMotion, states[index] != .idle {
                         fades[index] = (OpusTheme.activityColor(oldValue[index]) ?? OpusTheme.cream(0.25), now)
                     }
-                }
-                for index in states.indices where states[index] != .done && oldValue[index] != states[index] {
-                    celebrations.removeValue(forKey: index)
-                }
-                if !reduceMotion {
-                    for index in states.indices where oldValue[index] == .working && states[index] == .done {
-                        celebrations[index] = now
-                    }
-                    for index in states.indices
-                    where states[index] == .working && (oldValue[index] == .idle || oldValue[index] == .done) {
-                        startsToWork[index] = now
-                    }
+                    // The scene that goes with the change; any change ends the one running.
+                    moments[index] = reduceMotion ? nil
+                        : ClaudeAvatar.transition(from: oldValue[index], to: states[index]).map { ($0, now) }
                 }
             }
             needsDisplay = true
@@ -68,10 +58,11 @@ final class ChromeTabStrip: NSView {
     var weekPercent: Double? { didSet { if weekPercent != oldValue { needsDisplay = true } } }
     /// When each tab entered its current state, same index space as `states`.
     private var stateSince: [Date] = []
-    /// When each tab got up to work (from resting or done), by tab index.
-    private var startsToWork: [Int: Double] = [:]
-    /// When each tab's burst of joy started, by tab index.
-    private var celebrations: [Int: Double] = [:]
+    /// The scene each tab is playing (ClaudeAvatar.Moment) and since when, by tab index.
+    private var moments: [Int: (kind: ClaudeAvatar.Moment, start: Double)] = [:]
+    /// Recent boops, to cycle their kinds and catch five in a row.
+    private var boopTimes: [Double] = []
+    private var boopCount = 0
     /// The cursor's x while it is over the strip: every avatar looks at it.
     /// Only the avatars look at the pointer: redraw them, not the titles.
     private var hover: NSPoint? {
@@ -223,6 +214,16 @@ final class ChromeTabStrip: NSView {
     private var reduceMotion = !ClaudeAvatar.motionAllowed
     private var now: Double { ProcessInfo.processInfo.systemUptime }
 
+    /// A tab's pose outside any scene: its state's, except that a wait past
+    /// `ClaudeAvatar.dozeAfter` has nodded off.
+    private func restingPose(_ index: Int) -> ClaudeAvatar.Pose? {
+        if states[index] == .needsInput, stateSince.indices.contains(index),
+           Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.dozeAfter {
+            return ClaudeAvatar.dozing(time: reduceMotion ? 0 : now)
+        }
+        return ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion)
+    }
+
     /// The clock a tab's avatar moves on: faster once it has waited long,
     /// without a jump where it speeds up.
     private func avatarTime(_ index: Int) -> Double {
@@ -241,19 +242,17 @@ final class ChromeTabStrip: NSView {
     /// is in a window; a hidden window skips the frames.
     private func updateAnimation() {
         let moving = window != nil
-            && (!celebrations.isEmpty || !fades.isEmpty || states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) })
+            && (!moments.isEmpty || !fades.isEmpty || states.contains { ClaudeAvatar.isAnimated($0, reduceMotion: reduceMotion) })
         guard moving != (animationTimer != nil) else { return }
         animationTimer?.invalidate()
         animationTimer = nil
         guard moving else { return }
         let timer = Timer(timeInterval: 1 / ClaudeAvatar.framesPerSecond, repeats: true) { [weak self] _ in
             guard let self else { return }
-            let over = self.celebrations.filter { self.now - $0.value >= ClaudeAvatar.celebrationLength }
+            let over = self.moments.filter { self.now - $0.value.start >= ClaudeAvatar.length($0.value.kind) }
             let faded = self.fades.filter { self.now - $0.value.start >= Self.fadeLength }
-            let up = self.startsToWork.filter { self.now - $0.value >= ClaudeAvatar.gettingUpLength }
-            up.keys.forEach { self.startsToWork.removeValue(forKey: $0) }
             if !over.isEmpty || !faded.isEmpty {
-                over.keys.forEach { self.celebrations.removeValue(forKey: $0) }
+                over.keys.forEach { self.moments.removeValue(forKey: $0) }
                 faded.keys.forEach { self.fades.removeValue(forKey: $0) }
                 self.needsDisplay = true
                 self.updateAnimation()
@@ -261,7 +260,7 @@ final class ChromeTabStrip: NSView {
             guard let window = self.window, window.occlusionState.contains(.visible) else { return }
             // Only the avatars that move: done and resting ones hold still.
             for (index, tab) in self.layoutRects().tabs.enumerated() where tab.maxX > 0 && tab.minX < self.tabRoom {
-                let moves = self.celebrations[index] != nil || self.fades[index] != nil
+                let moves = self.moments[index] != nil || self.fades[index] != nil
                     || (self.states.indices.contains(index) && ClaudeAvatar.isAnimated(self.states[index], reduceMotion: self.reduceMotion))
                 guard moves else { continue }
                 self.setNeedsDisplay(NSRect(x: tab.minX + 6, y: tab.minY, width: ClaudeAvatar.tabSize + 4, height: tab.height))
@@ -286,7 +285,7 @@ final class ChromeTabStrip: NSView {
                 // Resting: a pale, still, sleeping Claude keeps the titles in line;
                 // a boop wakes it up for a spin.
                 let size = ClaudeAvatar.tabSize
-                let boop = celebrations[index].flatMap { ClaudeAvatar.celebrating(elapsed: now - $0) }
+                let boop = moments[index].flatMap { ClaudeAvatar.moment($0.kind, elapsed: now - $0.start) }
                 let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)
                 // Under the pointer it opens its eyes to look at you.
                 let looked = hover.map { spot.insetBy(dx: -2, dy: -2).contains($0) } ?? false
@@ -294,9 +293,8 @@ final class ChromeTabStrip: NSView {
                                   color: OpusTheme.cream(boop != nil || looked ? 0.7 : (isActive ? 0.4 : 0.25)),
                                   in: spot)
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),
-               var pose = celebrations[index].flatMap({ ClaudeAvatar.celebrating(elapsed: now - $0) })
-                   ?? startsToWork[index].flatMap({ ClaudeAvatar.gettingUp(elapsed: now - $0) })
-                   ?? ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion) {
+               var pose = moments[index].flatMap({ ClaudeAvatar.moment($0.kind, elapsed: now - $0.start) })
+                   ?? restingPose(index) {
                 let size = ClaudeAvatar.tabSize
                 let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)
                 if let hover {
@@ -368,10 +366,20 @@ final class ChromeTabStrip: NSView {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard let index = hit(point) else { return }
-        // Boop: a click on a tab's avatar makes it spin.
+        // Boop: a click on a tab's avatar plays the next boop; five within
+        // three seconds and it gets dizzy.
         if index >= 0, let tab = layoutRects().tabs[safe: index],
            point.x >= tab.minX + 6, point.x < tab.minX + 8 + ClaudeAvatar.tabSize + 2, !reduceMotion {
-            celebrations[index] = now
+            boopTimes = boopTimes.filter { now - $0 < 3 } + [now]
+            let kind: ClaudeAvatar.Moment
+            if boopTimes.count >= 5 {
+                kind = .dizzy
+                boopTimes.removeAll()
+            } else {
+                kind = ClaudeAvatar.boops[boopCount % ClaudeAvatar.boops.count]
+                boopCount += 1
+            }
+            moments[index] = (kind, now)
             updateAnimation()
         }
         if index == -1 { onNewTab?() } else if index != activeIndex { onSwitch?(index) }

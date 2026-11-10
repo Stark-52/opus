@@ -20,7 +20,75 @@ enum ClaudeAvatar {
     static let framesPerSecond: Double = 24
     private static let rayCount = 8
 
-    enum Eyes: Equatable { case open, closed, happy, tired }
+    enum Eyes: Equatable { case open, closed, happy, tired, wide, dizzy }
+
+    /// A short scene a tab plays over its state, after a change or a boop.
+    enum Moment: Equatable { case celebrate, getUp, nod, startle, wink, jump, dizzy }
+
+    /// The boops a click cycles through; five clicks in three seconds make it dizzy.
+    static let boops: [Moment] = [.celebrate, .wink, .jump]
+
+    /// The scene that goes with a change of state, if any: joy when work is
+    /// done, getting up to work, a thankful nod when you answer, a start when
+    /// Claude turns to ask you something.
+    static func transition(from old: PaneActivity, to new: PaneActivity) -> Moment? {
+        switch (old, new) {
+        case (.working, .done): return .celebrate
+        case (.idle, .working), (.done, .working): return .getUp
+        case (.needsInput, .working): return .nod
+        case (.working, .needsInput): return .startle
+        default: return nil
+        }
+    }
+
+    static func length(_ moment: Moment) -> Double {
+        switch moment {
+        case .celebrate: return celebrationLength
+        case .getUp: return gettingUpLength
+        case .nod: return 0.6
+        case .startle: return 0.45
+        case .wink: return 0.7
+        case .jump: return 0.6
+        case .dizzy: return 2.0
+        }
+    }
+
+    /// The pose of `moment` after `e` seconds; nil once it is over.
+    static func moment(_ moment: Moment, elapsed e: Double) -> Pose? {
+        guard e >= 0, e < length(moment) else { return nil }
+        let p = e / length(moment)
+        switch moment {
+        case .celebrate:
+            return celebrating(elapsed: e)
+        case .getUp:
+            return gettingUp(elapsed: e)
+        case .nod:
+            // Two little nods, eyes smiling.
+            return Pose(eyes: .happy, squash: CGFloat(abs(sin(p * .pi * 2))) * 0.1)
+        case .startle:
+            // Eyes wide, a quick hop, stretched on the way up.
+            let arc = CGFloat(sin(p * .pi))
+            return Pose(hop: arc * 0.1, eyes: .wide, squash: -arc * 0.08)
+        case .wink:
+            return Pose(rotation: -CGFloat(sin(p * .pi)) * 0.15, eyes: .open, wink: true)
+        case .jump:
+            // Crouch, leap, land.
+            let air = p > 0.25 && p < 0.8 ? CGFloat(sin((p - 0.25) / 0.55 * .pi)) : 0
+            let crouch = p <= 0.25 ? CGFloat(sin(p / 0.25 * .pi)) * 0.12
+                : (p >= 0.8 ? CGFloat(sin((p - 0.8) / 0.2 * .pi)) * 0.1 : 0)
+            return Pose(hop: air * 0.12, eyes: .open, squash: air > 0 ? -air * 0.06 : crouch)
+        case .dizzy:
+            return Pose(rotation: CGFloat(sin(e * 9)) * 0.3 * CGFloat(1 - p), eyes: .dizzy, stars: CGFloat(e))
+        }
+    }
+
+    /// How long Claude waits before it nods off.
+    static let dozeAfter: TimeInterval = 10 * 60
+
+    /// Nodded off while waiting: eyes shut, slumped a little, breathing slowly.
+    static func dozing(time t: Double) -> Pose {
+        Pose(rayPulse: CGFloat(sin(t * 1.3)) * 0.025, eyes: .closed, squash: 0.04, asleep: true)
+    }
     enum Hat: Equatable { case nightcap, santa, party }
 
     /// The hat the calendar puts on: Santa's from December 15th to the 31st,
@@ -92,6 +160,10 @@ enum ClaudeAvatar {
         var asleep = false
         /// A magnifying glass held out, for looking around.
         var magnifier = false
+        /// The right eye closes in a wink.
+        var wink = false
+        /// Phase of the little stars circling a dizzy head; nil without them.
+        var stars: CGFloat?
     }
 
     /// Smallest side at which eye highlights and confetti are drawn.
@@ -302,7 +374,25 @@ enum ClaudeAvatar {
         let eyeY = center.y + s * (0.02 + pose.lift)
         for side in [-1.0, 1.0] as [CGFloat] {
             let eyeX = center.x + side * s * 0.11 + pose.glance * s
-            switch pose.eyes {
+            switch pose.wink && side > 0 ? Eyes.happy : pose.eyes {
+            case .wide:
+                let w = max(1.3, s * 0.1), h = max(2, s * 0.17)
+                NSBezierPath(ovalIn: NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)).fill()
+            case .dizzy:
+                // A spiral where there is room for one, a ring otherwise.
+                let swirl = NSBezierPath()
+                swirl.lineWidth = max(0.7, s * 0.03)
+                if s >= detailMinSide {
+                    for step in 0...24 {
+                        let a = CGFloat(step) / 24 * .pi * 4
+                        let r = s * 0.07 * CGFloat(step) / 24
+                        let point = NSPoint(x: eyeX + cos(a) * r, y: eyeY + sin(a) * r)
+                        step == 0 ? swirl.move(to: point) : swirl.line(to: point)
+                    }
+                } else {
+                    swirl.appendOval(in: NSRect(x: eyeX - s * 0.06, y: eyeY - s * 0.06, width: s * 0.12, height: s * 0.12))
+                }
+                swirl.stroke()
             case .open:
                 let w = max(1, s * 0.075), h = max(1.6, s * 0.13)
                 NSBezierPath(ovalIn: NSRect(x: eyeX - w / 2, y: eyeY - h / 2, width: w, height: h)).fill()
@@ -352,6 +442,26 @@ enum ClaudeAvatar {
                     OpusTheme.caretText.set()
                 }
             }
+        }
+
+        // Stars circling a dizzy head.
+        if let stars = pose.stars, s >= detailMinSide, !knockout {
+            OpusTheme.amber.setFill()
+            for k in 0..<3 {
+                let a = stars * 3 + CGFloat(k) * .pi * 2 / 3
+                let c = NSPoint(x: center.x + cos(a) * s * 0.36, y: center.y + s * 0.44 + sin(a) * s * 0.08)
+                let r = s * 0.05
+                let star = NSBezierPath()
+                for i in 0..<8 {
+                    let ang = CGFloat(i) * .pi / 4
+                    let len = i % 2 == 0 ? r : r * 0.35
+                    let point = NSPoint(x: c.x + cos(ang) * len, y: c.y + sin(ang) * len)
+                    i == 0 ? star.move(to: point) : star.line(to: point)
+                }
+                star.close()
+                star.fill()
+            }
+            OpusTheme.caretText.set()
         }
 
         // A yawning mouth.
