@@ -26,13 +26,19 @@ final class ChromeTabStrip: NSView {
         didSet {
             if oldValue.count != states.count {
                 celebrations.removeAll()
-                stateSince = states.map { _ in Date() }
+                // Tabs mostly come and go at the end: a tab still in the same
+                // state at the same index keeps its clock.
+                let old = stateSince
+                stateSince = states.indices.map { index in
+                    index < old.count && index < oldValue.count && oldValue[index] == states[index] ? old[index] : Date()
+                }
             } else {
                 for index in states.indices where oldValue[index] != states[index] { stateSince[index] = Date() }
-            }
-            if oldValue.count == states.count, !reduceMotion {
-                for index in states.indices where oldValue[index] == .working && states[index] == .done {
-                    celebrations[index] = now
+                for index in states.indices where states[index] != .done { celebrations.removeValue(forKey: index) }
+                if !reduceMotion {
+                    for index in states.indices where oldValue[index] == .working && states[index] == .done {
+                        celebrations[index] = now
+                    }
                 }
             }
             needsDisplay = true
@@ -81,6 +87,15 @@ final class ChromeTabStrip: NSView {
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // Never draw past its band, whatever AppKit's default for the SDK.
         if #available(macOS 14, *) { clipsToBounds = true }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(displayOptionsChanged),
+            name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+    }
+
+    /// Reduce motion switched on or off: stop or start the avatars now.
+    @objc private func displayOptionsChanged() {
+        needsDisplay = true
+        updateAnimation()
     }
 
     /// Every tab at its natural width, plus the "+".

@@ -28,7 +28,11 @@ final class MenuBarAvatar {
     /// Whether the avatar sits in the menu bar; Cmd-drag can clear it too.
     var isShown: Bool {
         get { item?.isVisible ?? false }
-        set { item?.isVisible = newValue }
+        set {
+            item?.isVisible = newValue
+            render()
+            updateTimer()
+        }
     }
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -43,6 +47,7 @@ final class MenuBarAvatar {
         item.autosaveName = "OpusClaudeAvatar"
         item.behavior = .removalAllowed
         clickTarget.action = { [weak self] in
+            self?.refresh()
             guard let self, let (report, index) = self.tabToShow() else { return onClick() }
             self.reveal()
             report.focus(index)
@@ -51,6 +56,12 @@ final class MenuBarAvatar {
         item.button?.action = #selector(ClickTarget.fire)
         self.item = item
         render()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.render()
+            self?.updateTimer()
+        }
     }
 
     private func tabToShow() -> (Report, Int)? {
@@ -65,23 +76,37 @@ final class MenuBarAvatar {
     /// `source`'s tabs, one state each, and how to bring one of them up;
     /// a source that goes away stops counting.
     func report(_ states: [PaneActivity], from source: AnyObject, focus: @escaping (Int) -> Void) {
-        reports.removeAll { $0.source == nil || $0.source === source }
+        reports.removeAll { $0.source === source }
         reports.append(Report(source: source, states: states, focus: focus))
+        refresh()
+    }
+
+    /// Drops the reports of sources that went away, so a closed window does
+    /// not leave the avatar working forever, and recomputes the state.
+    private func refresh() {
+        reports.removeAll { $0.source == nil }
         let next = ClaudeAvatar.strongest(reports.flatMap(\.states))
         guard next != activity else { return }
         if activity == .working, next == .done, !reduceMotion { celebrationStart = now }
+        if next != .done { celebrationStart = nil }
         activity = next
         render()
         updateTimer()
     }
 
     private func updateTimer() {
-        let moving = item != nil && (celebrationStart != nil || ClaudeAvatar.isAnimated(activity, reduceMotion: reduceMotion))
+        let moving = item?.isVisible == true && (celebrationStart != nil || ClaudeAvatar.isAnimated(activity, reduceMotion: reduceMotion))
         guard moving != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil
         guard moving else { return }
-        let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { [weak self] _ in self?.render() }
+        let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.refresh()
+            // Cmd-drag can hide the item behind our back: stop drawing for nobody.
+            guard self.item?.isVisible == true else { return self.updateTimer() }
+            self.render()
+        }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }

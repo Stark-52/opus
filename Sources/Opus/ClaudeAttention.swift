@@ -91,7 +91,15 @@ final class DockAvatar {
         tile.contentView = DockAvatarView(frame: NSRect(origin: .zero, size: tile.size))
         tile.display()
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { _ in NSApp.dockTile.display() }
+        // Every Dock frame crosses to the Dock process: a slow rate, and a
+        // minute of hopping before the tile rests on its last frame.
+        let start = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 6, repeats: true) { [weak self] timer in
+            NSApp.dockTile.display()
+            guard ProcessInfo.processInfo.systemUptime - start > 60 else { return }
+            timer.invalidate()
+            self?.timer = nil
+        }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
