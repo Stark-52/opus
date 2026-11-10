@@ -40,7 +40,8 @@ final class ChromeTabStrip: NSView {
             } else {
                 for index in states.indices where oldValue[index] != states[index] {
                     stateSince[index] = Date()
-                    if !reduceMotion {
+                    // A resting avatar has no color to fade to: no fade, no frames.
+                    if !reduceMotion, states[index] != .idle {
                         fades[index] = (OpusTheme.activityColor(oldValue[index]) ?? OpusTheme.cream(0.25), now)
                     }
                 }
@@ -65,7 +66,15 @@ final class ChromeTabStrip: NSView {
     /// When each tab's burst of joy started, by tab index.
     private var celebrations: [Int: Double] = [:]
     /// The cursor's x while it is over the strip: every avatar looks at it.
-    private var hover: NSPoint? { didSet { if hover != oldValue { needsDisplay = true } } }
+    /// Only the avatars look at the pointer: redraw them, not the titles.
+    private var hover: NSPoint? {
+        didSet {
+            guard hover != oldValue else { return }
+            for tab in layoutRects().tabs where tab.maxX > 0 && tab.minX < tabRoom {
+                setNeedsDisplay(NSRect(x: tab.minX + 6, y: tab.minY, width: ClaudeAvatar.tabSize + 4, height: tab.height))
+            }
+        }
+    }
     /// Where a tab's color is coming from after a state change, and since when.
     private var fades: [Int: (from: NSColor, start: Double)] = [:]
     private static let fadeLength: Double = 0.35
