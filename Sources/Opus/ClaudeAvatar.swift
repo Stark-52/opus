@@ -222,10 +222,18 @@ enum ClaudeAvatar {
         }
     }
 
-    /// The avatar alone as an image, for surfaces that take one (the Dock).
+    /// The square in `bounds` where every pose fits: rays reach about 0.52
+    /// of the side from the center and a hop lifts it by up to 0.12, so 0.78
+    /// of the bounds, set a little low to leave the hop its room.
+    static func fittedRect(in bounds: NSRect) -> NSRect {
+        let side = min(bounds.width, bounds.height) * 0.78
+        return NSRect(x: bounds.midX - side / 2, y: bounds.midY - side / 2 - side * 0.06, width: side, height: side)
+    }
+
+    /// The avatar alone as an image, fitted so no pose is cut (the menu bar).
     static func image(_ pose: Pose, color: NSColor, size: CGFloat, knockout: Bool = false) -> NSImage {
         NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
-            draw(pose, color: color, in: rect, knockout: knockout)
+            draw(pose, color: color, in: fittedRect(in: rect), knockout: knockout)
             return true
         }
     }
@@ -261,8 +269,9 @@ final class ClaudeAvatarView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         guard let pose = pose(still ? 0 : ProcessInfo.processInfo.systemUptime) else { return }
-        let side = min(bounds.width, bounds.height) * (snoreRoom ? 0.72 : 1)
-        let y = snoreRoom ? bounds.minY : bounds.midY - side / 2
-        ClaudeAvatar.draw(pose, color: color, in: NSRect(x: bounds.midX - side / 2, y: y, width: side, height: side))
+        let side = min(bounds.width, bounds.height) * 0.72
+        let rect = snoreRoom ? NSRect(x: bounds.midX - side / 2, y: bounds.minY, width: side, height: side)
+                             : ClaudeAvatar.fittedRect(in: bounds)
+        ClaudeAvatar.draw(pose, color: color, in: rect)
     }
 }

@@ -1727,6 +1727,9 @@ extension AppDelegate: NSMenuDelegate {
 // MARK: - Bootstrap
 
 let app = NSApplication.shared
+// `--avatar-preview`: the avatar's views alone, safe beside a running Opus
+// (no sockets, no dtach, no hotkeys). Never returns.
+if CommandLine.arguments.contains(AvatarPreview.flag) { AvatarPreview.run(app) }
 let delegate = AppDelegate()
 app.delegate = delegate
 // .regular = Opus shows in the Dock with a running indicator while alive.

@@ -8,7 +8,8 @@ import AppKit
 
 final class MenuBarAvatar {
     static let shared = MenuBarAvatar()
-    private static let size: CGFloat = 18
+    /// The image's side; the avatar takes 0.78 of it so a hop is never cut.
+    private static let size: CGFloat = 22
 
     private struct Report {
         weak var source: AnyObject?
@@ -36,6 +37,9 @@ final class MenuBarAvatar {
             updateTimer()
         }
     }
+
+    /// The image the menu bar shows right now, for the preview's snapshots.
+    var currentImage: NSImage? { item?.button?.image }
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
