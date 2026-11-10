@@ -232,6 +232,14 @@ final class ChromeTabStrip: NSView {
            Date().timeIntervalSince(stateSince[index]) >= ClaudeAvatar.dozeAfter {
             return ClaudeAvatar.dozing(time: reduceMotion ? 0 : now)
         }
+        // Every fifteen minutes of work, a sneeze.
+        if states[index] == .working, !reduceMotion, stateSince.indices.contains(index) {
+            let worked = Date().timeIntervalSince(stateSince[index])
+            if worked >= ClaudeAvatar.sneezeEvery,
+               let sneeze = ClaudeAvatar.moment(.sneeze, elapsed: worked.truncatingRemainder(dividingBy: ClaudeAvatar.sneezeEvery)) {
+                return sneeze
+            }
+        }
         return ClaudeAvatar.pose(states[index], time: avatarTime(index), reduceMotion: reduceMotion)
     }
 

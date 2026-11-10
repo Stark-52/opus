@@ -150,6 +150,11 @@ final class DockAvatar {
             guard ProcessInfo.processInfo.systemUptime - start > length else { return }
             timer.invalidate()
             self?.timer = nil
+            // A minute of hopping, then it nods off, its "?" still up.
+            if !finished, let tile = NSApp.dockTile.contentView as? DockAvatarView {
+                tile.dozing = true
+                NSApp.dockTile.display()
+            }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -178,10 +183,12 @@ final class DockAvatar {
     }
 }
 
-private final class DockAvatarView: NSView {
+final class DockAvatarView: NSView {
     private let activity: PaneActivity
     /// When the tile went up: a done tile celebrates from there.
     private let shownAt = ProcessInfo.processInfo.systemUptime
+    /// Waited past its minute of hopping: it has nodded off.
+    var dozing = false
 
     init(frame: NSRect, activity: PaneActivity) {
         self.activity = activity
@@ -194,8 +201,13 @@ private final class DockAvatarView: NSView {
         let still = !ClaudeAvatar.motionAllowed
         let now = ProcessInfo.processInfo.systemUptime
         let party = activity == .done && !still ? ClaudeAvatar.celebrating(elapsed: now - shownAt) : nil
+        var dozed: ClaudeAvatar.Pose?
+        if dozing, activity == .needsInput {
+            dozed = ClaudeAvatar.dozing(time: 0)
+            dozed?.asks = true
+        }
         guard let color = OpusTheme.activityColor(activity),
-              let pose = party ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: still)
+              let pose = party ?? dozed ?? ClaudeAvatar.pose(activity, time: now, reduceMotion: still)
         else { return }
         let side = bounds.width * 0.46
         let spot = NSRect(x: bounds.maxX - side, y: bounds.minY + bounds.height * 0.02, width: side, height: side)

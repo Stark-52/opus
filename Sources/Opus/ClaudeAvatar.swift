@@ -23,7 +23,10 @@ enum ClaudeAvatar {
     enum Eyes: Equatable { case open, closed, happy, tired, wide, dizzy, hearts }
 
     /// A short scene a tab plays over its state, after a change or a boop.
-    enum Moment: Equatable { case celebrate, getUp, nod, startle, wink, jump, dizzy }
+    enum Moment: Equatable { case celebrate, getUp, nod, startle, wink, jump, dizzy, sneeze }
+
+    /// A long stretch of work brings a sneeze, every this many seconds.
+    static let sneezeEvery: TimeInterval = 15 * 60
 
     /// The boops a click cycles through; five clicks in three seconds make it dizzy.
     static let boops: [Moment] = [.celebrate, .wink, .jump]
@@ -50,6 +53,7 @@ enum ClaudeAvatar {
         case .wink: return 0.7
         case .jump: return 0.6
         case .dizzy: return 2.0
+        case .sneeze: return 0.8
         }
     }
 
@@ -79,6 +83,15 @@ enum ClaudeAvatar {
             return Pose(hop: air * 0.12, eyes: .open, squash: air > 0 ? -air * 0.06 : crouch)
         case .dizzy:
             return Pose(rotation: CGFloat(sin(e * 9)) * 0.3 * CGFloat(1 - p), eyes: .dizzy, stars: CGFloat(e))
+        case .sneeze:
+            // "Ah...": squinting, drawing up and back. "Choo!": a jerk forward,
+            // squashed, eyes shut, rays thrown out, then settling.
+            if p < 0.45 {
+                let build = CGFloat(sin(p / 0.45 * .pi / 2))
+                return Pose(rotation: build * 0.12, eyes: .tired, lift: build * 0.03, squash: -build * 0.08)
+            }
+            let k = CGFloat(1 - (p - 0.45) / 0.55)
+            return Pose(rotation: -0.25 * k, rayPulse: 0.04 * k, eyes: .closed, squash: 0.12 * k)
         }
     }
 

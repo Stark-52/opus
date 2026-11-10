@@ -280,7 +280,7 @@ final class ClaudeAvatarMomentTests: XCTestCase {
     }
 
     func testEveryMomentStaysInsideItsSquareAndEnds() {
-        let all: [ClaudeAvatar.Moment] = [.celebrate, .getUp, .nod, .startle, .wink, .jump, .dizzy]
+        let all: [ClaudeAvatar.Moment] = [.celebrate, .getUp, .nod, .startle, .wink, .jump, .dizzy, .sneeze]
         for kind in all {
             let length = ClaudeAvatar.length(kind)
             let poses = stride(from: 0.0, to: length, by: 0.01).compactMap { ClaudeAvatar.moment(kind, elapsed: $0) }
