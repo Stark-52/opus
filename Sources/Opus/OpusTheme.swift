@@ -25,6 +25,12 @@ enum OpusTheme {
     /// Finished.
     static let green = NSColor(red: 0.45, green: 0.85, blue: 0.55, alpha: 1.0)
 
+    /// The avatar's costume, not status colors: its drop of sweat and its
+    /// hats (ClaudeAvatar). Kept here so every color lives in the theme.
+    static let sweat = NSColor(red: 0.85, green: 0.95, blue: 1.0, alpha: 1.0)
+    static let nightcap = NSColor(red: 0.42, green: 0.48, blue: 0.78, alpha: 1.0)
+    static let santa = NSColor(red: 0.86, green: 0.22, blue: 0.24, alpha: 1.0)
+
     /// Opaque backing for floating surfaces (palette, find bar).
     static let panelBackground = NSColor(calibratedWhite: 0.08, alpha: 0.97)
 

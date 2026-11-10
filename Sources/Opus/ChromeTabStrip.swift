@@ -268,7 +268,7 @@ final class ChromeTabStrip: NSView {
                 let spot = NSRect(x: textX, y: rect.midY - size / 2, width: size, height: size)
                 // Under the pointer it opens its eyes to look at you.
                 let looked = hover.map { spot.insetBy(dx: -2, dy: -2).contains($0) } ?? false
-                ClaudeAvatar.draw(boop ?? ClaudeAvatar.Pose(eyes: looked ? .open : .closed),
+                ClaudeAvatar.draw(boop ?? ClaudeAvatar.Pose(eyes: looked ? .open : .closed, asleep: !looked),
                                   color: OpusTheme.cream(boop != nil || looked ? 0.7 : (isActive ? 0.4 : 0.25)),
                                   in: spot)
             } else if index < states.count, let color = OpusTheme.activityColor(states[index]),

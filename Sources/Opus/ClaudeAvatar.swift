@@ -16,6 +16,16 @@ enum ClaudeAvatar {
     private static let rayCount = 8
 
     enum Eyes: Equatable { case open, closed, happy, tired }
+    enum Hat: Equatable { case nightcap, santa, party }
+
+    /// The hat the calendar puts on: Santa's from December 15th to the 31st,
+    /// a nightcap on a sleeper from 22 h to 7 h, else none.
+    static func seasonalHat(_ date: Date, asleep: Bool, calendar: Calendar = .current) -> Hat? {
+        let parts = calendar.dateComponents([.month, .day, .hour], from: date)
+        if parts.month == 12, (parts.day ?? 0) >= 15 { return .santa }
+        if asleep, let hour = parts.hour, hour >= 22 || hour < 7 { return .nightcap }
+        return nil
+    }
 
     /// Week usage, in percent, from which open eyes droop.
     static let tiredAt: Double = 90
@@ -56,6 +66,12 @@ enum ClaudeAvatar {
         var squash: CGFloat = 0
         /// Progress of a confetti burst, 0 to 1; nil without one.
         var confetti: CGFloat?
+        /// A hat it wears whatever the date; nil leaves it to the calendar.
+        var hat: Hat?
+        /// Asleep, which earns a nightcap late at night.
+        var asleep = false
+        /// A magnifying glass held out, for looking around.
+        var magnifier = false
     }
 
     /// Smallest side at which eye highlights and confetti are drawn.
@@ -108,12 +124,13 @@ enum ClaudeAvatar {
         let phase = t.truncatingRemainder(dividingBy: 9)
         return Pose(rayPulse: CGFloat(sin(t * 1.3)) * 0.025, eyes: .closed,
                     snore: CGFloat((t / 2.6).truncatingRemainder(dividingBy: 1)),
-                    yawn: phase > 7.5 ? CGFloat(sin(.pi * (phase - 7.5) / 1.5)) : 0)
+                    yawn: phase > 7.5 ? CGFloat(sin(.pi * (phase - 7.5) / 1.5)) : 0,
+                    asleep: true)
     }
 
     /// Awake with nothing to do: the eyes wander from side to side.
     static func lookingAround(time t: Double) -> Pose {
-        Pose(glance: CGFloat(sin(t * 0.9)) * 0.06, eyes: blinking(t, every: 4.2) ? .closed : .open)
+        Pose(glance: CGFloat(sin(t * 0.9)) * 0.06, eyes: blinking(t, every: 4.2) ? .closed : .open, magnifier: true)
     }
 
     /// How long the burst of joy lasts when a turn ends.
@@ -130,7 +147,8 @@ enum ClaudeAvatar {
                     rayPulse: CGFloat(sin(e * 14)) * 0.04 * k,
                     eyes: .happy,
                     squash: (1 - bounce) * 0.1 * k,
-                    confetti: CGFloat(e / celebrationLength))
+                    confetti: CGFloat(e / celebrationLength),
+                    hat: .party)
     }
 
     /// Waiting for you outranks working, which outranks done.
@@ -196,7 +214,9 @@ enum ClaudeAvatar {
                 piece.close()
                 colors[k % colors.count].withAlphaComponent(1 - burst * burst).setFill()
                 piece.fill()
-        
+            }
+        }
+
         // Squash and stretch about the bottom of the body.
         // Confetti, drawn before, stays outside the transform.
         NSGraphicsContext.saveGraphicsState()
@@ -230,6 +250,11 @@ enum ClaudeAvatar {
         color.setFill()
         NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
                                     width: radius * 2, height: radius * 2)).fill()
+
+        // Hat, on the body and under the face's features.
+        if let hat = pose.hat ?? seasonalHat(Date(), asleep: pose.asleep) {
+            drawHat(hat, center: center, s: s, knockout: knockout)
+        }
 
         // Eyes.
         NSGraphicsContext.saveGraphicsState()
@@ -315,6 +340,25 @@ enum ClaudeAvatar {
             mark.draw(at: NSPoint(x: bubble.x - size.width / 2, y: bubble.y - size.height / 2), withAttributes: attrs)
         }
 
+        // A magnifying glass held out on the right, sweeping with the gaze.
+        if pose.magnifier, s >= detailMinSide, !knockout {
+            let lens = NSPoint(x: center.x + s * (0.36 + pose.glance * 1.5), y: center.y - s * 0.06)
+            let r = s * 0.11
+            let ring = NSRect(x: lens.x - r, y: lens.y - r, width: r * 2, height: r * 2)
+            OpusTheme.cream(0.15).setFill()
+            NSBezierPath(ovalIn: ring).fill()
+            OpusTheme.cream(0.85).setStroke()
+            let rim = NSBezierPath(ovalIn: ring)
+            rim.lineWidth = s * 0.035
+            rim.stroke()
+            let handle = NSBezierPath()
+            handle.lineWidth = s * 0.05
+            handle.lineCapStyle = .round
+            handle.move(to: NSPoint(x: lens.x + r * 0.7, y: lens.y - r * 0.7))
+            handle.line(to: NSPoint(x: lens.x + r * 1.6, y: lens.y - r * 1.6))
+            handle.stroke()
+        }
+
         // Sweat: a drop on the right edge of the face, point up.
         if pose.sweat {
             let x = center.x + s * 0.29, y = center.y + s * 0.04, r = s * 0.075
@@ -324,7 +368,7 @@ enum ClaudeAvatar {
                        controlPoint2: NSPoint(x: x + r * 1.4, y: y - r))
             drop.curve(to: NSPoint(x: x, y: y + r * 2.4), controlPoint1: NSPoint(x: x - r * 1.4, y: y - r),
                        controlPoint2: NSPoint(x: x - r * 1.5, y: y + r * 0.4))
-            NSColor(red: 0.85, green: 0.95, blue: 1, alpha: 1).setFill()
+            OpusTheme.sweat.setFill()
             drop.fill()
             OpusTheme.caretText.setStroke()
             drop.lineWidth = max(0.6, s * 0.025)
@@ -342,9 +386,49 @@ enum ClaudeAvatar {
             }
         }
         NSGraphicsContext.restoreGraphicsState()
-
     }
+
+    /// A cone tilted to the left on top of the head, with a pompom; Santa's
+    /// gets a white band, the party one two dots.
+    private static func drawHat(_ hat: Hat, center: NSPoint, s: CGFloat, knockout: Bool) {
+        let tilt: CGFloat = 0.35
+        let base = NSPoint(x: center.x - s * 0.03, y: center.y + s * 0.2)
+        let half = s * 0.19, height = s * 0.3
+        func at(_ dx: CGFloat, _ dy: CGFloat) -> NSPoint {
+            NSPoint(x: base.x + dx * cos(tilt) - dy * sin(tilt), y: base.y + dx * sin(tilt) + dy * cos(tilt))
         }
+        let cone = NSBezierPath()
+        cone.move(to: at(-half, 0))
+        cone.line(to: at(half, 0))
+        cone.line(to: at(0, height))
+        cone.close()
+        let fill: NSColor, trim: NSColor
+        switch hat {
+        case .nightcap: fill = OpusTheme.nightcap; trim = OpusTheme.cream
+        case .santa: fill = OpusTheme.santa; trim = OpusTheme.cream
+        case .party: fill = OpusTheme.amber; trim = OpusTheme.red
+        }
+        (knockout ? NSColor.black : fill).setFill()
+        cone.fill()
+        if hat == .santa {
+            let band = NSBezierPath()
+            band.lineWidth = s * 0.07
+            band.lineCapStyle = .round
+            band.move(to: at(-half * 1.05, 0))
+            band.line(to: at(half * 1.05, 0))
+            (knockout ? NSColor.black : trim).setStroke()
+            band.stroke()
+        }
+        if hat == .party, !knockout, s >= detailMinSide {
+            OpusTheme.cyan.setFill()
+            for (dx, dy) in [(-half * 0.3, height * 0.28), (half * 0.15, height * 0.55)] as [(CGFloat, CGFloat)] {
+                let dot = at(dx, dy), r = s * 0.025
+                NSBezierPath(ovalIn: NSRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)).fill()
+            }
+        }
+        let tip = at(0, height), r = s * 0.055
+        (knockout ? NSColor.black : trim).setFill()
+        NSBezierPath(ovalIn: NSRect(x: tip.x - r, y: tip.y - r, width: r * 2, height: r * 2)).fill()
     }
 
     /// The square in `bounds` where every pose fits: rays reach about 0.52

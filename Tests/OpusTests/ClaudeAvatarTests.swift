@@ -164,3 +164,59 @@ final class ClaudeAvatarCartoonTests: XCTestCase {
         XCTAssertGreaterThan(ClaudeAvatar.lateNight(ClaudeAvatar.Pose(eyes: .closed), hour: 23, time: 11.25).yawn, 0.9)
     }
 }
+
+final class ClaudeAvatarHatTests: XCTestCase {
+    private func date(_ month: Int, _ day: Int, _ hour: Int) -> Date {
+        var parts = DateComponents()
+        parts.year = 2026; parts.month = month; parts.day = day; parts.hour = hour
+        return Calendar(identifier: .gregorian).date(from: parts)!
+    }
+
+    func testCalendarHats() {
+        let cal = Calendar(identifier: .gregorian)
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(12, 20, 14), asleep: false, calendar: cal), .santa)
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(12, 20, 23), asleep: true, calendar: cal), .santa)
+        XCTAssertNil(ClaudeAvatar.seasonalHat(date(12, 10, 14), asleep: false, calendar: cal))
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(11, 10, 23), asleep: true, calendar: cal), .nightcap)
+        XCTAssertEqual(ClaudeAvatar.seasonalHat(date(11, 10, 3), asleep: true, calendar: cal), .nightcap)
+        XCTAssertNil(ClaudeAvatar.seasonalHat(date(11, 10, 23), asleep: false, calendar: cal))
+        XCTAssertNil(ClaudeAvatar.seasonalHat(date(11, 10, 15), asleep: true, calendar: cal))
+    }
+
+    func testPartiesWearAPartyHatAndSleepersSleep() {
+        XCTAssertEqual(ClaudeAvatar.celebrating(elapsed: 0.5)?.hat, .party)
+        XCTAssertTrue(ClaudeAvatar.sleeping(time: 1).asleep)
+        XCTAssertTrue(ClaudeAvatar.lookingAround(time: 1).magnifier)
+    }
+}
+
+/// Draws each pose into a bitmap and counts the pixels it covered: a
+/// structural slip in `draw` (once, the whole avatar ended up inside the
+/// confetti loop and only showed during a celebration) compiles and passes
+/// every pose test, so only ink on the page catches it.
+final class ClaudeAvatarInkTests: XCTestCase {
+    private func ink(_ pose: ClaudeAvatar.Pose, size: Int = 32) -> Int {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8,
+                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                   bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        ClaudeAvatar.draw(pose, color: OpusTheme.cyan, in: NSRect(x: 0, y: 0, width: size, height: size))
+        NSGraphicsContext.restoreGraphicsState()
+        var count = 0
+        for x in 0..<size { for y in 0..<size where (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5 { count += 1 } }
+        return count
+    }
+
+    func testEveryStateDrawsAnAvatar() {
+        let poses: [ClaudeAvatar.Pose?] = [
+            ClaudeAvatar.pose(.working, time: 0.3), ClaudeAvatar.pose(.needsInput, time: 0.3),
+            ClaudeAvatar.pose(.done, time: 0), ClaudeAvatar.sleeping(time: 1), ClaudeAvatar.lookingAround(time: 1),
+            ClaudeAvatar.Pose(eyes: .tired), ClaudeAvatar.celebrating(elapsed: 0.5),
+        ]
+        for pose in poses {
+            // The body alone is a disc of radius 0.29: about a quarter of the square.
+            XCTAssertGreaterThan(ink(pose!), 32 * 32 / 5, "\(pose!)")
+        }
+    }
+}
