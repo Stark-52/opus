@@ -366,3 +366,12 @@ final class ClaudeAvatarPonderTests: XCTestCase {
         XCTAssertFalse(ClaudeAvatar.pondering(time: 1).magnifier)
     }
 }
+
+final class MenuBarTabsMenuTests: XCTestCase {
+    func testLinesNameTheTabAndWhatClaudeDoes() {
+        XCTAssertEqual(MenuBarAvatar.menuLine(title: "Avatar", state: "Claude t'attend depuis 4 min"),
+                       "Avatar · Claude t'attend depuis 4 min")
+        XCTAssertEqual(MenuBarAvatar.menuLine(title: "Prospection", state: nil), "Prospection")
+        XCTAssertEqual(MenuBarAvatar.menuLine(title: "", state: nil), "Claude")
+    }
+}

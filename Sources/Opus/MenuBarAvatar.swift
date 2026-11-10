@@ -15,6 +15,9 @@ final class MenuBarAvatar {
         weak var source: AnyObject?
         var states: [PaneActivity]
         var focus: (Int) -> Void
+        var titles: [String] = []
+        /// What Claude does in a tab and for how long, read when the menu opens.
+        var describe: (Int) -> String? = { _ in nil }
     }
 
     private var item: NSStatusItem?
@@ -72,6 +75,13 @@ final class MenuBarAvatar {
         if autosave { item.autosaveName = "OpusClaudeAvatar" }
         item.behavior = .removalAllowed
         clickTarget.action = { [weak self] in
+            // Right click (or Control click): the list of tabs.
+            if let event = NSApp.currentEvent,
+               event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+                self?.refresh()
+                self?.showTabsMenu()
+                return
+            }
             self?.refresh()
             // Boop: a click makes it spin, whatever it does next.
             if let self, !self.reduceMotion {
@@ -86,6 +96,7 @@ final class MenuBarAvatar {
         }
         item.button?.target = clickTarget
         item.button?.action = #selector(ClickTarget.fire)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         self.item = item
         // A light or dark menu bar changes the soft edge: redraw on the switch.
         appearanceWatch = item.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
@@ -119,11 +130,53 @@ final class MenuBarAvatar {
         return nil
     }
 
+    /// One line per tab: its title, then what Claude does there when it does
+    /// something ("Avatar · Claude t'attend depuis 4 min").
+    static func menuLine(title: String, state: String?) -> String {
+        let name = title.isEmpty ? "Claude" : title
+        guard let state else { return name }
+        return "\(name) · \(state)"
+    }
+
+    /// Kept while the menu is open: menu items hold their targets weakly.
+    private var menuTargets: [ClickTarget] = []
+
+    private func showTabsMenu() {
+        guard let button = item?.button else { return }
+        let menu = NSMenu()
+        menuTargets = []
+        let lightBar = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+        for report in reports where report.source != nil {
+            for (index, state) in report.states.enumerated() {
+                let title = report.titles.indices.contains(index) ? report.titles[index] : ""
+                let line = Self.menuLine(title: title, state: report.describe(index))
+                let entry = NSMenuItem(title: line, action: #selector(ClickTarget.fire), keyEquivalent: "")
+                let pose = state == .idle ? ClaudeAvatar.Pose(eyes: .closed, asleep: true)
+                    : (ClaudeAvatar.pose(state, time: 0.3) ?? ClaudeAvatar.Pose())
+                entry.image = ClaudeAvatar.image(pose, color: OpusTheme.activityColor(state) ?? OpusTheme.cream(0.5),
+                                                 size: 18, shadow: lightBar)
+                let target = ClickTarget()
+                target.action = { [weak self] in
+                    self?.reveal()
+                    report.focus(index)
+                }
+                entry.target = target
+                menuTargets.append(target)
+                menu.addItem(entry)
+            }
+        }
+        if menu.items.isEmpty {
+            menu.addItem(NSMenuItem(title: "Aucun onglet", action: nil, keyEquivalent: ""))
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 4), in: button)
+    }
+
     /// `source`'s tabs, one state each, and how to bring one of them up;
     /// a source that goes away stops counting.
-    func report(_ states: [PaneActivity], from source: AnyObject, focus: @escaping (Int) -> Void) {
+    func report(_ states: [PaneActivity], from source: AnyObject, titles: [String] = [],
+                describe: @escaping (Int) -> String? = { _ in nil }, focus: @escaping (Int) -> Void) {
         reports.removeAll { $0.source === source }
-        reports.append(Report(source: source, states: states, focus: focus))
+        reports.append(Report(source: source, states: states, focus: focus, titles: titles, describe: describe))
         refresh()
     }
 
