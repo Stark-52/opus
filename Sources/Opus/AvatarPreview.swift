@@ -25,20 +25,20 @@ enum AvatarPreview {
 
     static func run(_ app: NSApplication) -> Never {
         app.setActivationPolicy(.regular)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 880, height: 330),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 880, height: 470),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Opus avatar preview"
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(calibratedWhite: 0.09, alpha: 1)
         window.isReleasedWhenClosed = false
-        let root = Backdrop(frame: NSRect(x: 0, y: 0, width: 880, height: 330))
+        let root = Backdrop(frame: NSRect(x: 0, y: 0, width: 880, height: 470))
         window.contentView = root
 
         let titles = ["Travaille", "T'attend", "A fini", "Au repos", "Longue tâche"]
-        let strip = makeStrip(titles: titles, y: 280, in: root)
-        let tired = makeStrip(titles: titles, y: 240, in: root)
+        let strip = makeStrip(titles: titles, y: 420, in: root)
+        let tired = makeStrip(titles: titles, y: 380, in: root)
         tired.weekPercent = 99
-        label("semaine 99 %, paupières lourdes", x: 560, y: 248, in: root)
+        label("semaine 99 %, paupières lourdes", x: 560, y: 388, in: root)
 
         let moods: [(String, NSColor, Bool, (Double) -> ClaudeAvatar.Pose?)] = [
             ("travaille", OpusTheme.cyan, false, { ClaudeAvatar.pose(.working, time: $0) }),
@@ -56,12 +56,31 @@ enum AvatarPreview {
             }),
         ]
         for (index, mood) in moods.enumerated() {
-            let view = ClaudeAvatarView(frame: NSRect(x: 24 + CGFloat(index) * 120, y: 70, width: 96, height: 96))
+            let view = ClaudeAvatarView(frame: NSRect(x: 24 + CGFloat(index) * 120, y: 210, width: 96, height: 96))
             view.color = mood.1
             view.snoreRoom = mood.2
             view.pose = mood.3
             root.addSubview(view)
-            label(mood.0, x: 24 + CGFloat(index) * 120, y: 40, width: 96, in: root)
+            label(mood.0, x: 24 + CGFloat(index) * 120, y: 180, width: 96, in: root)
+        }
+
+        // Every moment, looping with a short rest between plays.
+        let moments: [(String, ClaudeAvatar.Moment, NSColor)] = [
+            ("hoche", .nod, OpusTheme.cyan), ("sursaute", .startle, OpusTheme.red), ("clin d'œil", .wink, OpusTheme.green),
+            ("saute", .jump, OpusTheme.cyan), ("tournis", .dizzy, OpusTheme.green), ("éternue", .sneeze, OpusTheme.cyan),
+            ("se lève", .getUp, OpusTheme.cyan),
+        ]
+        for (index, item) in moments.enumerated() {
+            let view = ClaudeAvatarView(frame: NSRect(x: 24 + CGFloat(index) * 120, y: 70, width: 96, height: 96))
+            view.color = item.2
+            view.snoreRoom = false
+            let kind = item.1
+            let cycle = ClaudeAvatar.length(kind) + 0.8
+            view.pose = { t in
+                ClaudeAvatar.moment(kind, elapsed: t.truncatingRemainder(dividingBy: cycle)) ?? ClaudeAvatar.Pose()
+            }
+            root.addSubview(view)
+            label(item.0, x: 24 + CGFloat(index) * 120, y: 40, width: 96, in: root)
         }
 
         MenuBarAvatar.shared.install(onClick: {}, reveal: {}, autosave: false)
