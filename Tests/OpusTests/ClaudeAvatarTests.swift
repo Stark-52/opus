@@ -125,3 +125,11 @@ final class ClaudeAvatarGestureTests: XCTestCase {
         XCTAssertEqual(ClaudeAvatar.pose(.working, time: 5, reduceMotion: true)!.lift, 0)
     }
 }
+
+final class ClaudeAvatarYawnTests: XCTestCase {
+    func testSleeperYawnsNowAndThen() {
+        XCTAssertEqual(ClaudeAvatar.sleeping(time: 3).yawn, 0)
+        XCTAssertGreaterThan(ClaudeAvatar.sleeping(time: 8.25).yawn, 0.9)
+        XCTAssertEqual(ClaudeAvatar.pose(.working, time: 8.25)?.yawn, 0)
+    }
+}

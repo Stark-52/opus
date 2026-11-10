@@ -49,6 +49,8 @@ enum ClaudeAvatar {
         var wave: CGFloat = 0
         /// A "?" bubble beside the head, drawn only where it can be read.
         var asks = false
+        /// How wide the mouth opens in a yawn, 0 to 1; no mouth at 0.
+        var yawn: CGFloat = 0
     }
 
     /// Smallest side at which the "?" bubble is drawn.
@@ -89,9 +91,12 @@ enum ClaudeAvatar {
     }
 
     /// Asleep: eyes shut, rays breathing slowly, two "z"s drifting up.
+    /// Every nine seconds the last 1.5 s are a yawn.
     static func sleeping(time t: Double) -> Pose {
-        Pose(rayPulse: CGFloat(sin(t * 1.3)) * 0.025, eyes: .closed,
-             snore: CGFloat((t / 2.6).truncatingRemainder(dividingBy: 1)))
+        let phase = t.truncatingRemainder(dividingBy: 9)
+        return Pose(rayPulse: CGFloat(sin(t * 1.3)) * 0.025, eyes: .closed,
+                    snore: CGFloat((t / 2.6).truncatingRemainder(dividingBy: 1)),
+                    yawn: phase > 7.5 ? CGFloat(sin(.pi * (phase - 7.5) / 1.5)) : 0)
     }
 
     /// Awake with nothing to do: the eyes wander from side to side.
@@ -207,6 +212,11 @@ enum ClaudeAvatar {
             }
         }
 
+        // A yawning mouth.
+        if pose.yawn > 0.05 {
+            let w = s * 0.09, h = s * 0.13 * pose.yawn
+            NSBezierPath(ovalIn: NSRect(x: center.x - w / 2, y: center.y - s * 0.1 - h / 2, width: w, height: h)).fill()
+        }
         NSGraphicsContext.restoreGraphicsState()
 
         // A "?" in a small cream bubble, up and to the right of the head.

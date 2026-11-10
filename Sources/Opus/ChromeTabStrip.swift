@@ -32,6 +32,10 @@ final class ChromeTabStrip: NSView {
                 stateSince = states.indices.map { index in
                     index < old.count && index < oldValue.count && oldValue[index] == states[index] ? old[index] : Date()
                 }
+                // A new tab says hello with a spin (not the very first fill).
+                if !oldValue.isEmpty, states.count > oldValue.count, !reduceMotion {
+                    for index in oldValue.count..<states.count { celebrations[index] = now }
+                }
             } else {
                 for index in states.indices where oldValue[index] != states[index] { stateSince[index] = Date() }
                 for index in states.indices where states[index] != .done && oldValue[index] != states[index] {
