@@ -36,11 +36,26 @@ enum ClaudeAvatar {
     static let tiredAt: Double = 90
 
     /// `pose` with heavy lids when the week is nearly spent; other eyes stay.
+    /// At 100 % the week is spent: asleep, whatever it was doing.
     static func tired(_ pose: Pose, weekPercent: Double?) -> Pose {
-        guard let weekPercent, weekPercent >= tiredAt, pose.eyes == .open else { return pose }
+        guard let weekPercent, weekPercent >= tiredAt else { return pose }
+        if weekPercent >= 100 {
+            var spent = pose
+            spent.eyes = .closed
+            spent.asleep = true
+            spent.asks = false
+            return spent
+        }
+        guard pose.eyes == .open else { return pose }
         var drooping = pose
         drooping.eyes = .tired
         return drooping
+    }
+
+    /// The week starts over: it was nearly spent and now it is mostly free.
+    static func weekReset(from old: Double?, to new: Double?) -> Bool {
+        guard let old, let new else { return false }
+        return old >= tiredAt && new < 50
     }
 
     /// Everything that moves, for one instant. Distances are fractions of

@@ -117,8 +117,11 @@ final class MenuBarAvatar {
     func reportUsage(_ windows: [UsageWindow]) {
         let week = windows.first { $0.kind == .sevenDay }?.percent
         guard week != weekPercent else { return }
+        // A fresh week deserves a party.
+        if ClaudeAvatar.weekReset(from: weekPercent, to: week), !reduceMotion { celebrationStart = now }
         weekPercent = week
         render()
+        updateTimer()
     }
 
     /// Drops the reports of sources that went away, so a closed window does
@@ -203,7 +206,8 @@ final class MenuBarAvatar {
         case .done: state = "Claude a fini"
         }
         guard let weekPercent else { return state }
-        return state + "\nsemaine \(Int(weekPercent.rounded()))\u{00A0}%"
+        let week = "semaine \(Int(weekPercent.rounded()))\u{00A0}%"
+        return state + "\n" + (weekPercent >= 100 ? week + ", limite atteinte" : week)
     }
 }
 

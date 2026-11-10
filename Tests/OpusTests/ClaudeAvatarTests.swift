@@ -239,3 +239,20 @@ final class MenuBarCountTests: XCTestCase {
         XCTAssertEqual(MenuBarAvatar.toolTip(.needsInput, waiting: 1), "Claude attend ta réponse")
     }
 }
+
+final class ClaudeAvatarWeekTests: XCTestCase {
+    func testSpentWeekSleeps() {
+        let pose = ClaudeAvatar.tired(ClaudeAvatar.pose(.needsInput, time: 1)!, weekPercent: 100)
+        XCTAssertEqual(pose.eyes, .closed)
+        XCTAssertTrue(pose.asleep)
+        XCTAssertFalse(pose.asks)
+        XCTAssertEqual(MenuBarAvatar.toolTip(.idle, weekPercent: 100), "Claude se repose\nsemaine 100\u{00A0}%, limite atteinte")
+    }
+
+    func testFreshWeekIsNoticed() {
+        XCTAssertTrue(ClaudeAvatar.weekReset(from: 99, to: 2))
+        XCTAssertFalse(ClaudeAvatar.weekReset(from: 60, to: 2))
+        XCTAssertFalse(ClaudeAvatar.weekReset(from: 99, to: 98))
+        XCTAssertFalse(ClaudeAvatar.weekReset(from: nil, to: 2))
+    }
+}
