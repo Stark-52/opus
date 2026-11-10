@@ -42,7 +42,25 @@ final class OnboardingWindowController: NSWindowController {
 
         let title = NSTextField(labelWithString: "Opus needs a few permissions")
         title.font = NSFont.systemFont(ofSize: 18, weight: .semibold)
-        stack.addArrangedSubview(title)
+        // Claude says hello beside the title, waving a ray.
+        let hello = ClaudeAvatarView()
+        hello.color = OpusTheme.cyan
+        hello.snoreRoom = false
+        hello.pose = { time in
+            var wave = ClaudeAvatar.pose(.needsInput, time: time)
+            wave?.asks = false
+            return wave
+        }
+        hello.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hello.widthAnchor.constraint(equalToConstant: 34),
+            hello.heightAnchor.constraint(equalToConstant: 34),
+        ])
+        let header = NSStackView(views: [hello, title])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+        stack.addArrangedSubview(header)
 
         let blurb = NSTextField(wrappingLabelWithString:
             "Granting them now keeps macOS prompts from interrupting your work later. " +
