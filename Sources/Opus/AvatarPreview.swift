@@ -16,7 +16,7 @@ enum AvatarPreview {
     /// One row per step, one state per tab. Each step turns at least one
     /// working tab to done, so the burst of joy shows every cycle.
     static let script: [[PaneActivity]] = [
-        [.working, .needsInput, .done, .idle, .working],
+        [.working, .needsInput, .done, .idle, .needsInput],
         [.done, .needsInput, .done, .idle, .working],
         [.needsInput, .working, .idle, .idle, .working],
         [.working, .done, .idle, .idle, .done],
@@ -102,6 +102,7 @@ enum AvatarPreview {
             let name = String(format: "%02d", frame)
             if let view = window.contentView { write(view, to: dir.appendingPathComponent("window-\(name).png")) }
             if let image = MenuBarAvatar.shared.currentImage { write(image, size: 72, to: dir.appendingPathComponent("menubar-\(name).png")) }
+            if let button = MenuBarAvatar.shared.currentButton { write(button, to: dir.appendingPathComponent("menubutton-\(name).png")) }
             if let tile = NSApp.dockTile.contentView { write(tile, to: dir.appendingPathComponent("dock-\(name).png")) }
             if frame >= 16 {
                 timer.invalidate()

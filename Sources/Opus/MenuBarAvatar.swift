@@ -22,6 +22,8 @@ final class MenuBarAvatar {
     private(set) var activity: PaneActivity = .idle
     /// The week's usage in percent, for heavy lids and the tooltip.
     private var weekPercent: Double?
+    /// How many tabs wait for an answer; from two up, the count shows.
+    private var waiting = 0
     private var celebrationStart: Double?
     private var timer: Timer?
     private let clickTarget = ClickTarget()
@@ -40,6 +42,8 @@ final class MenuBarAvatar {
 
     /// The image the menu bar shows right now, for the preview's snapshots.
     var currentImage: NSImage? { item?.button?.image }
+    /// The whole button, count included, for the preview's snapshots.
+    var currentButton: NSView? { item?.button }
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     private var now: Double { ProcessInfo.processInfo.systemUptime }
@@ -51,7 +55,8 @@ final class MenuBarAvatar {
     func install(onClick: @escaping () -> Void, reveal: @escaping () -> Void, autosave: Bool = true) {
         guard item == nil else { return }
         self.reveal = reveal
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Variable: the count of waiting sessions sits beside the avatar.
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if autosave { item.autosaveName = "OpusClaudeAvatar" }
         item.behavior = .removalAllowed
         clickTarget.action = { [weak self] in
@@ -110,7 +115,13 @@ final class MenuBarAvatar {
     /// not leave the avatar working forever, and recomputes the state.
     private func refresh() {
         reports.removeAll { $0.source == nil }
-        let next = ClaudeAvatar.strongest(reports.flatMap(\.states))
+        let all = reports.flatMap(\.states)
+        let next = ClaudeAvatar.strongest(all)
+        let waitingNow = all.filter { $0 == .needsInput }.count
+        if waitingNow != waiting {
+            waiting = waitingNow
+            render()
+        }
         guard next != activity else { return }
         if activity == .working, next == .done, !reduceMotion { celebrationStart = now }
         if next != .done { celebrationStart = nil }
@@ -157,16 +168,24 @@ final class MenuBarAvatar {
             image.isTemplate = true
             button.image = image
         }
-        button.toolTip = Self.toolTip(activity, weekPercent: weekPercent)
+        button.imagePosition = .imageLeading
+        button.title = Self.badge(waiting)
+        button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        button.toolTip = Self.toolTip(activity, weekPercent: weekPercent, waiting: waiting)
         button.setAccessibilityLabel(button.toolTip)
     }
 
-    static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil) -> String {
+    /// The count beside the avatar: empty for none or one.
+    static func badge(_ waiting: Int) -> String {
+        waiting >= 2 ? "\(waiting)" : ""
+    }
+
+    static func toolTip(_ activity: PaneActivity, weekPercent: Double? = nil, waiting: Int = 0) -> String {
         let state: String
         switch activity {
         case .idle: state = "Claude se repose"
         case .working: state = "Claude travaille"
-        case .needsInput: state = "Claude attend ta réponse"
+        case .needsInput: state = waiting >= 2 ? "\(waiting) sessions t'attendent" : "Claude attend ta réponse"
         case .done: state = "Claude a fini"
         }
         guard let weekPercent else { return state }

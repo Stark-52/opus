@@ -229,3 +229,13 @@ final class ClaudeAvatarPNGTests: XCTestCase {
         XCTAssertNotNil(NSImage(data: data!))
     }
 }
+
+final class MenuBarCountTests: XCTestCase {
+    func testCountShowsFromTwoWaiting() {
+        XCTAssertEqual(MenuBarAvatar.badge(0), "")
+        XCTAssertEqual(MenuBarAvatar.badge(1), "")
+        XCTAssertEqual(MenuBarAvatar.badge(3), "3")
+        XCTAssertEqual(MenuBarAvatar.toolTip(.needsInput, waiting: 2), "2 sessions t'attendent")
+        XCTAssertEqual(MenuBarAvatar.toolTip(.needsInput, waiting: 1), "Claude attend ta réponse")
+    }
+}
