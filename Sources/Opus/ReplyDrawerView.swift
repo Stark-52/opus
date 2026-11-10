@@ -38,6 +38,8 @@ final class ReplyDrawerView: NSView {
     private let header = NSTextField(labelWithString: "Réponse")
     private let copyAllButton = CopyButton(title: "Tout copier")
     private let emptyLabel = NSTextField(labelWithString: "Pas encore de réponse dans cette session")
+    /// Claude pondering its first reply, above `emptyLabel`.
+    private let emptyAvatar = ClaudeAvatarView()
     private let scrollView = NSScrollView(frame: .zero)
     private let documentView = FlippedView()
     private let stack = NSStackView()
@@ -85,6 +87,10 @@ final class ReplyDrawerView: NSView {
         addSubview(copyAllButton)
         addSubview(scrollView)
         addSubview(emptyLabel)
+        emptyAvatar.color = OpusTheme.cream(0.35)
+        emptyAvatar.pose = { ClaudeAvatar.pondering(time: $0) }
+        emptyAvatar.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(emptyAvatar)
 
         let clip = scrollView.contentView
         NSLayoutConstraint.activate([
@@ -110,6 +116,10 @@ final class ReplyDrawerView: NSView {
             stack.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyAvatar.centerXAnchor.constraint(equalTo: centerXAnchor),
+            emptyAvatar.bottomAnchor.constraint(equalTo: emptyLabel.topAnchor, constant: -10),
+            emptyAvatar.widthAnchor.constraint(equalToConstant: 48),
+            emptyAvatar.heightAnchor.constraint(equalToConstant: 48),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: OpusTheme.insetPanel),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -OpusTheme.insetPanel),
@@ -122,6 +132,7 @@ final class ReplyDrawerView: NSView {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let isEmpty = blocks.isEmpty
         emptyLabel.isHidden = !isEmpty
+        emptyAvatar.isHidden = !isEmpty
         scrollView.isHidden = isEmpty
         copyAllButton.isHidden = isEmpty
 

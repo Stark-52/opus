@@ -359,3 +359,10 @@ final class TabAccessibilityStabilityTests: XCTestCase {
         XCTAssertEqual((strip.accessibilityChildren() as? [TabAccessibilityElement])?.count, 3)
     }
 }
+
+final class ClaudeAvatarPonderTests: XCTestCase {
+    func testPonderingLooksUp() {
+        XCTAssertGreaterThan(ClaudeAvatar.pondering(time: 1).lift, 0)
+        XCTAssertFalse(ClaudeAvatar.pondering(time: 1).magnifier)
+    }
+}

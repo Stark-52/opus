@@ -268,6 +268,11 @@ enum ClaudeAvatar {
                     asleep: true)
     }
 
+    /// Waiting for something to say: eyes up, drifting slowly, now and then a blink.
+    static func pondering(time t: Double) -> Pose {
+        Pose(glance: CGFloat(sin(t * 0.6)) * 0.04, eyes: blinking(t, every: 5) ? .closed : .open, lift: 0.045)
+    }
+
     /// Awake with nothing to do: the eyes wander from side to side.
     static func lookingAround(time t: Double) -> Pose {
         Pose(glance: CGFloat(sin(t * 0.9)) * 0.06, eyes: blinking(t, every: 4.2) ? .closed : .open, magnifier: true)
