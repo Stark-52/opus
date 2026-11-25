@@ -384,7 +384,8 @@ final class OpusPreferences {
         skipPermissions: Bool,
         resumeMode: OpusResumeMode,
         permissionMode: OpusPermissionMode = .standard,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        codeMode: Bool = false
     ) -> String {
         // zsh double quotes still expand $VAR, $(...), backticks, and honor
         // backslashes. Escape all four; backslash FIRST or it re-escapes the
@@ -397,7 +398,10 @@ final class OpusPreferences {
         let cdPrefix = "cd \"\(cwd)\" && "
         switch preset {
         case .claude:
-            var cmd = "command claude"
+            // Code mode is Claude Code's own switch, read from the environment
+            // of the claude process: the assignment in front of `command` keeps
+            // it off the shell and off every other tab.
+            var cmd = codeMode ? "\(CodeModeSessions.environmentVariable)=1 command claude" : "command claude"
             if skipPermissions { cmd += " --dangerously-skip-permissions" }
             if !skipPermissions && permissionMode != .standard {
                 cmd += " --permission-mode \(permissionMode.rawValue)"
@@ -446,7 +450,8 @@ final class OpusPreferences {
     func resolvedSpawnCommand(
         skipPermissions: Bool = false,
         resumeMode: OpusResumeMode = .none,
-        sessionId: String? = nil
+        sessionId: String? = nil,
+        codeMode: Bool = false
     ) -> String {
         if initialCommandPreset == .claude {
             HookSettingsWriter.ensureSettingsFile()
@@ -458,7 +463,8 @@ final class OpusPreferences {
             skipPermissions: skipPermissions,
             resumeMode: resumeMode,
             permissionMode: permissionMode,
-            sessionId: sessionId
+            sessionId: sessionId,
+            codeMode: codeMode
         )
     }
 

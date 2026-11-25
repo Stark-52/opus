@@ -100,6 +100,11 @@ final class MainTerminalWindow: NSWindowController, TerminalContainerHost {
                 if container.handleArtifactsHorizontalArrow(ev.keyCode == 124 ? 1 : -1) { return nil }
             }
         }
+        // Cmd+Option+T — a new tab in code mode; see QuickTerminalPanel.handleKeyEvent.
+        if mods == [.command, .option], ev.keyCode == 17 {
+            container.spawnNewTab(codeMode: true)
+            return nil
+        }
         if mods == .command {
             if let c = ev.charactersIgnoringModifiers?.lowercased() {
                 // See QuickTerminalPanel.handleKeyEvent for the full rationale:

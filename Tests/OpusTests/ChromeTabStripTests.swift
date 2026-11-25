@@ -56,4 +56,17 @@ final class ChromeTabStripTests: XCTestCase {
         XCTAssertEqual(ChromeTabStrip.toolTip(index: 8, title: "Neuf"), "Neuf (Cmd+9)")
         XCTAssertEqual(ChromeTabStrip.toolTip(index: 9, title: "Dix"), "Dix", "only the first nine have a shortcut")
     }
+
+    func testACodeModeTabShowsTheMarkerBeforeItsTitle() {
+        XCTAssertEqual(ChromeTabStrip.shownTitles(["Plan", "", "Notes"], codeModes: [false, true]),
+                       ["Plan", "</> Claude", "Notes"])
+    }
+
+    func testTheMarkerTakesItsRoomInTheTab() {
+        let title = "Fonctionnalité des mods"
+        let plain = ChromeTabStrip.tabWidths(titles: [title], font: font, available: 2000)[0]
+        let marked = ChromeTabStrip.tabWidths(titles: ChromeTabStrip.shownTitles([title], codeModes: [true]),
+                                              font: font, available: 2000)[0]
+        XCTAssertGreaterThan(marked, plain)
+    }
 }

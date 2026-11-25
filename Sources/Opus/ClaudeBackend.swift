@@ -62,6 +62,10 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
     ///     spawn-order FIFO is the fallback for this one case.
     private(set) var currentSessionId: String?
 
+    /// Whether the running claude is in code mode: set at each spawn, true
+    /// when the conversation it reopens began in code mode.
+    private(set) var codeModeActive = false
+
     /// Spawn claude (idempotent — does nothing if already running).
     func startIfNeeded() {
         guard process == nil else { return }
@@ -154,6 +158,10 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
         case .continueMostRecent:
             currentSessionId = nil
         }
+        // A conversation begun in code mode can only go on in code mode: reopen
+        // it that way. A fresh session in the shared tab is a plain one.
+        codeModeActive = CodeModeSessions.shared.reopensInCodeMode(
+            resumeMode, workingDirectory: OpusPreferences.shared.workingDirectory)
         // -l -i runs a login+interactive shell like a real terminal would:
         // /etc/zprofile (path_helper) restores the system PATH baseline and
         // .zshrc adds ~/.local/bin where claude lives.
@@ -171,7 +179,8 @@ final class ClaudeBackend: NSObject, LocalProcessDelegate {
             cmd = OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: skipPermissionsActive,
                 resumeMode: resumeMode,
-                sessionId: currentSessionId
+                sessionId: currentSessionId,
+                codeMode: codeModeActive
             )
         }
         p.startProcess(

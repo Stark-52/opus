@@ -211,4 +211,31 @@ final class SpawnCommandTests: XCTestCase {
         XCTAssertEqual(cmd, prefix + "command claude" + settingsFlag)
         XCTAssertFalse(cmd.contains("--session-id"))
     }
+
+    func testCodeModeSwitchesItOnForClaudeAlone() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, codeMode: true
+        )
+        XCTAssertEqual(cmd, prefix + "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 command claude" + settingsFlag)
+    }
+
+    func testCodeModeKeepsTheOtherFlags() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: true, resumeMode: .resume(sessionId: "abc-123"), codeMode: true
+        )
+        XCTAssertEqual(cmd, prefix + "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 command claude --dangerously-skip-permissions --resume abc-123" + settingsFlag)
+    }
+
+    func testShellAndCustomIgnoreCodeMode() {
+        XCTAssertEqual(OpusPreferences.composeSpawnCommand(
+            preset: .shell, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, codeMode: true
+        ), prefix + "exec /bin/zsh -i")
+        XCTAssertEqual(OpusPreferences.composeSpawnCommand(
+            preset: .custom, customCommand: "tmux attach", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, codeMode: true
+        ), prefix + "tmux attach")
+    }
 }

@@ -21,6 +21,28 @@ final class ChromeTabStrip: NSView {
             invalidateIntrinsicContentSize()
         }
     }
+    /// One per tab, same index space as `titles`: true where the tab runs in
+    /// Claude Code's code mode, shown by a marker before its title.
+    var codeModes: [Bool] = [] {
+        didSet {
+            guard codeModes != oldValue else { return }
+            needsDisplay = true
+            needsLayout = true
+            invalidateIntrinsicContentSize()
+        }
+    }
+    static let codeModeMarker = "</>"
+    static let codeModeNote = "Code Mode : sans Claude in Chrome ni computer use"
+
+    /// The titles as the strip lays them out: a code mode tab's carries the marker.
+    static func shownTitles(_ titles: [String], codeModes: [Bool]) -> [String] {
+        titles.indices.map { index in
+            guard codeModes[safe: index] == true else { return titles[index] }
+            return "\(codeModeMarker) \(titles[index].isEmpty ? "Claude" : titles[index])"
+        }
+    }
+    private var laidOutTitles: [String] { Self.shownTitles(titles, codeModes: codeModes) }
+
     /// One per tab, same index space as `titles`; missing entries draw no avatar.
     var states: [PaneActivity] = [] {
         didSet {
@@ -88,6 +110,7 @@ final class ChromeTabStrip: NSView {
     }
     var onSwitch: ((Int) -> Void)?
     var onNewTab: (() -> Void)?
+    var onNewCodeModeTab: (() -> Void)?
 
     private var hoveredIndex: Int? { didSet { if hoveredIndex != oldValue { needsDisplay = true } } }
 
@@ -131,7 +154,7 @@ final class ChromeTabStrip: NSView {
 
     /// Every tab at its natural width, plus the "+".
     override var intrinsicContentSize: NSSize {
-        let widths = Self.tabWidths(titles: titles, font: Self.titleFont, available: .greatestFiniteMagnitude)
+        let widths = Self.tabWidths(titles: laidOutTitles, font: Self.titleFont, available: .greatestFiniteMagnitude)
         let width = widths.reduce(0, +) + CGFloat(widths.count) * Self.tabGap + Self.plusWidth
         return NSSize(width: width, height: NSView.noIntrinsicMetric)
     }
@@ -217,7 +240,7 @@ final class ChromeTabStrip: NSView {
     private var tabRoom: CGFloat { max(0, bounds.width - Self.plusWidth - Self.tabGap) }
 
     private func layoutRects() -> (tabs: [NSRect], plus: NSRect) {
-        Self.tabFrames(titles: titles, activeIndex: activeIndex, font: Self.titleFont,
+        Self.tabFrames(titles: laidOutTitles, activeIndex: activeIndex, font: Self.titleFont,
                        available: bounds.width, height: bounds.height)
     }
 
@@ -353,8 +376,13 @@ final class ChromeTabStrip: NSView {
             let textRect = NSRect(x: textX, y: rect.midY - textHeight / 2, width: rect.maxX - 10 - textX, height: textHeight)
             // An animation frame only dirties the avatars: leave the titles be.
             if needsToDraw(textRect) {
-                (title as NSString).draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
-                                         attributes: attrs)
+                let text = NSMutableAttributedString(string: title, attributes: attrs)
+                if codeModes[safe: index] == true {
+                    var mark = attrs
+                    mark[.foregroundColor] = OpusTheme.cyan
+                    text.insert(NSAttributedString(string: Self.codeModeMarker + " ", attributes: mark), at: 0)
+                }
+                text.draw(with: textRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             }
         }
         NSGraphicsContext.restoreGraphicsState()
@@ -406,17 +434,45 @@ final class ChromeTabStrip: NSView {
             moments[index] = (kind, now)
             updateAnimation()
         }
-        if index == -1 { onNewTab?() } else if index != activeIndex { onSwitch?(index) }
+        if index == -1 {
+            // Option-click on the "+": a code mode tab.
+            if event.modifierFlags.contains(.option) { onNewCodeModeTab?() } else { onNewTab?() }
+        } else if index != activeIndex {
+            onSwitch?(index)
+        }
     }
+
+    /// A right click on the "+" offers both kinds of tab.
+    override func rightMouseDown(with event: NSEvent) {
+        guard hit(convert(event.locationInWindow, from: nil)) == -1 else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        let plain = NSMenuItem(title: "Nouvel onglet", action: #selector(newTabFromMenu), keyEquivalent: "t")
+        plain.keyEquivalentModifierMask = [.command]
+        plain.target = self
+        let code = NSMenuItem(title: "Nouvel onglet Code Mode", action: #selector(newCodeModeTabFromMenu), keyEquivalent: "t")
+        code.keyEquivalentModifierMask = [.command, .option]
+        code.target = self
+        let note = NSMenuItem(title: Self.codeModeNote, action: nil, keyEquivalent: "")
+        note.isEnabled = false
+        let menu = NSMenu()
+        menu.items = [plain, code, note]
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    @objc private func newTabFromMenu() { onNewTab?() }
+    @objc private func newCodeModeTabFromMenu() { onNewCodeModeTab?() }
 }
 
 extension ChromeTabStrip: NSViewToolTipOwner {
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
               userData data: UnsafeMutableRawPointer?) -> String {
-        guard let data else { return "Nouvel onglet (Cmd+T)" }
+        guard let data else { return "Nouvel onglet (Cmd+T)\nOnglet Code Mode : Option+Cmd+T, Option-clic ou clic droit" }
         let index = Int(bitPattern: data) - 1
         guard titles.indices.contains(index) else { return "" }
-        let base = Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
+        var base = Self.toolTip(index: index, title: titles[index].isEmpty ? "Claude" : titles[index])
+        if codeModes[safe: index] == true { base += "\n" + Self.codeModeNote }
         guard let line = stateLine(forTab: index) else { return base }
         return base + "\n" + line
     }
@@ -468,13 +524,13 @@ extension ChromeTabStrip {
     /// "Title, Claude travaille depuis 4 min", or the title alone at rest.
     func accessibilityLabel(forTab index: Int) -> String? {
         guard titles.indices.contains(index) else { return nil }
-        let title = titles[index].isEmpty ? "Claude" : titles[index]
+        let title = (codeModes[safe: index] == true ? "Code Mode, " : "") + (titles[index].isEmpty ? "Claude" : titles[index])
         guard let line = stateLine(forTab: index) else { return title }
         return "\(title), \(line)"
     }
 
     func screenFrame(forTab index: Int) -> NSRect {
-        let tabs = Self.tabFrames(titles: titles, activeIndex: activeIndex, font: Self.titleFont,
+        let tabs = Self.tabFrames(titles: laidOutTitles, activeIndex: activeIndex, font: Self.titleFont,
                                   available: bounds.width, height: bounds.height).tabs
         guard tabs.indices.contains(index), let window else { return .zero }
         return window.convertToScreen(convert(tabs[index], to: nil))

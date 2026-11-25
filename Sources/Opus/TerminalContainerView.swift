@@ -265,6 +265,7 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let tabs = ChromeTabStrip(frame: .zero)
         tabs.onSwitch = { [weak self] index in self?.switchTab(to: index) }
         tabs.onNewTab = { [weak self] in self?.spawnNewTab() }
+        tabs.onNewCodeModeTab = { [weak self] in self?.spawnNewTab(codeMode: true) }
         let buttons = ChromeButtonBar(frame: .zero)
         buttons.onCopy = { [weak self] in self?.toggleReplyDrawer() }
         buttons.onArtifacts = { [weak self] in self?.toggleArtifactsDrawer() }
@@ -1701,8 +1702,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     var activeTerminal: TerminalView? { activePane?.terminal }
 
-    func spawnNewTab() {
-        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: nil, container: self)
+    /// A new tab with its own claude; `codeMode` opens it in Claude Code's code mode.
+    func spawnNewTab(codeMode: Bool = false) {
+        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: nil, container: self, codeMode: codeMode)
         // Registered for hook attribution: the pid reader is a closure
         // because the PTY child does not exist yet at this point.
         ClaudeStateStore.shared.registerPane(
@@ -1838,7 +1840,9 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         // NSSplitView would briefly hand a 0×0 child to SwiftTerm otherwise,
         // and its size-change calc can produce negative cols/rows during that
         // first layout pass (which is what makes the UInt16 conversion crash).
-        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: nil, container: self)
+        // A split keeps its tab's mode.
+        let newPane = TabPane.makePrivate(frame: oldView.frame, panel: nil, container: self,
+                                          codeMode: oldPane.codeMode)
         // Registered for hook attribution: the pid reader is a closure
         // because the PTY child does not exist yet at this point.
         ClaudeStateStore.shared.registerPane(
@@ -2289,7 +2293,14 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// session — an unbound pane (no direct bind yet, and the FIFO fallback
     /// hasn't matched a SessionStart to it either) reads as `.idle`, same as
     /// a session with no events at all.
+    /// The code mode marker of each tab: a tab is in code mode when its first
+    /// pane is (a split keeps its tab's mode).
+    private func refreshTabCodeModes() {
+        tabStrip.codeModes = tabPanes.map { $0.first?.codeMode ?? false }
+    }
+
     private func refreshTabBarStates() {
+        refreshTabCodeModes()
         tabStrip.states = tabPanes.indices.map { tabIdx -> PaneActivity in
             let panes = tabPanes[tabIdx]
             let idx = tabActivePaneIndex.indices.contains(tabIdx) ? tabActivePaneIndex[tabIdx] : 0
@@ -2470,6 +2481,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
     /// `ClaudeStateStore.bindSession`'s doc comment for why that's correct:
     /// the old binding pointed at a session that no longer exists.
     @objc private func sharedBackendDidSpawn(_ note: Notification) {
+        // The shared tab may now be in code mode, or no longer.
+        refreshTabCodeModes()
         guard useSharedTab0,
               tabPanes.indices.contains(0),
               let pane = tabPanes[0].first(where: { $0.wrapper == nil }) else { return }

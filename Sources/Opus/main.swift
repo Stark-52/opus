@@ -53,8 +53,13 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     /// `start()`), so this id always gets passed through as `--session-id`.
     private(set) var sessionId = UUID().uuidString.lowercased()
 
-    init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) {
+    /// This pane runs Claude Code in code mode, for its whole life: a restart
+    /// keeps the mode, since the tab was opened as a code mode tab.
+    let codeMode: Bool
+
+    init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?, codeMode: Bool = false) {
         self.terminal = TerminalView(frame: frame)
+        self.codeMode = codeMode
         self.panel = panel
         self.container = container
         super.init()
@@ -68,12 +73,14 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         // claudes writing one session file). Because resumeMode is always
         // .none, sessionId always applies — see resolvedSpawnCommand's doc
         // comment.
+        if codeMode { CodeModeSessions.shared.remember(sessionId) }
         process.startProcess(
             executable: "/bin/zsh",
             args: ["-l", "-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: ClaudeBackend.shared.skipPermissionsActive,
                 resumeMode: .none,
-                sessionId: sessionId)],
+                sessionId: sessionId,
+                codeMode: codeMode)],
             environment: SpawnEnvironment.make(),
             execName: nil
         )
@@ -226,6 +233,10 @@ final class TabPane {
     fileprivate var sharedSubscription: UUID?  // non-nil → shared backend
     var title: String = "Claude"
 
+    /// Whether this pane's claude runs in code mode: a private pane's own
+    /// choice, the shared backend's for a shared pane.
+    var codeMode: Bool { wrapper?.codeMode ?? ClaudeBackend.shared.codeModeActive }
+
     static func makeShared(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) -> TabPane {
         let pane = TabPane(frame: frame, wrapper: nil)
         pane.terminal.terminalDelegate = container
@@ -236,8 +247,9 @@ final class TabPane {
         return pane
     }
 
-    static func makePrivate(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?) -> TabPane {
-        let wrapper = FilteredClaudeTab(frame: frame, panel: panel, container: container)
+    static func makePrivate(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?,
+                            codeMode: Bool = false) -> TabPane {
+        let wrapper = FilteredClaudeTab(frame: frame, panel: panel, container: container, codeMode: codeMode)
         return TabPane(frame: frame, wrapper: wrapper)
     }
 
@@ -618,6 +630,14 @@ final class QuickTerminalPanel: NSObject {
             if ev.keyCode == 123 || ev.keyCode == 124, mods.isEmpty {  // Left, Right
                 if container.handleArtifactsHorizontalArrow(ev.keyCode == 124 ? 1 : -1) { return nil }
             }
+        }
+
+        // Cmd+Option+T — a new tab in Claude Code's code mode. By key code (T
+        // is 17 in AZERTY and QWERTY alike): with Option held the character
+        // can be a symbol or a dead key.
+        if mods == [.command, .option], ev.keyCode == 17 {
+            container.spawnNewTab(codeMode: true)
+            return nil
         }
 
         // Cmd alone — tab/pane lifecycle + tab switching.
