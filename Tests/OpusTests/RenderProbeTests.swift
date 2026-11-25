@@ -63,6 +63,17 @@ final class RenderProbeTests: XCTestCase {
         return folder
     }
 
+    func testRenderTabStripWithACodeModeTab() throws {
+        let out = try folderOrSkip()
+        let strip = ChromeTabStrip(frame: .zero)
+        strip.titles = ["Refonte du site", "Analyse des logs"]
+        strip.states = [.working, .needsInput]
+        strip.codeModes = [false, true]
+        strip.activeIndex = 1
+        try RenderProbe.capture(strip, size: NSSize(width: 520, height: 32),
+                                to: (out as NSString).appendingPathComponent("tab-strip-code-mode.png"))
+    }
+
     func testRenderArtifactsDrawer() throws {
         let out = try folderOrSkip()
         let files = (out as NSString).appendingPathComponent("artifacts-fixtures")
