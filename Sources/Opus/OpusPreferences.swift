@@ -385,7 +385,8 @@ final class OpusPreferences {
         resumeMode: OpusResumeMode,
         permissionMode: OpusPermissionMode = .standard,
         sessionId: String? = nil,
-        codeMode: Bool = false
+        codeMode: Bool = false,
+        initialPrompt: String? = nil
     ) -> String {
         // zsh double quotes still expand $VAR, $(...), backticks, and honor
         // backslashes. Escape all four; backslash FIRST or it re-escapes the
@@ -418,6 +419,11 @@ final class OpusPreferences {
             // hooks that report session state over /tmp/opus-events.sock. Only
             // the .claude preset runs claude at all, so only it gets this flag.
             cmd += " --settings \(HookSettingsWriter.escapedSettingsPathForShell)"
+            // A task to start on (the bridge's): after `--`, so no word of it can
+            // be read as an option, single-quoted for zsh. NUL cannot cross argv.
+            if let prompt = initialPrompt?.replacingOccurrences(of: "\0", with: ""), !prompt.isEmpty {
+                cmd += " -- " + shellSingleQuoted(prompt)
+            }
             return cdPrefix + cmd
         case .shell:
             return cdPrefix + "exec /bin/zsh -i"
@@ -451,7 +457,8 @@ final class OpusPreferences {
         skipPermissions: Bool = false,
         resumeMode: OpusResumeMode = .none,
         sessionId: String? = nil,
-        codeMode: Bool = false
+        codeMode: Bool = false,
+        initialPrompt: String? = nil
     ) -> String {
         if initialCommandPreset == .claude {
             HookSettingsWriter.ensureSettingsFile()
@@ -464,8 +471,15 @@ final class OpusPreferences {
             resumeMode: resumeMode,
             permissionMode: permissionMode,
             sessionId: sessionId,
-            codeMode: codeMode
+            codeMode: codeMode,
+            initialPrompt: initialPrompt
         )
+    }
+
+    /// A string as one zsh word, verbatim: single quotes, each embedded quote
+    /// closed, escaped and reopened. Nothing expands inside single quotes.
+    static func shellSingleQuoted(_ text: String) -> String {
+        "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: Internal

@@ -35,6 +35,9 @@ let package = Package(
         .target(
             name: "OpusArtifactsKit"
         ),
+        .target(
+            name: "OpusBridgeKit"
+        ),
         .executableTarget(
             name: "Opus",
             dependencies: [
@@ -42,11 +45,13 @@ let package = Package(
                 "OpusSecretsKit",
                 "OpusScriptsKit",
                 "OpusArtifactsKit",
-                "OpusSearchKit"
+                "OpusSearchKit",
+                "OpusBridgeKit"
             ]
         ),
         .executableTarget(
-            name: "opus-attach"
+            name: "opus-attach",
+            dependencies: ["OpusBridgeKit"]
         ),
         .executableTarget(
             name: "opus-secrets",
@@ -54,7 +59,7 @@ let package = Package(
         ),
         .testTarget(
             name: "OpusTests",
-            dependencies: ["Opus", "OpusSecretsKit", "OpusScriptsKit", "OpusArtifactsKit", "OpusSearchKit"]
+            dependencies: ["Opus", "OpusSecretsKit", "OpusScriptsKit", "OpusArtifactsKit", "OpusSearchKit", "OpusBridgeKit"]
         )
     ]
 )

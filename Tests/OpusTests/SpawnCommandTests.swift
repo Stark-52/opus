@@ -238,4 +238,37 @@ final class SpawnCommandTests: XCTestCase {
             skipPermissions: false, resumeMode: .none, codeMode: true
         ), prefix + "tmux attach")
     }
+
+    func testAnInitialPromptComesLastAfterTheDoubleDash() {
+        let cmd = OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, codeMode: true, initialPrompt: "fais ça"
+        )
+        XCTAssertEqual(cmd, prefix + "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 command claude" + settingsFlag + " -- 'fais ça'")
+    }
+
+    func testAnInitialPromptReachesTheCommandVerbatimThroughZsh() throws {
+        let prompt = "l'idée : $HOME, `date`, $(whoami), \"guillemets\", \\ et !!\nune 2e ligne ' fin"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-i", "-c", "printf '%s' " + OpusPreferences.shellSingleQuoted(prompt)]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        let printed = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertTrue(printed.hasSuffix(prompt), "zsh changed the prompt: \(printed)")
+    }
+
+    func testAnEmptyPromptAddsNothingAndShellIgnoresIt() {
+        XCTAssertEqual(OpusPreferences.composeSpawnCommand(
+            preset: .claude, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, initialPrompt: ""
+        ), prefix + "command claude" + settingsFlag)
+        XCTAssertEqual(OpusPreferences.composeSpawnCommand(
+            preset: .shell, customCommand: "", workingDirectory: cwd,
+            skipPermissions: false, resumeMode: .none, initialPrompt: "x"
+        ), prefix + "exec /bin/zsh -i")
+    }
 }

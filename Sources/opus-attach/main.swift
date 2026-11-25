@@ -14,12 +14,19 @@
 //           opus-attach <path>              (custom socket path)
 //           opus-attach send [-n] <text...> (one-shot prompt injection, then exit;
 //                                             -n = don't submit, just type it)
+//           opus-attach ask [--normal] [--to <session>] [--wait <s>] [task...]
+//                                            (hand a task to a new code mode tab
+//                                             in Opus and print its final answer;
+//                                             the task is read on stdin if absent)
+//           opus-attach reply <session> [--wait <s>]
+//                                            (the answer of a delegated session)
 //           opus-attach event <EventName>   (Claude Code hook command, see
 //                                             HookSettingsWriter — relays hook
 //                                             stdin to /tmp/opus-events.sock)
 
 import Foundation
 import Darwin
+import OpusBridgeKit
 
 /// `opus-attach event <EventName>` — invoked as a Claude Code hook command
 /// (registered by HookSettingsWriter). Forwards the hook's own stdin JSON —
@@ -103,6 +110,10 @@ if args.first == "event" {
     signal(SIGPIPE, SIG_IGN)
     runEventSubcommand()
     exit(0)
+}
+
+if args.first == "ask" || args.first == "reply" {
+    runBridgeSubcommand(args)
 }
 
 var sendMode = false
@@ -262,4 +273,149 @@ while true {
 if isTTY {
     var t = oldTermios
     tcsetattr(0, TCSADRAIN, &t)
+}
+
+// MARK: bridge (ask / reply)
+
+/// `opus-attach ask` / `opus-attach reply`: the bridge's command line (see
+/// OpusBridgeKit). stdout carries the answer alone, so a caller can capture
+/// it; everything else goes to stderr. Exit codes: 0 the answer, 1 an error,
+/// 2 the session waits for a person in its tab, 3 still at work (stdout then
+/// holds the session id, for `opus-attach reply`).
+func runBridgeSubcommand(_ arguments: [String]) -> Never {
+    signal(SIGPIPE, SIG_IGN)
+    let usage = """
+        usage: opus-attach ask [--normal] [--to <session>] [--wait <secondes>] [tâche...]
+               opus-attach reply <session> [--wait <secondes>]
+        """
+    func say(_ text: String) { FileHandle.standardError.write(Data(("opus-attach: " + text + "\n").utf8)) }
+    func fail(_ text: String) -> Never { say(text); exit(1) }
+
+    var rest = Array(arguments.dropFirst())
+    let isAsk = arguments.first == "ask"
+    var waitSeconds = 540.0
+    var codeMode = true
+    var target: String?
+    var words: [String] = []
+    while !rest.isEmpty {
+        let arg = rest.removeFirst()
+        switch arg {
+        case "--wait":
+            guard let value = rest.first.flatMap(Double.init), value >= 0 else { fail(usage) }
+            waitSeconds = value
+            rest.removeFirst()
+        case "--normal":
+            codeMode = false
+        case "--to":
+            guard let value = rest.first, !value.isEmpty else { fail(usage) }
+            target = value
+            rest.removeFirst()
+        case "--":
+            words += rest
+            rest = []
+        default:
+            words.append(arg)
+        }
+    }
+
+    let request: BridgeRequest
+    if isAsk {
+        var task = words.joined(separator: " ")
+        if task.isEmpty, isatty(0) == 0 {
+            task = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
+        }
+        guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { fail(usage) }
+        request = BridgeRequest(op: .ask, task: task, session: target, codeMode: codeMode)
+    } else {
+        guard let session = words.first ?? target else { fail(usage) }
+        request = BridgeRequest(op: .reply, session: session, wait: waitSeconds > 0)
+    }
+
+    let path = BridgeProtocol.socketPath
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { fail("socket() a échoué") }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    path.withCString { cstr in
+        withUnsafeMutableBytes(of: &addr.sun_path) { dest in
+            _ = strncpy(dest.baseAddress!.assumingMemoryBound(to: CChar.self), cstr, dest.count - 1)
+        }
+    }
+    let connected = withUnsafePointer(to: &addr) { ptr -> Bool in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+            connect(fd, sa, socklen_t(MemoryLayout<sockaddr_un>.size)) == 0
+        }
+    }
+    guard connected else { fail("aucun pont Opus sur \(path) : Opus est-il lancé, dans une version qui a le pont ?") }
+
+    let out = BridgeWire.line(request)
+    let sent = out.withUnsafeBytes { raw -> Bool in
+        var pointer = raw.baseAddress!
+        var left = raw.count
+        while left > 0 {
+            let n = write(fd, pointer, left)
+            if n <= 0 { return false }
+            pointer = pointer.advanced(by: n)
+            left -= n
+        }
+        return true
+    }
+    guard sent else { fail("la demande n'a pas pu être envoyée à Opus") }
+
+    var session = target ?? (isAsk ? nil : words.first)
+    func stillWorking(_ text: String) -> Never {
+        say(text)
+        if let session { print(session) }
+        exit(3)
+    }
+    // The first message comes at once (the tab is open, or the reply is
+    // there); the final one may take as long as `--wait` allows.
+    let start = Date()
+    var gotFirst = false
+    var pending = Data()
+    var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+    while true {
+        while let newline = pending.firstIndex(of: 0x0A) {
+            let line = pending[pending.startIndex..<newline]
+            pending.removeSubrange(pending.startIndex...newline)
+            guard let message = BridgeWire.decode(BridgeMessage.self, from: Data(line)) else { continue }
+            gotFirst = true
+            if let id = message.session { session = id }
+            let id = session ?? "?"
+            switch message.kind {
+            case .accepted:
+                if isAsk {
+                    say(target == nil
+                        ? "session \(id) : onglet \(codeMode ? "Code Mode" : "normal") ouvert dans Opus, en arrière-plan"
+                        : "session \(id) : suite envoyée dans son onglet")
+                }
+                if waitSeconds == 0 { stillWorking("réponse plus tard : opus-attach reply \(id) --wait 540") }
+            case .done:
+                if let note = message.message { say(note) }
+                print(message.reply ?? "")
+                exit(0)
+            case .needsInput:
+                say("la session \(id) attend une réponse dans son onglet Opus : \(message.message ?? "")")
+                if let partial = message.reply, !partial.isEmpty { say("dernier texte : " + partial) }
+                print(id)
+                exit(2)
+            case .working:
+                stillWorking("la session \(id) travaille encore. Plus tard : opus-attach reply \(id) --wait 540")
+            case .error:
+                fail(message.message ?? "erreur inconnue")
+            }
+        }
+        let limit = gotFirst ? waitSeconds : max(waitSeconds, 15)
+        let left = limit - Date().timeIntervalSince(start)
+        if left <= 0 {
+            guard gotFirst else { fail("Opus n'a pas répondu") }
+            stillWorking("la session \(session ?? "?") travaille encore après \(Int(waitSeconds)) s. Pour la réponse : opus-attach reply \(session ?? "?") --wait 540")
+        }
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&pfd, 1, Int32(min(left, 1) * 1000))
+        if ready <= 0 { continue }
+        let n = read(fd, &chunk, chunk.count)
+        if n <= 0 { fail("Opus a fermé la connexion sans réponse finale") }
+        pending.append(contentsOf: chunk[0..<n])
+    }
 }

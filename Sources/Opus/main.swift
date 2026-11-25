@@ -57,9 +57,15 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
     /// keeps the mode, since the tab was opened as a code mode tab.
     let codeMode: Bool
 
-    init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?, codeMode: Bool = false) {
+    /// The task a bridge tab was opened with, given to claude on its first
+    /// launch only: a restart must not run it again.
+    private var pendingPrompt: String?
+
+    init(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?,
+         codeMode: Bool = false, prompt: String? = nil) {
         self.terminal = TerminalView(frame: frame)
         self.codeMode = codeMode
+        self.pendingPrompt = prompt
         self.panel = panel
         self.container = container
         super.init()
@@ -74,13 +80,16 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         // .none, sessionId always applies — see resolvedSpawnCommand's doc
         // comment.
         if codeMode { CodeModeSessions.shared.remember(sessionId) }
+        let prompt = pendingPrompt
+        pendingPrompt = nil
         process.startProcess(
             executable: "/bin/zsh",
             args: ["-l", "-i", "-c", OpusPreferences.shared.resolvedSpawnCommand(
                 skipPermissions: ClaudeBackend.shared.skipPermissionsActive,
                 resumeMode: .none,
                 sessionId: sessionId,
-                codeMode: codeMode)],
+                codeMode: codeMode,
+                initialPrompt: prompt)],
             environment: SpawnEnvironment.make(),
             execName: nil
         )
@@ -152,6 +161,9 @@ final class FilteredClaudeTab: NSObject, LocalProcessDelegate, TerminalViewDeleg
         guard source === process else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // Whoever waits on this conversation through the bridge hears now,
+            // not at its timeout: the process behind it is gone.
+            BridgeCoordinator.shared.sessionEnded(self.sessionId)
             if self.isRestarting {
                 self.isRestarting = false
                 self.terminal.feed(text: "\u{001B}c")   // clear the dead TUI
@@ -248,8 +260,9 @@ final class TabPane {
     }
 
     static func makePrivate(frame: NSRect, panel: QuickTerminalPanel?, container: TerminalContainerView?,
-                            codeMode: Bool = false) -> TabPane {
-        let wrapper = FilteredClaudeTab(frame: frame, panel: panel, container: container, codeMode: codeMode)
+                            codeMode: Bool = false, prompt: String? = nil) -> TabPane {
+        let wrapper = FilteredClaudeTab(frame: frame, panel: panel, container: container,
+                                        codeMode: codeMode, prompt: prompt)
         return TabPane(frame: frame, wrapper: wrapper)
     }
 
@@ -1013,6 +1026,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var nativePanel: QuickTerminalPanel?
     private let socketServer = SocketServer()
     private let eventSocketServer = EventSocketServer()
+    /// `opus-attach ask`/`reply`: another session hands this Opus a task.
+    private let bridgeServer = BridgeServer()
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // A vanished socket client must never SIGPIPE-kill the app.
@@ -1032,6 +1047,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // socketServer: hooks fire regardless of display mode, and
         // composeSpawnCommand injects --settings unconditionally for .claude.
         eventSocketServer.start()
+        bridgeServer.start()
         // Claude in the menu bar: the strongest state across every tab.
         MenuBarAvatar.shared.install(onClick: { [weak self] in
             guard let self else { return }
@@ -1265,6 +1281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ note: Notification) {
         socketServer.stop()
         eventSocketServer.stop()
+        bridgeServer.stop()
         if let ref = hotKeyRef        { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefMain    { UnregisterEventHotKey(ref) }
         if let ref = hotKeyRefRestart { UnregisterEventHotKey(ref) }
@@ -1362,6 +1379,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// panel) to decide which container's active pane a picked prompt gets
     /// inserted into, via `AppDelegate.shared?.activeRestartContainer()`,
     /// rather than re-deriving the same rule a second time.
+    /// Every container that exists, for the bridge to find a session in.
+    func bridgeContainers() -> [TerminalContainerView] {
+        var all: [TerminalContainerView] = []
+        if let panel = nativePanel { all.append(panel.terminalContainer) }
+        if OpusPreferences.shared.displayMode.includesMain {
+            all.append(MainTerminalWindow.shared.terminalContainer)
+        }
+        return all
+    }
+
+    /// Where the bridge opens its tabs: the surface in use, else any that
+    /// exists. Nothing is revealed: the tab waits in the background.
+    func bridgeContainer() -> TerminalContainerView? {
+        activeRestartContainer() ?? bridgeContainers().first
+    }
+
     func activeRestartContainer() -> TerminalContainerView? {
         if let panel = nativePanel, panel.isVisible,
            panel.terminalContainer.window?.isKeyWindow == true {

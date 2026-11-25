@@ -264,8 +264,8 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         let top = ChromeBar(edge: .minY)
         let tabs = ChromeTabStrip(frame: .zero)
         tabs.onSwitch = { [weak self] index in self?.switchTab(to: index) }
-        tabs.onNewTab = { [weak self] in self?.spawnNewTab() }
-        tabs.onNewCodeModeTab = { [weak self] in self?.spawnNewTab(codeMode: true) }
+        tabs.onNewTab = { [weak self] in _ = self?.spawnNewTab() }
+        tabs.onNewCodeModeTab = { [weak self] in _ = self?.spawnNewTab(codeMode: true) }
         let buttons = ChromeButtonBar(frame: .zero)
         buttons.onCopy = { [weak self] in self?.toggleReplyDrawer() }
         buttons.onArtifacts = { [weak self] in self?.toggleArtifactsDrawer() }
@@ -1702,9 +1702,15 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
 
     var activeTerminal: TerminalView? { activePane?.terminal }
 
-    /// A new tab with its own claude; `codeMode` opens it in Claude Code's code mode.
-    func spawnNewTab(codeMode: Bool = false) {
-        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: nil, container: self, codeMode: codeMode)
+    /// A new tab with its own claude. `codeMode` opens it in Claude Code's
+    /// code mode, `prompt` is the task claude starts on, and `activate: false`
+    /// leaves the current tab in front (the bridge opens its tabs in the
+    /// background, so nobody's typing lands in them). Returns the new
+    /// conversation's session id.
+    @discardableResult
+    func spawnNewTab(codeMode: Bool = false, prompt: String? = nil, activate: Bool = true) -> String? {
+        let pane = TabPane.makePrivate(frame: terminalFrame(), panel: nil, container: self,
+                                       codeMode: codeMode, prompt: prompt)
         // Registered for hook attribution: the pid reader is a closure
         // because the PTY child does not exist yet at this point.
         ClaudeStateStore.shared.registerPane(
@@ -1719,7 +1725,37 @@ final class TerminalContainerView: NSView, TerminalViewDelegate {
         tabTitles.append("Claude")
         recordPendingSpawn(pane)
         bindKnownSession(pane)
-        switchTab(to: tabs.count - 1)
+        if activate {
+            switchTab(to: tabs.count - 1)
+        } else {
+            updateTabIndicator()
+        }
+        return pane.wrapper?.sessionId
+    }
+
+    // MARK: Bridge (opus-attach ask)
+
+    /// The private pane running this session, if this container has one. The
+    /// shared pane is never returned: the bridge does not write into tab 0.
+    func privatePane(forSession sessionId: String) -> TabPane? {
+        tabPanes.joined().first { $0.wrapper?.sessionId == sessionId }
+    }
+
+    /// True when this pane's terminal has the keyboard in a key window.
+    func paneHasKeyboardFocus(_ pane: TabPane) -> Bool {
+        guard let window, window.isKeyWindow else { return false }
+        return window.firstResponder === pane.terminal
+    }
+
+    /// Types a prompt into one pane and submits it: pasted as one block, then
+    /// Return a beat later, so the Return is a key press of its own.
+    func submitPrompt(_ text: String, to pane: TabPane) {
+        guard let wrapper = pane.wrapper else { return }
+        let enabled = pane.terminal.terminalInputStateSnapshot()?.bracketedPasteMode ?? false
+        wrapper.sendInput(bytes: ArraySlice(Self.bracketedPaste(text, enabled: enabled)))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak wrapper] in
+            wrapper?.sendInput(bytes: ArraySlice<UInt8>([0x0D]))
+        }
     }
 
     func closeActivePane() {
